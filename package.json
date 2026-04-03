@@ -1,0 +1,40 @@
+{
+  "name": "lisk-code",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Programmatic AI coding agent library with pluggable providers and virtual infrastructure",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "dev": "tsup --watch"
+  },
+  "packageManager": "pnpm@10.8.1",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "openai": "^4.85.0",
+    "@anthropic-ai/sdk": "^0.39.0",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0",
+    "@types/uuid": "^10.0.0",
+    "tsup": "^8.4.0",
+    "vitest": "^3.0.0"
+  }
+}
