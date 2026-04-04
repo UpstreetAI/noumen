@@ -1,0 +1,56 @@
+---
+title: Extended Thinking
+description: Enable model reasoning/thinking tokens with configurable budget across providers.
+---
+
+Extended thinking lets models "think" before responding, producing internal reasoning tokens that improve quality on complex tasks. noumen provides a unified configuration that maps to each provider's native thinking support.
+
+## Configuration
+
+```typescript
+import { Code } from "noumen";
+
+const code = new Code({
+  aiProvider,
+  virtualFs,
+  virtualComputer,
+  options: {
+    thinking: { type: "enabled", budgetTokens: 10000 },
+  },
+});
+```
+
+## ThinkingConfig
+
+```typescript
+type ThinkingConfig =
+  | { type: "enabled"; budgetTokens: number }
+  | { type: "disabled" };
+```
+
+## Provider behavior
+
+| Provider | Implementation |
+|----------|---------------|
+| **Anthropic** | Maps to `thinking.type = "enabled"` with `budget_tokens`. Requires a model that supports extended thinking (e.g., Claude with thinking). |
+| **OpenAI** | Maps to `reasoning_effort` for o-series models, or `max_completion_tokens` for others. |
+| **Gemini** | Maps to `thinkingConfig.thinkingBudget` in the Google GenAI SDK. |
+
+## Stream events
+
+Thinking content is streamed as `thinking_delta` events:
+
+```typescript
+for await (const event of thread.run("...")) {
+  if (event.type === "thinking_delta") {
+    process.stdout.write(event.content); // thinking tokens
+  }
+  if (event.type === "text_delta") {
+    process.stdout.write(event.content); // response tokens
+  }
+}
+```
+
+## Retry interaction
+
+When thinking is enabled and the retry engine adjusts `max_tokens` after a context overflow, the thinking budget is preserved as a minimum floor to ensure the model can still reason effectively.

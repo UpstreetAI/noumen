@@ -13,6 +13,7 @@ interface TrackedTool {
   isConcurrencySafe: boolean;
   result?: ToolResult;
   permissionDenied?: boolean;
+  preventContinuation?: boolean;
   promise?: Promise<void>;
   events: StreamEvent[];
 }
@@ -22,6 +23,7 @@ export interface StreamingExecResult {
   parsedArgs: Record<string, unknown>;
   result: ToolResult;
   permissionDenied?: boolean;
+  preventContinuation?: boolean;
   events: StreamEvent[];
 }
 
@@ -31,6 +33,7 @@ export type StreamingToolExecutorFn = (
 ) => Promise<{
   result: ToolResult;
   permissionDenied?: boolean;
+  preventContinuation?: boolean;
   events: StreamEvent[];
 }>;
 
@@ -91,12 +94,13 @@ export class StreamingToolExecutor {
 
     tracked.promise = (async () => {
       try {
-        const { result, permissionDenied, events } = await this.executeFn(
+        const { result, permissionDenied, preventContinuation, events } = await this.executeFn(
           tracked.toolCall,
           tracked.parsedArgs,
         );
         tracked.result = result;
         tracked.permissionDenied = permissionDenied;
+        tracked.preventContinuation = preventContinuation;
         tracked.events = events;
       } catch (err) {
         tracked.result = {
@@ -125,6 +129,7 @@ export class StreamingToolExecutor {
           parsedArgs: tool.parsedArgs,
           result: tool.result,
           permissionDenied: tool.permissionDenied,
+          preventContinuation: tool.preventContinuation,
           events: tool.events,
         };
       } else if (tool.status === "executing" && !tool.isConcurrencySafe) {

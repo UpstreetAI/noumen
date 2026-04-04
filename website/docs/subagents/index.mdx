@@ -1,0 +1,73 @@
+---
+title: Subagents
+description: Spawn isolated child agents for focused subtasks with independent conversation contexts.
+---
+
+Subagents let the model delegate focused work to isolated child agents. Each subagent runs in its own conversation context with its own session, and returns a result to the parent agent.
+
+## Configuration
+
+```typescript
+const code = new Code({
+  aiProvider,
+  virtualFs,
+  virtualComputer,
+  options: {
+    enableSubagents: true,
+  },
+});
+```
+
+When enabled, an `Agent` tool is added that the model can call to spawn subagents.
+
+## How it works
+
+1. The model calls the `Agent` tool with a `prompt` and optional `systemPrompt`
+2. A child `Thread` is created with its own session ID
+3. The child runs independently, using the same tools and sandbox as the parent
+4. The child's final response is returned to the parent as the tool result
+
+## Agent tool parameters
+
+```typescript
+{
+  prompt: string;          // The task for the subagent
+  systemPrompt?: string;   // Optional system prompt override
+}
+```
+
+## Sync vs async
+
+The Agent tool supports both synchronous (wait for result) and asynchronous (fire and check later) modes. In async mode, the tool returns immediately with the session ID, and the parent can check results later via the task system.
+
+## Concurrency
+
+The Agent tool is marked `isConcurrencySafe: true`, so multiple subagents can be spawned in parallel within a single turn. Each subagent gets its own conversation context and session storage.
+
+## SubagentConfig type
+
+```typescript
+interface SubagentConfig {
+  prompt: string;
+  systemPrompt?: string;
+  maxTurns?: number;
+  model?: string;
+}
+```
+
+## Hooks
+
+Subagent lifecycle events are available through the hooks system:
+
+```typescript
+{
+  event: "SubagentStart",
+  handler: async (input) => {
+    // input.sessionId — child session
+    // input.parentSessionId — parent session
+    // input.prompt — the subagent's task
+  },
+}
+```
+
+See [Hooks](/docs/hooks) for details.

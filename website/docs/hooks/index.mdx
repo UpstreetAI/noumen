@@ -1,0 +1,129 @@
+---
+title: Hooks
+description: Intercept and customize tool execution, turn lifecycle, subagent spawning, compaction, and error handling with pre/post hooks.
+---
+
+Hooks let you intercept key moments in the agent lifecycle — before and after tool calls, at turn boundaries, when subagents start and stop, around compaction, and on errors. They can modify tool inputs/outputs, deny tool calls, or run side effects like logging and analytics.
+
+## Defining hooks
+
+Pass hooks through `Code` options:
+
+```typescript
+import { Code, type HookDefinition } from "noumen";
+
+const hooks: HookDefinition[] = [
+  {
+    event: "PreToolUse",
+    matcher: "Bash",
+    handler: async (input) => {
+      console.log(`Running bash: ${input.toolInput.command}`);
+      return { decision: "allow" };
+    },
+  },
+  {
+    event: "TurnEnd",
+    handler: async (input) => {
+      console.log(`Turn ended for session ${input.sessionId}`);
+    },
+  },
+];
+
+const code = new Code({
+  aiProvider,
+  virtualFs,
+  virtualComputer,
+  options: { hooks },
+});
+```
+
+## Hook events
+
+| Event | Type | Description |
+|-------|------|-------------|
+| `PreToolUse` | Interceptor | Fires before a tool executes. Can allow, deny, or modify input. |
+| `PostToolUse` | Interceptor | Fires after a tool executes. Can modify output or stop the loop. |
+| `TurnStart` | Notification | Fires at the beginning of each agent turn (before the provider call). |
+| `TurnEnd` | Notification | Fires after the agent turn completes. |
+| `SubagentStart` | Notification | Fires when a subagent is spawned. |
+| `SubagentStop` | Notification | Fires when a subagent finishes. |
+| `PreCompact` | Notification | Fires before conversation compaction. |
+| `PostCompact` | Notification | Fires after compaction completes. |
+| `Error` | Notification | Fires when an error occurs during the agent loop. |
+
+## PreToolUse hooks
+
+Pre-tool hooks run before tool execution. They receive the tool name, input, and session ID. Return a decision to control whether the tool runs:
+
+```typescript
+{
+  event: "PreToolUse",
+  matcher: "WriteFile",
+  handler: async (input) => {
+    const path = input.toolInput.file_path as string;
+    if (path.includes("node_modules")) {
+      return { decision: "deny", message: "Cannot write to node_modules" };
+    }
+    return { decision: "allow" };
+  },
+}
+```
+
+### PreToolUseHookOutput
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `decision` | `"allow" \| "deny" \| "passthrough"` | Whether to allow, deny, or defer to the next hook. |
+| `updatedInput` | `Record<string, unknown>` | Replace the tool input before execution. |
+| `message` | `string` | Message to include in the deny response. |
+| `preventContinuation` | `boolean` | Stop the agent loop after this tool call. |
+
+## PostToolUse hooks
+
+Post-tool hooks run after execution. They can modify the output returned to the model:
+
+```typescript
+{
+  event: "PostToolUse",
+  matcher: "ReadFile",
+  handler: async (input) => {
+    if (input.toolOutput.length > 50000) {
+      return { updatedOutput: input.toolOutput.slice(0, 50000) + "\n[truncated]" };
+    }
+  },
+}
+```
+
+## Matcher patterns
+
+The optional `matcher` field filters which tools a hook applies to. It supports simple glob patterns:
+
+- `"Bash"` — exact match
+- `"mcp__*"` — prefix match (all MCP tools)
+- `"*File"` — suffix match (ReadFile, WriteFile, EditFile)
+- `"*"` — match all tools
+
+Omitting `matcher` means the hook applies to all tools (for `PreToolUse`/`PostToolUse`) or all events of that type (for notifications).
+
+## Notification hooks
+
+Notification hooks are fire-and-forget — they have no return value and errors are silently swallowed. Use them for logging, analytics, or side effects.
+
+```typescript
+{
+  event: "SubagentStart",
+  handler: async (input) => {
+    console.log(`Subagent ${input.sessionId} spawned by ${input.parentSessionId}`);
+  },
+}
+```
+
+## HookDefinition type
+
+```typescript
+interface HookDefinition {
+  event: HookEvent;
+  matcher?: string;
+  handler: (input: HookInput) => Promise<HookOutput> | HookOutput;
+}
+```

@@ -1,94 +1,94 @@
 ---
 title: Built-in Tools
-description: noumen ships with six coding tools that cover file operations, shell commands, and codebase search — all sandboxed through VirtualFs and VirtualComputer.
+description: noumen ships with 20+ tools covering file operations, shell commands, codebase search, web access, subagents, tasks, planning, and code intelligence — all sandboxed through VirtualFs and VirtualComputer.
 ---
 
-Every noumen agent has access to six built-in tools. These are automatically registered in the `ToolRegistry` and available to the AI model during agent runs. All tools delegate file and shell access through `VirtualFs` and `VirtualComputer` — they never touch the host directly — so the isolation level is controlled entirely by which implementations you provide.
+Every noumen agent has access to a set of built-in tools registered in the `ToolRegistry`. The six core tools (ReadFile, WriteFile, EditFile, Bash, Glob, Grep) are always available. Additional tools are enabled through `Code` options — subagents, tasks, plan mode, worktrees, LSP, web search, and skills each add their own tools when enabled.
+
+All tools delegate file and shell access through `VirtualFs` and `VirtualComputer`, so isolation is controlled entirely by which implementations you provide.
 
 ## Tool reference
+
+### File I/O
 
 | Tool | Description |
 |------|-------------|
 | **ReadFile** | Read file contents with optional line offset and limit. Returns numbered lines. |
-| **WriteFile** | Create or overwrite a file at a given path. |
-| **EditFile** | Find-and-replace string editing within a file. |
-| **Bash** | Execute shell commands via VirtualComputer (sandboxed). |
-| **Glob** | Find files matching a glob pattern (backed by ripgrep's `--files --glob`). |
-| **Grep** | Search file contents by regex pattern (backed by ripgrep). |
+| **WriteFile** | Create or overwrite a file at a given path. Parent directories are created automatically. |
+| **EditFile** | Find-and-replace string editing within a file. The target string must appear exactly once. |
+| **NotebookEdit** | Edit a Jupyter notebook (.ipynb) file. Can replace, insert, or delete cells. |
 
-## ReadFile
+### Search
 
-Reads a file and returns its contents with line numbers. Supports `offset` and `limit` parameters for reading specific line ranges.
+| Tool | Description |
+|------|-------------|
+| **Glob** | Find files matching a glob pattern using ripgrep for fast recursive search. |
+| **Grep** | Search file contents by regex pattern using ripgrep. Supports case-insensitive search and context lines. |
 
-```typescript
-// Parameters
-{
-  file_path: string;  // Path to read
-  offset?: number;    // Starting line (1-based)
-  limit?: number;     // Number of lines to return
-}
-```
+### Execution
 
-## WriteFile
+| Tool | Description |
+|------|-------------|
+| **Bash** | Execute shell commands via VirtualComputer. Returns stdout, stderr, and exit code. |
 
-Creates or overwrites a file. Parent directories are created automatically.
+### Web
 
-```typescript
-// Parameters
-{
-  file_path: string;  // Path to write
-  content: string;    // File contents
-}
-```
+| Tool | Description |
+|------|-------------|
+| **WebFetch** | Fetch a URL and return its contents as markdown. Useful for reading documentation and API responses. |
+| **WebSearch** | Search the web for real-time information. Requires a user-provided search backend (Tavily, SerpAPI, etc.). |
 
-## EditFile
+### Agent & Interaction
 
-Performs exact string replacement within a file. The `old_string` must appear exactly once in the file.
+| Tool | Description |
+|------|-------------|
+| **Agent** | Spawn an isolated subagent to handle a focused subtask in its own conversation context. |
+| **AskUser** | Ask the user a question and wait for their response. |
+| **Skill** | Invoke a skill by name with optional arguments. Available when skills are configured. |
 
-```typescript
-// Parameters
-{
-  file_path: string;   // Path to edit
-  old_string: string;  // Text to find (must be unique)
-  new_string: string;  // Replacement text
-}
-```
+### Task Management
 
-## Bash
+| Tool | Description |
+|------|-------------|
+| **TaskCreate** | Create a new task/todo item for tracking work. |
+| **TaskList** | List all tasks with their current status. |
+| **TaskGet** | Get details of a specific task by ID. |
+| **TaskUpdate** | Update a task's status, description, or dependencies. |
 
-Executes a shell command and returns stdout, stderr, and exit code.
+### Planning & Worktrees
 
-```typescript
-// Parameters
-{
-  command: string;     // Shell command to run
-  timeout?: number;    // Timeout in milliseconds
-}
-```
+| Tool | Description |
+|------|-------------|
+| **EnterPlanMode** | Enter plan mode to explore the codebase before making changes. File writes and edits are restricted. |
+| **ExitPlanMode** | Exit plan mode and return to the previous permission mode. |
+| **EnterWorktree** | Create an isolated git worktree on a new branch for parallel or experimental work. |
+| **ExitWorktree** | Exit the current worktree, optionally keeping or removing it. |
 
-## Glob
+### Code Intelligence
 
-Finds files matching a glob pattern. Uses ripgrep for fast recursive search.
+| Tool | Description |
+|------|-------------|
+| **LSP** | Query language servers for code intelligence: goToDefinition, findReferences, hover, documentSymbol, workspaceSymbol. |
 
-```typescript
-// Parameters
-{
-  pattern: string;  // Glob pattern (e.g., "**/*.ts")
-  path?: string;    // Directory to search in
-}
-```
+## Enabling optional tools
 
-## Grep
-
-Searches file contents by regular expression. Uses ripgrep for speed.
+Core tools (ReadFile, WriteFile, EditFile, Bash, Glob, Grep, WebFetch, NotebookEdit, AskUser) are always registered. Other tools require enabling their feature in `Code` options:
 
 ```typescript
-// Parameters
-{
-  pattern: string;     // Regex pattern
-  path?: string;       // Directory or file to search
-  include?: string;    // File pattern filter (e.g., "*.ts")
-}
+const code = new Code({
+  aiProvider,
+  virtualFs,
+  virtualComputer,
+  options: {
+    enableSubagents: true,    // adds Agent tool
+    enableTasks: true,        // adds TaskCreate, TaskList, TaskGet, TaskUpdate
+    enablePlanMode: true,     // adds EnterPlanMode, ExitPlanMode
+    enableWorktrees: true,    // adds EnterWorktree, ExitWorktree
+    enableLsp: true,          // adds LSP tool (requires lspServers config)
+    skills: [...],            // adds Skill tool when skills are configured
+    webSearch: { ... },       // configures the WebSearch tool backend
+  },
+});
 ```
 
 ## How tools work
@@ -100,5 +100,7 @@ During an agent run, the model can request tool calls. The Thread's agent loop:
 3. Executes each tool via the `ToolRegistry`
 4. Sends tool results back to the model
 5. Repeats until the model produces a final text response
+
+Read-only tools marked with `isConcurrencySafe` can run in parallel within a single turn. The orchestration layer automatically partitions tool calls into concurrent and serial batches.
 
 See [Custom Tools](/docs/tools/custom) for how to add your own tools.

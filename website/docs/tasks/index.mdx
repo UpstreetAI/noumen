@@ -1,0 +1,65 @@
+---
+title: Task Management
+description: Track work items with an in-memory task store and agent-accessible task tools.
+---
+
+The task system lets agents create and manage structured work items. When enabled, four tools are added (TaskCreate, TaskList, TaskGet, TaskUpdate) that the agent uses to decompose work into trackable steps.
+
+## Configuration
+
+```typescript
+const code = new Code({
+  aiProvider,
+  virtualFs,
+  virtualComputer,
+  options: {
+    enableTasks: true,
+  },
+});
+```
+
+## Task tools
+
+| Tool | Description |
+|------|-------------|
+| **TaskCreate** | Create a new task with a subject and optional description. |
+| **TaskList** | List all tasks with current status and dependencies. |
+| **TaskGet** | Get details of a specific task by ID. |
+| **TaskUpdate** | Update a task's status, description, owner, or dependencies. |
+
+## TaskStore
+
+The `TaskStore` is an in-memory store that tracks tasks. It is created automatically when `enableTasks` is true, and can also be used programmatically:
+
+```typescript
+import { TaskStore } from "noumen";
+
+const store = new TaskStore();
+const task = store.create({ subject: "Implement auth module" });
+store.update(task.id, { status: "in_progress" });
+const all = store.list();
+```
+
+## Task type
+
+```typescript
+interface Task {
+  id: string;
+  subject: string;
+  description?: string;
+  status: "pending" | "in_progress" | "completed";
+  owner?: string;
+  blocks: string[];     // task IDs this task blocks
+  blockedBy: string[];  // task IDs that must complete first
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+## Dependencies
+
+Tasks support dependency tracking through `blocks` and `blockedBy` fields. The agent can use these to model task ordering:
+
+```typescript
+store.update(taskB.id, { blockedBy: [taskA.id] });
+```

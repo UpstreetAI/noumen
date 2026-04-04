@@ -41,6 +41,7 @@ export function buildSystemPrompt(opts: {
   tools?: Tool[];
   date?: string;
   memorySection?: string;
+  deferredTools?: { name: string; description: string }[];
 }): string {
   if (opts.customPrompt) {
     return opts.customPrompt;
@@ -58,6 +59,19 @@ export function buildSystemPrompt(opts: {
 
   if (opts.memorySection) {
     sections.push("\n" + opts.memorySection);
+  }
+
+  if (opts.deferredTools && opts.deferredTools.length > 0) {
+    sections.push("\n<available-deferred-tools>");
+    sections.push(
+      "The following tools are available but not yet loaded. " +
+      "Use the ToolSearch tool to load their full schemas before calling them.",
+    );
+    for (const tool of opts.deferredTools) {
+      const desc = tool.description.split(".")[0];
+      sections.push(`- ${tool.name}: ${desc}`);
+    }
+    sections.push("</available-deferred-tools>");
   }
 
   if (opts.skills && opts.skills.length > 0) {

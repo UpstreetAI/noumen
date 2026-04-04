@@ -103,6 +103,14 @@ export {
 export { notebookEditTool } from "./tools/notebook.js";
 export { askUserTool, type UserInputHandler } from "./tools/ask-user.js";
 export {
+  createToolSearchTool,
+  isDeferredTool,
+  formatDeferredToolLine,
+  searchToolsWithKeywords,
+  TOOL_SEARCH_NAME,
+  type ToolWithDeferral,
+} from "./tools/tool-search.js";
+export {
   runToolsBatched,
   partitionToolCalls,
   type ToolCallExecResult,

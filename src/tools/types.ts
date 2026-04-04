@@ -38,6 +38,10 @@ export interface ToolContext {
   fs: VirtualFs;
   computer: VirtualComputer;
   cwd: string;
+  /** The session ID of the current thread (used by Agent tool for hook events). */
+  sessionId?: string;
+  /** Hook definitions from the parent thread (used by Agent tool for subagent lifecycle hooks). */
+  hooks?: import("../hooks/types.js").HookDefinition[];
   /** Factory for spawning isolated subagent threads. */
   spawnSubagent?: (config: SubagentConfig) => SubagentRun;
   /** Handler for user input requests from the AskUser tool. */

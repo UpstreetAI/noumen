@@ -1,0 +1,81 @@
+---
+title: Retry & Error Resilience
+description: Automatic retry with exponential backoff, context overflow handling, and model fallback.
+---
+
+The retry engine wraps provider calls with automatic retry logic. It handles rate limits, transient errors, context overflow, and server overload with configurable strategies.
+
+## Configuration
+
+```typescript
+import { Code } from "noumen";
+
+const code = new Code({
+  aiProvider,
+  virtualFs,
+  virtualComputer,
+  options: {
+    retry: {
+      maxRetries: 10,
+      baseDelayMs: 500,
+      maxDelayMs: 32000,
+      fallbackModel: "gpt-4o-mini",
+    },
+  },
+});
+```
+
+## RetryConfig
+
+```typescript
+interface RetryConfig {
+  maxRetries?: number;              // max retry attempts (default: 10)
+  baseDelayMs?: number;             // base delay for backoff (default: 500)
+  maxDelayMs?: number;              // max delay cap (default: 32000)
+  fallbackModel?: string;           // model to switch to after repeated overloads
+  maxConsecutiveOverloaded?: number; // overloads before fallback (default: 3)
+  onRetry?: (attempt: number, error: Error, delayMs: number) => void;
+}
+```
+
+## Error classification
+
+The retry engine classifies errors to determine strategy:
+
+| Classification | Behavior |
+|---------------|----------|
+| Rate limited (429) | Retry with backoff, respects `retryAfter` header |
+| Server error (500/502/503) | Retry with backoff |
+| Overloaded (529) | Retry; switch to fallback model after `maxConsecutiveOverloaded` |
+| Context overflow | Reduce `max_tokens` and retry |
+| Auth/client error (4xx) | Do not retry |
+
+## Context overflow handling
+
+When the provider returns a context overflow error, the engine automatically calculates available tokens and retries with a reduced `max_tokens`:
+
+```
+available = contextLimit - inputTokens - safetyBuffer
+```
+
+If available tokens fall below 3000, the error is not retryable.
+
+## Stream events
+
+The retry engine emits stream events:
+
+- `retry_attempt` — before each retry, includes attempt number and delay
+- `retry_exhausted` — when all retries are used up
+
+```typescript
+for await (const event of thread.run("...")) {
+  if (event.type === "retry_attempt") {
+    console.log(`Retry ${event.attempt}/${event.maxRetries}, waiting ${event.delayMs}ms`);
+  }
+}
+```
+
+## Error types
+
+- `CannotRetryError` — thrown when an error is not retryable or retries are exhausted
+- `FallbackTriggeredError` — thrown when the model switches to the fallback

@@ -1,0 +1,89 @@
+---
+title: Memory
+description: Persist knowledge across sessions with a file-backed memory provider and automatic LLM-driven extraction.
+---
+
+The memory system lets agents retain knowledge across sessions. Memories are stored as markdown files and optionally injected into the system prompt so the agent has access to user preferences, project conventions, and past decisions.
+
+## Configuration
+
+```typescript
+import { Code, FileMemoryProvider, LocalFs } from "noumen";
+
+const memoryFs = new LocalFs({ basePath: ".noumen/memory" });
+
+const code = new Code({
+  aiProvider,
+  virtualFs,
+  virtualComputer,
+  options: {
+    memory: {
+      provider: new FileMemoryProvider(memoryFs),
+      autoExtract: true,       // run extraction after each turn
+      maxIndexLines: 200,      // truncate index after 200 lines
+      injectIntoSystemPrompt: true,
+    },
+  },
+});
+```
+
+## MemoryProvider interface
+
+Any storage backend can be used by implementing `MemoryProvider`:
+
+```typescript
+interface MemoryProvider {
+  loadIndex(): Promise<string>;
+  loadEntry(path: string): Promise<MemoryEntry | null>;
+  saveEntry(entry: MemoryEntry): Promise<void>;
+  removeEntry(path: string): Promise<void>;
+  listEntries(): Promise<MemoryEntry[]>;
+  search(query: string): Promise<MemoryEntry[]>;
+}
+```
+
+## FileMemoryProvider
+
+The built-in `FileMemoryProvider` stores memories as markdown files on a `VirtualFs`. Each memory is a `.md` file with YAML frontmatter containing metadata, and a `MEMORY.md` index file lists all entries.
+
+```typescript
+import { FileMemoryProvider, LocalFs } from "noumen";
+
+const provider = new FileMemoryProvider(
+  new LocalFs({ basePath: ".noumen/memory" }),
+  { maxIndexLines: 200 }
+);
+
+await provider.saveEntry({
+  name: "user-preferences",
+  description: "User prefers TypeScript strict mode",
+  type: "user",
+  content: "Always use strict TypeScript. Prefer const over let.",
+});
+```
+
+## Memory types
+
+| Type | Purpose |
+|------|---------|
+| `user` | User preferences and personal conventions |
+| `project` | Project-specific patterns and architecture decisions |
+| `feedback` | Corrections and feedback from past interactions |
+| `reference` | Documentation snippets and reference material |
+
+## Auto-extraction
+
+When `autoExtract` is enabled, the agent uses the LLM to analyze conversation turns and automatically extract memories worth persisting. Extraction creates, updates, or deletes memory entries based on new information.
+
+## MemoryEntry type
+
+```typescript
+interface MemoryEntry {
+  name: string;
+  description: string;
+  type: "user" | "project" | "feedback" | "reference";
+  content: string;
+  path?: string;
+  updatedAt?: string;
+}
+```

@@ -11,6 +11,7 @@ import type {
 } from "./session/types.js";
 import type { SkillDefinition } from "./skills/types.js";
 import type { Tool, ToolContext, SubagentConfig, SubagentRun } from "./tools/types.js";
+import { createToolSearchTool, TOOL_SEARCH_NAME } from "./tools/tool-search.js";
 import type { TaskStore } from "./tasks/store.js";
 import type { LspServerManager } from "./lsp/manager.js";
 import type {
@@ -109,6 +110,7 @@ export interface ThreadConfig {
   costTracker?: CostTracker;
   tracer?: Tracer;
   memory?: MemoryConfig;
+  toolSearchEnabled?: boolean;
 }
 
 export class Thread {
@@ -162,6 +164,18 @@ export class Thread {
     }
 
     this.toolRegistry = new ToolRegistry(extraTools.length > 0 ? extraTools : undefined);
+    if (config.toolSearchEnabled) {
+      this.toolRegistry.enableToolSearch();
+      const registry = this.toolRegistry;
+      registry.register(
+        createToolSearchTool(
+          () => registry.getDeferredTools(),
+          () => registry.listTools(),
+          (names) => registry.getToolsByNames(names),
+          (names) => registry.markDiscovered(names),
+        ),
+      );
+    }
     this.hooks = config.hooks ?? [];
     this.tracer = config.tracer ?? new NoopTracer();
     this.autoCompactTracking = createAutoCompactTracking();
@@ -202,11 +216,15 @@ export class Thread {
       const allSkills = this.config.skills ?? [];
       let systemPrompt = await this.buildCurrentSystemPromptAsync(allSkills);
 
-      const toolDefs = this.toolRegistry.toToolDefinitions();
+      let toolDefs = this.config.toolSearchEnabled
+        ? this.toolRegistry.getActiveToolDefinitions()
+        : this.toolRegistry.toToolDefinitions();
       const toolCtx: ToolContext = {
         fs: this.config.fs,
         computer: this.config.computer,
         cwd: this.cwd,
+        sessionId: this.sessionId,
+        hooks: this.hooks,
         spawnSubagent: this.config.spawnSubagent,
         userInputHandler: this.config.userInputHandler,
         taskStore: this.config.taskStore,
@@ -279,6 +297,13 @@ export class Thread {
             yield { type: "microcompact_complete", tokensFreed: mcResult.tokensFreed };
           }
         }
+
+        // --- TurnStart notification ---
+        await runNotificationHooks(hooks, "TurnStart", {
+          event: "TurnStart",
+          sessionId: this.sessionId,
+          messages: this.messages,
+        });
 
         const accumulatedContent: string[] = [];
         const accumulatedToolCalls = new Map<
@@ -578,6 +603,10 @@ export class Thread {
                 };
               }
 
+              if (execResult.preventContinuation) {
+                preventContinuation = true;
+              }
+
               const toolResultMsg: ChatMessage = {
                 role: "tool",
                 tool_call_id: execResult.toolCall.id,
@@ -798,6 +827,10 @@ export class Thread {
             }
           }
 
+          if (this.config.toolSearchEnabled) {
+            toolDefs = this.toolRegistry.getActiveToolDefinitions();
+          }
+
           if (preventContinuation) break;
           continue;
         }
@@ -998,6 +1031,8 @@ export class Thread {
         }
       }
 
+      let hookPreventContinuation = false;
+
       if (hooks.length > 0) {
         const hookOutput = await runPreToolUseHooks(hooks, {
           event: "PreToolUse", toolName: tc.function.name, toolInput: currentArgs, toolUseId: tc.id, sessionId,
@@ -1006,6 +1041,7 @@ export class Thread {
           return { result: { content: `Hook denied: ${hookOutput.message ?? "Blocked by hook."}`, isError: true }, permissionDenied: true, events };
         }
         if (hookOutput.updatedInput) currentArgs = hookOutput.updatedInput;
+        if (hookOutput.preventContinuation) hookPreventContinuation = true;
       }
 
       const toolSpan = this.tracer.startSpan("noumen.tool.execute", {
@@ -1022,9 +1058,10 @@ export class Thread {
         if (postOutput.updatedOutput !== undefined) {
           result = { ...result, content: postOutput.updatedOutput };
         }
+        if (postOutput.preventContinuation) hookPreventContinuation = true;
       }
 
-      return { result, events };
+      return { result, preventContinuation: hookPreventContinuation || undefined, events };
     };
   }
 
@@ -1042,11 +1079,19 @@ export class Thread {
       }
     }
 
+    const deferredTools = this.config.toolSearchEnabled
+      ? this.toolRegistry.getDeferredTools().map((t) => ({
+          name: t.name,
+          description: t.description,
+        }))
+      : undefined;
+
     return buildSystemPrompt({
       customPrompt: this.config.systemPrompt,
       skills: activeSkills,
       tools: this.toolRegistry.listTools(),
       memorySection,
+      deferredTools: deferredTools?.length ? deferredTools : undefined,
     });
   }
 

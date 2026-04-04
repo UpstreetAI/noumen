@@ -1,0 +1,96 @@
+---
+title: LSP Integration
+description: Give agents code intelligence via Language Server Protocol — definitions, references, hover, diagnostics, and symbols.
+---
+
+The LSP integration connects agents to language servers for rich code intelligence. When enabled, the agent gets an `LSP` tool that can query definitions, references, hover information, document symbols, and workspace symbols.
+
+## Configuration
+
+```typescript
+import { Code } from "noumen";
+
+const code = new Code({
+  aiProvider,
+  virtualFs,
+  virtualComputer,
+  options: {
+    enableLsp: true,
+    lspServers: [
+      {
+        command: "typescript-language-server",
+        args: ["--stdio"],
+        fileExtensions: [".ts", ".tsx", ".js", ".jsx"],
+      },
+      {
+        command: "pyright-langserver",
+        args: ["--stdio"],
+        fileExtensions: [".py"],
+      },
+    ],
+  },
+});
+```
+
+## LspServerConfig
+
+```typescript
+interface LspServerConfig {
+  command: string;              // Command to start the server
+  args?: string[];              // Arguments to pass
+  rootUri?: string;             // Workspace root URI
+  fileExtensions: string[];     // Extensions this server handles
+  env?: Record<string, string>; // Environment variables
+}
+```
+
+## LSP operations
+
+The `LSP` tool supports these operations:
+
+| Operation | Description |
+|-----------|-------------|
+| `goToDefinition` | Jump to the definition of a symbol at a given position. |
+| `findReferences` | Find all references to a symbol. |
+| `hover` | Get hover information (type signatures, documentation). |
+| `documentSymbol` | List all symbols in a file. |
+| `workspaceSymbol` | Search for symbols across the workspace. |
+
+## DiagnosticRegistry
+
+The `DiagnosticRegistry` collects diagnostics (errors, warnings) published by language servers:
+
+```typescript
+import { DiagnosticRegistry } from "noumen";
+
+const registry = new DiagnosticRegistry();
+// Diagnostics are registered automatically by LspServerManager
+const diagnostics = registry.peek(); // read without clearing
+registry.flush(); // read and clear
+```
+
+## Types
+
+```typescript
+interface LspDiagnostic {
+  filePath: string;
+  line: number;
+  character: number;
+  severity: "error" | "warning" | "info" | "hint";
+  message: string;
+  source?: string;
+}
+
+interface LspLocation {
+  filePath: string;
+  line: number;
+  character: number;
+}
+
+interface LspSymbol {
+  name: string;
+  kind: string;
+  location: LspLocation;
+  containerName?: string;
+}
+```

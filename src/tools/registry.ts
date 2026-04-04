@@ -1,6 +1,7 @@
 import type { Tool, ToolContext } from "./types.js";
 import type { ToolDefinition } from "../providers/types.js";
 import { formatZodValidationError } from "../utils/zod.js";
+import { isDeferredTool } from "./tool-search.js";
 import { readFileTool } from "./read.js";
 import { writeFileTool } from "./write.js";
 import { editFileTool } from "./edit.js";
@@ -27,6 +28,8 @@ export function resolveToolFlag(
 
 export class ToolRegistry {
   private tools: Map<string, Tool> = new Map();
+  private _discoveredTools = new Set<string>();
+  private _toolSearchEnabled = false;
 
   constructor(additionalTools?: Tool[]) {
     const builtIn = [
@@ -50,6 +53,14 @@ export class ToolRegistry {
         this.tools.set(tool.name, tool);
       }
     }
+  }
+
+  enableToolSearch(): void {
+    this._toolSearchEnabled = true;
+  }
+
+  register(tool: Tool): void {
+    this.tools.set(tool.name, tool);
   }
 
   get(name: string): Tool | undefined {
@@ -91,6 +102,50 @@ export class ToolRegistry {
         parameters: tool.parameters,
       },
     }));
+  }
+
+  /**
+   * Get tool definitions filtered by tool search. Eager tools (always sent)
+   * plus any deferred tools the model has discovered via ToolSearch.
+   * Falls back to all tools when tool search is not enabled.
+   */
+  getActiveToolDefinitions(): ToolDefinition[] {
+    if (!this._toolSearchEnabled) return this.toToolDefinitions();
+
+    return Array.from(this.tools.values())
+      .filter((tool) => !isDeferredTool(tool) || this._discoveredTools.has(tool.name))
+      .map((tool) => ({
+        type: "function" as const,
+        function: {
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.parameters,
+        },
+      }));
+  }
+
+  getEagerTools(): Tool[] {
+    return Array.from(this.tools.values()).filter((tool) => !isDeferredTool(tool));
+  }
+
+  getDeferredTools(): Tool[] {
+    return Array.from(this.tools.values()).filter(isDeferredTool);
+  }
+
+  getToolsByNames(names: string[]): Tool[] {
+    return names
+      .map((name) => this.tools.get(name))
+      .filter((t): t is Tool => t !== undefined);
+  }
+
+  markDiscovered(names: string[]): void {
+    for (const name of names) {
+      this._discoveredTools.add(name);
+    }
+  }
+
+  get discoveredTools(): ReadonlySet<string> {
+    return this._discoveredTools;
   }
 
   listTools(): Tool[] {

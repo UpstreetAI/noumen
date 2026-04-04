@@ -195,6 +195,8 @@ thread.abort();
 
 ## Built-in Tools
 
+### Core tools (always available)
+
 | Tool | Description |
 |------|-------------|
 | **ReadFile** | Read files with line numbers, offset/limit support |
@@ -203,6 +205,27 @@ thread.abort();
 | **Bash** | Execute shell commands |
 | **Glob** | Find files by glob pattern (via ripgrep) |
 | **Grep** | Search file contents by regex (via ripgrep) |
+| **WebFetch** | Fetch a URL and return contents as markdown |
+| **NotebookEdit** | Edit Jupyter notebook cells (replace, insert, delete) |
+| **AskUser** | Ask the user a question and wait for a response |
+
+### Optional tools (enabled via Code options)
+
+| Tool | Requires | Description |
+|------|----------|-------------|
+| **Agent** | `enableSubagents` | Spawn an isolated subagent for focused subtasks |
+| **Skill** | `skills` / `skillsPaths` | Invoke a named skill with arguments |
+| **TaskCreate** | `enableTasks` | Create a work item for tracking |
+| **TaskList** | `enableTasks` | List all tasks with status |
+| **TaskGet** | `enableTasks` | Get task details by ID |
+| **TaskUpdate** | `enableTasks` | Update task status/description |
+| **EnterPlanMode** | `enablePlanMode` | Switch to read-only exploration mode |
+| **ExitPlanMode** | `enablePlanMode` | Return to normal mode with optional plan |
+| **EnterWorktree** | `enableWorktrees` | Create an isolated git worktree |
+| **ExitWorktree** | `enableWorktrees` | Leave and optionally clean up worktree |
+| **LSP** | `enableLsp` | Query language servers (definitions, references, hover) |
+| **WebSearch** | `webSearch` config | Search the web via a user-provided backend |
+| **ToolSearch** | `toolSearch` | Discover deferred tools on demand (reduces context usage) |
 
 ## Extended Thinking
 
@@ -351,6 +374,122 @@ Conversations are persisted as JSONL files on the virtual filesystem. Each line 
 const sessions = await code.listSessions();
 // [{ sessionId, createdAt, lastMessageAt, title?, messageCount }]
 ```
+
+## Hooks
+
+Intercept tool calls, turn lifecycle, subagent spawning, compaction, and errors:
+
+```typescript
+const code = new Code({
+  aiProvider, virtualFs, virtualComputer,
+  options: {
+    hooks: [
+      {
+        event: "PreToolUse",
+        matcher: "Bash",
+        handler: async (input) => {
+          console.log(`Bash: ${input.toolInput.command}`);
+          return { decision: "allow" };
+        },
+      },
+      {
+        event: "TurnEnd",
+        handler: async (input) => {
+          console.log(`Turn ended for ${input.sessionId}`);
+        },
+      },
+    ],
+  },
+});
+```
+
+Events: `PreToolUse`, `PostToolUse`, `TurnStart`, `TurnEnd`, `SubagentStart`, `SubagentStop`, `PreCompact`, `PostCompact`, `Error`.
+
+## Permissions
+
+Control what tools the agent can use with modes and rules:
+
+```typescript
+options: {
+  permissions: {
+    mode: "default", // or "plan", "acceptEdits", "auto", "bypassPermissions", "dontAsk"
+    rules: [
+      { toolName: "Bash", behavior: "ask", source: "project" },
+      { toolName: "ReadFile", behavior: "allow", source: "user" },
+    ],
+    handler: async (request) => ({ allow: true }),
+  },
+}
+```
+
+## Multi-Agent Swarm
+
+Run multiple agents in parallel with message passing:
+
+```typescript
+import { SwarmManager, InProcessBackend } from "noumen";
+
+const backend = new InProcessBackend(code);
+const swarm = new SwarmManager(backend, { maxConcurrent: 3 });
+
+await swarm.spawn({ name: "researcher", prompt: "Find all TODOs" });
+await swarm.spawn({ name: "writer", prompt: "Write tests for auth" });
+await swarm.waitForAll();
+```
+
+## Memory
+
+Persist knowledge across sessions:
+
+```typescript
+import { FileMemoryProvider, LocalFs } from "noumen";
+
+options: {
+  memory: {
+    provider: new FileMemoryProvider(new LocalFs({ basePath: ".noumen/memory" })),
+    autoExtract: true,
+    injectIntoSystemPrompt: true,
+  },
+}
+```
+
+## MCP (Model Context Protocol)
+
+Connect to MCP servers to discover and use external tools:
+
+```typescript
+options: {
+  mcpServers: [
+    { type: "stdio", command: "npx", args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"] },
+    { type: "http", url: "http://localhost:3001/mcp" },
+  ],
+}
+```
+
+Or expose noumen's tools as an MCP server:
+
+```typescript
+import { createMcpServer } from "noumen";
+const server = createMcpServer({ tools: registry.listTools() });
+```
+
+## Tracing
+
+Instrument agent runs with OpenTelemetry:
+
+```typescript
+import { OTelTracer } from "noumen";
+
+options: {
+  tracing: { tracer: await OTelTracer.create("my-agent") },
+}
+```
+
+Falls back to no-op if `@opentelemetry/api` is not installed.
+
+## Full Documentation
+
+See **[noumen.dev](https://noumen.dev)** for complete documentation on all features including hooks, permissions, compaction strategies, LSP integration, task management, worktrees, plan mode, and more.
 
 ## License
 

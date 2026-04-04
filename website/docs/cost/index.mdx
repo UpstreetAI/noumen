@@ -1,0 +1,89 @@
+---
+title: Cost Tracking
+description: Track token usage and estimated costs across models with built-in pricing tables.
+---
+
+The cost tracking system records token usage per model and estimates USD costs using built-in pricing tables. It supports input, output, cache read, and cache creation tokens.
+
+## Configuration
+
+```typescript
+import { Code } from "noumen";
+
+const code = new Code({
+  aiProvider,
+  virtualFs,
+  virtualComputer,
+  options: {
+    costTracking: {
+      enabled: true,
+    },
+  },
+});
+```
+
+## Getting cost summaries
+
+After running threads, get a summary from the `Code` instance:
+
+```typescript
+const summary = code.getCostSummary();
+console.log(`Total cost: $${summary.totalCostUSD.toFixed(4)}`);
+console.log(`Input tokens: ${summary.totalInputTokens}`);
+console.log(`Output tokens: ${summary.totalOutputTokens}`);
+```
+
+Or use the formatted output:
+
+```typescript
+const tracker = new CostTracker();
+// ... after some usage ...
+console.log(tracker.formatSummary());
+// Total cost: $0.0234
+// Usage by model:
+//   gpt-4o: 12.3k input, 2.1k output ($0.0180)
+//   gpt-4o-mini: 5.2k input, 800 output ($0.0054)
+```
+
+## CostSummary type
+
+```typescript
+interface CostSummary {
+  totalCostUSD: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheReadTokens: number;
+  totalCacheCreationTokens: number;
+  byModel: Record<string, ModelUsageSummary>;
+  duration: { apiMs: number; wallMs: number };
+}
+```
+
+## Custom pricing
+
+Override built-in pricing by passing a custom pricing table:
+
+```typescript
+import { CostTracker, type ModelPricing } from "noumen";
+
+const pricing: Record<string, ModelPricing> = {
+  "my-custom-model": {
+    inputPer1M: 3.0,
+    outputPer1M: 15.0,
+  },
+};
+
+const tracker = new CostTracker(pricing);
+```
+
+## Stream events
+
+Cost updates are emitted as `cost_update` stream events during agent runs:
+
+```typescript
+for await (const event of thread.run("...")) {
+  if (event.type === "cost_update") {
+    console.log(`Running cost: $${event.summary.totalCostUSD.toFixed(4)}`);
+  }
+}
+```

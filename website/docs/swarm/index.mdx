@@ -1,0 +1,96 @@
+---
+title: Multi-Agent Swarm
+description: Run multiple agents in parallel with configurable concurrency, message passing, and pluggable backends.
+---
+
+The swarm system lets you run multiple agents concurrently, each with its own conversation context. Agents can exchange messages through a shared mailbox and report results back to a coordinator.
+
+## Quick start
+
+```typescript
+import { Code, SwarmManager, InProcessBackend } from "noumen";
+
+const code = new Code({ aiProvider, virtualFs, virtualComputer });
+await code.init();
+
+const backend = new InProcessBackend(code);
+const swarm = new SwarmManager(backend, { maxConcurrent: 3 });
+
+swarm.onEvent((event) => {
+  console.log(`[${event.type}] ${event.memberName}: ${event.content ?? ""}`);
+});
+
+await swarm.spawn({ name: "researcher", prompt: "Find all TODO comments in the codebase" });
+await swarm.spawn({ name: "writer", prompt: "Write tests for the auth module" });
+
+await swarm.waitForAll();
+
+const status = swarm.getStatus();
+for (const member of status.members) {
+  console.log(`${member.name}: ${member.status} — ${member.result}`);
+}
+```
+
+## SwarmManager
+
+The `SwarmManager` orchestrates agent lifecycle:
+
+| Method | Description |
+|--------|-------------|
+| `spawn(config)` | Start a new agent member. Respects `maxConcurrent`. |
+| `spawnAll(configs)` | Spawn multiple members sequentially. |
+| `sendMessage(from, to, content)` | Send a message between members. |
+| `kill(memberId)` | Abort a running member. |
+| `waitForAll()` | Wait for all members to complete. |
+| `getStatus()` | Get current members and messages. |
+| `onEvent(handler)` | Subscribe to swarm events. |
+
+## SwarmMemberConfig
+
+```typescript
+interface SwarmMemberConfig {
+  name: string;
+  prompt: string;
+  systemPrompt?: string;
+  allowedTools?: string[];
+  model?: string;
+}
+```
+
+When `allowedTools` is set, the member can only use those tools. Otherwise, it has access to the full tool registry.
+
+## Events
+
+| Event | Fires when |
+|-------|------------|
+| `swarm_member_start` | A member begins running. |
+| `swarm_member_complete` | A member finishes successfully. |
+| `swarm_member_failed` | A member throws an error. |
+| `swarm_message` | A message is sent between members. |
+
+## Mailbox
+
+The `Mailbox` handles message passing between swarm members:
+
+```typescript
+const mailbox = new Mailbox();
+mailbox.send("researcher", "writer", "Found 12 TODOs in src/auth/");
+const messages = mailbox.getMessagesFor("writer");
+```
+
+## Custom backends
+
+Implement `SwarmBackend` to run agents in different environments (containers, remote workers, etc.):
+
+```typescript
+interface SwarmBackend {
+  spawn(
+    member: SwarmMember,
+    config: SwarmMemberConfig,
+    mailbox: Mailbox,
+  ): AsyncGenerator<StreamEvent, string, unknown>;
+  kill(memberId: string): void;
+}
+```
+
+The built-in `InProcessBackend` runs agents as `Thread` instances in the same process.

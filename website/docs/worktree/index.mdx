@@ -1,0 +1,83 @@
+---
+title: Worktrees & Plan Mode
+description: Use git worktrees for isolated experimentation and plan mode for read-only exploration.
+---
+
+noumen includes tools for structured planning workflows: plan mode restricts the agent to read-only operations, while worktrees provide isolated git branches for parallel or experimental work.
+
+## Plan mode
+
+Enable plan mode tools so the agent can switch between exploration and implementation:
+
+```typescript
+const code = new Code({
+  aiProvider,
+  virtualFs,
+  virtualComputer,
+  options: {
+    enablePlanMode: true,
+  },
+});
+```
+
+### Tools
+
+| Tool | Description |
+|------|-------------|
+| **EnterPlanMode** | Switch to read-only mode. File writes and edits are denied. |
+| **ExitPlanMode** | Return to the previous permission mode, optionally with a plan summary. |
+
+When in plan mode, the permission system automatically denies write operations. The agent can still read files, search, and use other read-only tools.
+
+## Git worktrees
+
+Enable worktree tools for isolated branch-based experimentation:
+
+```typescript
+const code = new Code({
+  aiProvider,
+  virtualFs,
+  virtualComputer,
+  options: {
+    enableWorktrees: true,
+  },
+});
+```
+
+### Tools
+
+| Tool | Description |
+|------|-------------|
+| **EnterWorktree** | Create a new git worktree on a fresh branch and switch into it. |
+| **ExitWorktree** | Leave the worktree, optionally keeping or removing it. |
+
+### How it works
+
+1. `EnterWorktree` creates a worktree via `git worktree add` on a new branch
+2. The agent's working directory is switched to the worktree
+3. Changes are isolated from the main branch
+4. `ExitWorktree` returns to the original directory and optionally cleans up
+
+## Utility functions
+
+The worktree module also exports utility functions for programmatic use:
+
+```typescript
+import {
+  findGitRoot,
+  createWorktree,
+  removeWorktree,
+  listWorktrees,
+  getWorktreeChanges,
+  sanitizeWorktreeSlug,
+} from "noumen";
+```
+
+| Function | Description |
+|----------|-------------|
+| `findGitRoot(computer, cwd)` | Find the git repository root from a working directory. |
+| `createWorktree(computer, root, name, branch?)` | Create a new worktree. |
+| `removeWorktree(computer, root, path)` | Remove a worktree. |
+| `listWorktrees(computer, root)` | List all worktrees in a repository. |
+| `getWorktreeChanges(computer, worktreePath)` | Get a diff of changes in a worktree. |
+| `sanitizeWorktreeSlug(name)` | Clean a name for use as a worktree directory. |

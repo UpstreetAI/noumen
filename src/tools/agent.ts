@@ -1,4 +1,5 @@
 import type { Tool, ToolResult, ToolContext } from "./types.js";
+import { runNotificationHooks } from "../hooks/runner.js";
 
 const DEFAULT_MAX_TURNS = 25;
 
@@ -66,6 +67,16 @@ export const agentTool: Tool = {
       maxTurns,
     });
 
+    // Fire SubagentStart hook
+    if (ctx.hooks && ctx.hooks.length > 0) {
+      await runNotificationHooks(ctx.hooks, "SubagentStart", {
+        event: "SubagentStart",
+        sessionId,
+        parentSessionId: ctx.sessionId ?? "",
+        prompt,
+      });
+    }
+
     if (isAsync && ctx.taskStore) {
       const task = await ctx.taskStore.create({
         subject: `Agent: ${prompt.slice(0, 80)}`,
@@ -88,12 +99,28 @@ export const agentTool: Tool = {
             status: "completed",
             description: result.slice(0, 10_000),
           });
+          if (ctx.hooks && ctx.hooks.length > 0) {
+            await runNotificationHooks(ctx.hooks, "SubagentStop", {
+              event: "SubagentStop",
+              sessionId,
+              parentSessionId: ctx.sessionId ?? "",
+              result,
+            });
+          }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           await ctx.taskStore!.update(task.id, {
             status: "completed",
             description: `Error: ${msg}`,
           });
+          if (ctx.hooks && ctx.hooks.length > 0) {
+            await runNotificationHooks(ctx.hooks, "SubagentStop", {
+              event: "SubagentStop",
+              sessionId,
+              parentSessionId: ctx.sessionId ?? "",
+              result: `Error: ${msg}`,
+            });
+          }
         }
       })();
 
@@ -122,20 +149,42 @@ export const agentTool: Tool = {
           }
         }
         if (event.type === "error") {
-          return {
-            content: `Subagent error: ${event.error.message}`,
-            isError: true,
-          };
+          const errorResult = `Subagent error: ${event.error.message}`;
+          if (ctx.hooks && ctx.hooks.length > 0) {
+            await runNotificationHooks(ctx.hooks, "SubagentStop", {
+              event: "SubagentStop",
+              sessionId,
+              parentSessionId: ctx.sessionId ?? "",
+              result: errorResult,
+            });
+          }
+          return { content: errorResult, isError: true };
         }
       }
     } catch (err) {
-      return {
-        content: `Subagent failed: ${err instanceof Error ? err.message : String(err)}`,
-        isError: true,
-      };
+      const errorResult = `Subagent failed: ${err instanceof Error ? err.message : String(err)}`;
+      if (ctx.hooks && ctx.hooks.length > 0) {
+        await runNotificationHooks(ctx.hooks, "SubagentStop", {
+          event: "SubagentStop",
+          sessionId,
+          parentSessionId: ctx.sessionId ?? "",
+          result: errorResult,
+        });
+      }
+      return { content: errorResult, isError: true };
     }
 
     const result = assistantTexts.join("\n\n");
+
+    if (ctx.hooks && ctx.hooks.length > 0) {
+      await runNotificationHooks(ctx.hooks, "SubagentStop", {
+        event: "SubagentStop",
+        sessionId,
+        parentSessionId: ctx.sessionId ?? "",
+        result: result || "(subagent produced no output)",
+      });
+    }
+
     return {
       content: result || "(subagent produced no output)",
     };

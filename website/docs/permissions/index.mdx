@@ -1,0 +1,123 @@
+---
+title: Permissions
+description: Control what tools the agent can use with permission modes, rules, and an optional auto-classifier.
+---
+
+The permission system controls which tools the agent can use and under what conditions. It combines modes (global policies), rules (per-tool allow/deny), and an optional AI classifier for automatic approval.
+
+## Permission modes
+
+| Mode | Behavior |
+|------|----------|
+| `default` | Ask the user for permission on write operations. Read-only tools auto-allowed. |
+| `plan` | Only read-only tools allowed. Writes are denied. |
+| `acceptEdits` | Allow file edits automatically. Other writes still ask. |
+| `auto` | Use an AI classifier to decide automatically. |
+| `bypassPermissions` | Allow everything without asking. |
+| `dontAsk` | Deny anything that would normally require asking. |
+
+## Configuration
+
+```typescript
+import { Code, type PermissionConfig } from "noumen";
+
+const code = new Code({
+  aiProvider,
+  virtualFs,
+  virtualComputer,
+  options: {
+    permissions: {
+      mode: "default",
+      rules: [
+        { toolName: "Bash", behavior: "ask", source: "project" },
+        { toolName: "ReadFile", behavior: "allow", source: "user" },
+      ],
+      handler: async (request) => {
+        console.log(`Permission needed: ${request.toolName}`);
+        return { allow: true };
+      },
+      workingDirectories: ["/path/to/project"],
+    },
+  },
+});
+```
+
+## Rules
+
+Each rule targets a tool name and specifies `allow`, `deny`, or `ask`:
+
+```typescript
+interface PermissionRule {
+  toolName: string;
+  ruleContent?: string;
+  behavior: "allow" | "deny" | "ask";
+  source?: "user" | "project" | "session" | "policy";
+}
+```
+
+Rules have source-based precedence: `policy > project > user > session`. Higher-precedence rules override lower ones.
+
+The optional `ruleContent` field narrows the rule to specific input content (e.g., a Bash command pattern).
+
+## Permission handler
+
+When a tool call requires user approval, the `handler` callback is invoked:
+
+```typescript
+interface PermissionRequest {
+  toolName: string;
+  input: Record<string, unknown>;
+  message: string;
+  suggestions?: PermissionRule[];
+  isReadOnly: boolean;
+  isDestructive: boolean;
+}
+
+interface PermissionResponse {
+  allow: boolean;
+  updatedInput?: Record<string, unknown>;
+  feedback?: string;
+  addRules?: PermissionRule[];
+}
+```
+
+Return `addRules` to persist new rules for future tool calls in the session.
+
+## Resolution pipeline
+
+The permission pipeline resolves in this order:
+
+1. **Deny rules** — matching deny rules reject immediately
+2. **Ask rules** — matching ask rules trigger the handler
+3. **Tool-level checks** — the tool's `checkPermissions` method (if defined)
+4. **Mode behavior** — the current mode's default policy
+5. **Content allow rules** — matching allow rules with content conditions
+6. **Auto classifier** — if mode is `auto`, an AI classifier decides
+7. **Fallback** — ask the handler
+
+## Denial tracking
+
+Configure denial limits to prevent infinite loops when the agent keeps trying denied operations:
+
+```typescript
+permissions: {
+  denialTracking: {
+    maxConsecutive: 3,
+    maxTotal: 20,
+  },
+}
+```
+
+## Auto mode
+
+In `auto` mode, an AI classifier evaluates each tool call to decide whether to allow or deny:
+
+```typescript
+permissions: {
+  mode: "auto",
+  autoMode: {
+    classifierModel: "gpt-4o-mini",
+    classifierPrompt: "Only allow read operations and safe bash commands.",
+  },
+}
+```

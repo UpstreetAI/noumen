@@ -5,6 +5,7 @@ import type { SkillDefinition } from "./skills/types.js";
 import type { Tool, SubagentConfig, SubagentRun } from "./tools/types.js";
 import { agentTool } from "./tools/agent.js";
 import { createWebSearchTool, type WebSearchConfig } from "./tools/web-search.js";
+import { createToolSearchTool } from "./tools/tool-search.js";
 import { taskCreateTool } from "./tools/task-create.js";
 import { taskListTool } from "./tools/task-list.js";
 import { taskGetTool } from "./tools/task-get.js";
@@ -87,6 +88,8 @@ export interface CodeOptions {
     };
     tracing?: TracingConfig;
     memory?: MemoryConfig;
+    /** Enable ToolSearch: deferred tools are hidden until the model discovers them. */
+    toolSearch?: boolean;
   };
 }
 
@@ -128,6 +131,7 @@ export class Code {
   private microcompactConfig?: MicrocompactConfig;
   private toolResultBudgetConfig?: ToolResultBudgetConfig;
   private reactiveCompactConfig?: ReactiveCompactConfig;
+  private toolSearchEnabled: boolean;
 
   constructor(opts: CodeOptions) {
     this.aiProvider = opts.aiProvider;
@@ -187,6 +191,7 @@ export class Code {
     this.microcompactConfig = opts.options?.microcompact;
     this.toolResultBudgetConfig = opts.options?.toolResultBudget;
     this.reactiveCompactConfig = opts.options?.reactiveCompact;
+    this.toolSearchEnabled = opts.options?.toolSearch ?? false;
   }
 
   private async getSkills(): Promise<SkillDefinition[]> {
@@ -305,6 +310,7 @@ export class Code {
         costTracker: this.costTracker ?? undefined,
         tracer: this.tracer,
         memory: this.memoryConfig,
+        toolSearchEnabled: this.toolSearchEnabled,
       },
       {
         ...opts,

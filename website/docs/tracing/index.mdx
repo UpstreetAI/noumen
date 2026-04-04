@@ -1,0 +1,77 @@
+---
+title: Tracing
+description: Instrument agent runs with OpenTelemetry-compatible spans for observability and debugging.
+---
+
+noumen includes a tracing abstraction that emits spans for provider calls, tool executions, and compaction. It integrates with OpenTelemetry when `@opentelemetry/api` is installed, and falls back to a no-op tracer otherwise.
+
+## Configuration
+
+```typescript
+import { Code, OTelTracer } from "noumen";
+
+const tracer = await OTelTracer.create("my-agent", "1.0.0");
+
+const code = new Code({
+  aiProvider,
+  virtualFs,
+  virtualComputer,
+  options: {
+    tracing: { tracer },
+  },
+});
+```
+
+## OTelTracer
+
+The `OTelTracer` adapts noumen's `Tracer` interface to OpenTelemetry. It lazily loads `@opentelemetry/api` via dynamic import — if the package is not installed, `OTelTracer.create()` returns a `NoopTracer`.
+
+```typescript
+import { OTelTracer } from "noumen";
+
+const tracer = await OTelTracer.create("service-name", "1.0.0");
+// If @opentelemetry/api is not installed, this is a no-op tracer
+```
+
+## NoopTracer
+
+For development or when tracing is not needed:
+
+```typescript
+import { NoopTracer } from "noumen";
+
+const tracer = new NoopTracer();
+```
+
+## Tracer interface
+
+Implement this interface to integrate with any tracing backend:
+
+```typescript
+interface Tracer {
+  startSpan(name: string, options?: SpanOptions): Span;
+}
+
+interface Span {
+  readonly name: string;
+  setAttribute(key: string, value: SpanAttributeValue): void;
+  addEvent(name: string, attributes?: Record<string, SpanAttributeValue>): void;
+  setStatus(code: SpanStatusCode, message?: string): void;
+  end(): void;
+}
+```
+
+## Stream events
+
+Tracing emits `span_start` and `span_end` stream events that you can observe:
+
+```typescript
+for await (const event of thread.run("Fix the bug")) {
+  if (event.type === "span_start") {
+    console.log(`Span started: ${event.name}`);
+  }
+  if (event.type === "span_end") {
+    console.log(`Span ended: ${event.name} (${event.status})`);
+  }
+}
+```

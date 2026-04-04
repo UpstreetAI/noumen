@@ -1,0 +1,99 @@
+---
+title: Compaction
+description: Manage context window usage with auto-compact, microcompact, tool-result budgets, and reactive compaction strategies.
+---
+
+Long agent sessions accumulate messages that can exceed the model's context window. noumen provides multiple compaction strategies that work together to keep conversations within limits while preserving important context.
+
+## Manual compaction
+
+Call `thread.compact()` to trigger compaction on demand:
+
+```typescript
+const thread = code.createThread();
+// ... after many turns ...
+await thread.compact();
+```
+
+This summarizes the conversation using the LLM and replaces older messages with a compact summary.
+
+## Auto-compact
+
+Auto-compact triggers compaction automatically when token usage exceeds a threshold. Enable it via `Code` options:
+
+```typescript
+const code = new Code({
+  aiProvider,
+  virtualFs,
+  virtualComputer,
+  options: {
+    autoCompactThreshold: 0.8, // compact at 80% of context window
+  },
+});
+```
+
+The system estimates token usage before each provider call and compacts if the threshold is exceeded. A circuit breaker prevents repeated compaction failures from blocking progress.
+
+## Microcompact
+
+Microcompact clears old tool results for specific tools to reclaim space without a full compaction. It runs before each turn when enabled:
+
+```typescript
+options: {
+  microcompact: {
+    maxToolResults: 5, // keep only the 5 most recent results per tool
+  },
+}
+```
+
+Tool results from `ReadFile`, `Grep`, `Glob`, `Bash`, `WebFetch`, and `WebSearch` are eligible for clearing. Cleared results are replaced with a `[cleared]` placeholder.
+
+## Tool result budget
+
+The tool result budget enforces per-result and per-turn character limits on tool outputs:
+
+```typescript
+options: {
+  toolResultBudget: {
+    maxCharsPerResult: 50000,
+    maxCharsPerTurn: 200000,
+  },
+}
+```
+
+When a result exceeds the limit, it is truncated with an indicator showing the original size.
+
+## Reactive compact
+
+Reactive compaction is a last-resort strategy that fires when the provider returns a context overflow error. It attempts a full compaction and, if that is not enough, truncates messages from the head of the conversation:
+
+```typescript
+options: {
+  reactiveCompact: {
+    enabled: true,
+    maxHeadTruncations: 3,
+  },
+}
+```
+
+## CompactOptions
+
+The `compactConversation` function accepts options for customizing the summary:
+
+```typescript
+interface CompactOptions {
+  customInstructions?: string;
+  tailMessagesToKeep?: number;    // messages to exclude from summarization
+  stripBinaryContent?: boolean;   // remove base64/binary before summarizing (default: true)
+}
+```
+
+## How strategies compose
+
+The strategies run at different points in the agent loop:
+
+1. **Tool result budget** — applied immediately when tool results arrive
+2. **Microcompact** — runs before each provider call to clear stale results
+3. **Auto-compact** — runs before each provider call if token threshold is exceeded
+4. **Reactive compact** — runs after a context overflow error from the provider
+5. **Manual compact** — triggered by the consumer via `thread.compact()`
