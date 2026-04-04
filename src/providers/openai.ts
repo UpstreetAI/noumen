@@ -12,6 +12,8 @@ export interface OpenAIProviderOptions {
   model?: string;
 }
 
+const O_SERIES_PATTERN = /^o[1-9]/;
+
 export class OpenAIProvider implements AIProvider {
   private client: OpenAI;
   private defaultModel: string;
@@ -26,20 +28,44 @@ export class OpenAIProvider implements AIProvider {
 
   async *chat(params: ChatParams): AsyncIterable<ChatStreamChunk> {
     const messages = this.buildMessages(params.system, params.messages);
+    const model = params.model ?? this.defaultModel;
+    const isOSeries = O_SERIES_PATTERN.test(model);
 
-    const stream = await this.client.chat.completions.create({
-      model: params.model ?? this.defaultModel,
+    const createParams: OpenAI.ChatCompletionCreateParamsStreaming = {
+      model,
       messages: messages as unknown as OpenAI.ChatCompletionMessageParam[],
       tools: params.tools?.map((t) => ({
         type: "function" as const,
         function: t.function,
       })),
-      max_tokens: params.max_tokens,
-      temperature: params.temperature,
       stream: true,
-    });
+    };
+
+    if (isOSeries && params.thinking?.type === "enabled") {
+      (createParams as unknown as Record<string, unknown>).reasoning_effort = "high";
+    } else {
+      createParams.max_tokens = params.max_tokens;
+      createParams.temperature = params.temperature;
+    }
+
+    const stream = await this.client.chat.completions.create(createParams);
 
     for await (const chunk of stream) {
+      const usage = chunk.usage;
+      let mappedUsage: ChatStreamChunk["usage"] | undefined;
+      if (usage) {
+        const u = usage as unknown as Record<string, unknown>;
+        const promptDetails = u.prompt_tokens_details as Record<string, unknown> | undefined;
+        const completionDetails = u.completion_tokens_details as Record<string, unknown> | undefined;
+        mappedUsage = {
+          prompt_tokens: usage.prompt_tokens,
+          completion_tokens: usage.completion_tokens,
+          total_tokens: usage.total_tokens,
+          cache_read_tokens: promptDetails?.cached_tokens as number | undefined,
+          thinking_tokens: completionDetails?.reasoning_tokens as number | undefined,
+        };
+      }
+
       yield {
         id: chunk.id,
         model: chunk.model,
@@ -62,13 +88,7 @@ export class OpenAIProvider implements AIProvider {
           },
           finish_reason: c.finish_reason,
         })),
-        usage: chunk.usage
-          ? {
-              prompt_tokens: chunk.usage.prompt_tokens,
-              completion_tokens: chunk.usage.completion_tokens,
-              total_tokens: chunk.usage.total_tokens,
-            }
-          : undefined,
+        usage: mappedUsage,
       };
     }
   }

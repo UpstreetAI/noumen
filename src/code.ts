@@ -9,11 +9,16 @@ import type { SessionInfo } from "./session/types.js";
 import type { McpServerConfig } from "./mcp/types.js";
 import type { PermissionConfig } from "./permissions/types.js";
 import type { HookDefinition } from "./hooks/types.js";
+import type { ThinkingConfig } from "./thinking/types.js";
+import type { RetryConfig } from "./retry/types.js";
+import type { ModelPricing } from "./cost/types.js";
+import { CostTracker } from "./cost/tracker.js";
 import { McpClientManager } from "./mcp/client.js";
 import { SessionStorage } from "./session/storage.js";
 import { Thread, type ThreadOptions } from "./thread.js";
 import { createAutoCompactConfig } from "./compact/auto-compact.js";
 import { buildUserContext } from "./prompt/context.js";
+import { DEFAULT_RETRY_CONFIG } from "./retry/types.js";
 
 export interface CodeOptions {
   aiProvider: AIProvider;
@@ -51,6 +56,12 @@ export interface CodeOptions {
     streamingToolExecution?: boolean;
     webSearch?: WebSearchConfig;
     userInputHandler?: (question: string) => Promise<string>;
+    thinking?: ThinkingConfig;
+    retry?: RetryConfig | boolean;
+    costTracking?: {
+      enabled: boolean;
+      pricing?: Record<string, ModelPricing>;
+    };
   };
 }
 
@@ -78,6 +89,9 @@ export class Code {
   private streamingToolExecution: boolean;
   private webSearchConfig?: WebSearchConfig;
   private userInputHandler?: (question: string) => Promise<string>;
+  private thinkingConfig?: ThinkingConfig;
+  private retryConfig?: RetryConfig;
+  private costTracker: CostTracker | null = null;
 
   constructor(opts: CodeOptions) {
     this.aiProvider = opts.aiProvider;
@@ -100,6 +114,17 @@ export class Code {
     this.streamingToolExecution = opts.options?.streamingToolExecution ?? false;
     this.webSearchConfig = opts.options?.webSearch;
     this.userInputHandler = opts.options?.userInputHandler;
+    this.thinkingConfig = opts.options?.thinking;
+
+    if (opts.options?.retry === true) {
+      this.retryConfig = DEFAULT_RETRY_CONFIG;
+    } else if (typeof opts.options?.retry === "object") {
+      this.retryConfig = opts.options.retry;
+    }
+
+    if (opts.options?.costTracking?.enabled) {
+      this.costTracker = new CostTracker(opts.options.costTracking.pricing);
+    }
 
     if (opts.options?.mcpServers && Object.keys(opts.options.mcpServers).length > 0) {
       this.mcpManager = new McpClientManager(opts.options.mcpServers);
@@ -153,6 +178,9 @@ export class Code {
             ? { mode: config.permissionMode }
             : { mode: "bypassPermissions" },
           hooks: this.hooks,
+          thinking: this.thinkingConfig,
+          retry: this.retryConfig,
+          costTracker: this.costTracker ?? undefined,
         },
         { cwd: parentCwd },
       );
@@ -192,6 +220,9 @@ export class Code {
           : undefined,
         streamingToolExecution: this.streamingToolExecution,
         userInputHandler: this.userInputHandler,
+        thinking: this.thinkingConfig,
+        retry: this.retryConfig,
+        costTracker: this.costTracker ?? undefined,
       },
       {
         ...opts,
@@ -202,6 +233,10 @@ export class Code {
 
   async listSessions(): Promise<SessionInfo[]> {
     return this.storage.listSessions();
+  }
+
+  getCostSummary(): import("./cost/types.js").CostSummary | null {
+    return this.costTracker?.getSummary() ?? null;
   }
 
   /**

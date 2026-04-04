@@ -137,6 +137,15 @@ const code = new Code({
     cwd: "/working/dir",              // working directory for tools
     skills: [{ name: "...", content: "..." }],
     skillsPaths: [".claude/skills"],   // paths to SKILL.md files on virtualFs
+
+    // Extended thinking / reasoning (see below)
+    thinking: { type: "enabled", budgetTokens: 10000 },
+
+    // Retry / error resilience (see below)
+    retry: true,                       // use defaults, or pass a RetryConfig
+
+    // Cost tracking (see below)
+    costTracking: { enabled: true },
   },
 });
 ```
@@ -170,12 +179,16 @@ thread.abort();
 | Event | Fields | Description |
 |-------|--------|-------------|
 | `text_delta` | `text` | Incremental text from the model |
+| `thinking_delta` | `text` | Incremental thinking/reasoning text from the model |
 | `tool_use_start` | `toolName`, `toolUseId` | Model is calling a tool |
 | `tool_use_delta` | `input` | Incremental tool call arguments |
 | `tool_result` | `toolUseId`, `toolName`, `result` | Tool execution result |
 | `message_complete` | `message` | Full assistant message |
 | `usage` | `usage`, `model` | Token usage for a single model call |
+| `cost_update` | `summary` | Updated cost summary after each model call |
 | `turn_complete` | `usage`, `model`, `callCount` | Accumulated usage for the full agent turn |
+| `retry_attempt` | `attempt`, `maxRetries`, `delayMs`, `error` | A retryable error occurred; waiting before retry |
+| `retry_exhausted` | `attempts`, `error` | All retries exhausted |
 | `compact_start` | | Auto-compaction started |
 | `compact_complete` | | Auto-compaction finished |
 | `error` | `error` | An error occurred |
@@ -190,6 +203,123 @@ thread.abort();
 | **Bash** | Execute shell commands |
 | **Glob** | Find files by glob pattern (via ripgrep) |
 | **Grep** | Search file contents by regex (via ripgrep) |
+
+## Extended Thinking
+
+Enable model reasoning/thinking for supported providers. Each provider maps the config to its native format:
+
+- **Anthropic**: Sets `thinking.budget_tokens` on the API call
+- **OpenAI**: Maps to `reasoning_effort: "high"` for o-series models
+- **Gemini**: Sets `thinkingConfig.thinkingBudget`
+
+```typescript
+const code = new Code({
+  aiProvider,
+  virtualFs,
+  virtualComputer,
+  options: {
+    thinking: { type: "enabled", budgetTokens: 10000 },
+  },
+});
+
+for await (const event of thread.run("Solve this complex problem")) {
+  if (event.type === "thinking_delta") {
+    process.stderr.write(event.text); // reasoning trace
+  }
+  if (event.type === "text_delta") {
+    process.stdout.write(event.text); // final answer
+  }
+}
+```
+
+Disable explicitly with `{ type: "disabled" }`, or omit the option entirely for default behavior.
+
+## Retry / Error Resilience
+
+Automatic retries with exponential backoff, Retry-After header support, context overflow recovery, and model fallback. Handles 429 (rate limit), 529 (overloaded), 500/502/503 (server errors), and connection failures.
+
+```typescript
+const code = new Code({
+  aiProvider,
+  virtualFs,
+  virtualComputer,
+  options: {
+    retry: true, // use sensible defaults
+  },
+});
+
+// Or customize:
+const code2 = new Code({
+  aiProvider,
+  virtualFs,
+  virtualComputer,
+  options: {
+    retry: {
+      maxRetries: 10,
+      baseDelayMs: 500,
+      maxDelayMs: 32000,
+      retryableStatuses: [408, 429, 500, 502, 503, 529],
+      fallbackModel: "gpt-4o-mini",     // switch model after repeated 529s
+      maxConsecutiveOverloaded: 3,
+      onRetry: (attempt, error, delayMs) => {
+        console.log(`Retry ${attempt}, waiting ${delayMs}ms: ${error.message}`);
+      },
+    },
+  },
+});
+```
+
+On context overflow (input + max_tokens > context limit), the engine automatically reduces `max_tokens` and retries — no manual intervention needed.
+
+## Cost Tracking
+
+Track token usage and estimate USD costs across all model calls. Includes built-in pricing for Claude, GPT-4o, Gemini, and o-series models.
+
+```typescript
+const code = new Code({
+  aiProvider,
+  virtualFs,
+  virtualComputer,
+  options: {
+    costTracking: { enabled: true },
+  },
+});
+
+const thread = code.createThread();
+
+for await (const event of thread.run("Refactor the auth module")) {
+  if (event.type === "cost_update") {
+    console.log(`Running cost: $${event.summary.totalCostUSD.toFixed(4)}`);
+  }
+}
+
+// Or get the summary at any time
+const summary = code.getCostSummary();
+console.log(`Total: $${summary.totalCostUSD.toFixed(4)}`);
+console.log(`Input tokens: ${summary.totalInputTokens}`);
+console.log(`Output tokens: ${summary.totalOutputTokens}`);
+```
+
+Supply custom pricing for unlisted models:
+
+```typescript
+const code = new Code({
+  aiProvider,
+  virtualFs,
+  virtualComputer,
+  options: {
+    costTracking: {
+      enabled: true,
+      pricing: {
+        "my-custom-model": {
+          inputTokens: 1,    // USD per 1M tokens
+          outputTokens: 3,
+        },
+      },
+    },
+  },
+});
+```
 
 ## Skills
 

@@ -18,6 +18,7 @@ interface GeminiContent {
 
 interface GeminiPart {
   text?: string;
+  thought?: boolean;
   functionCall?: { name: string; args: Record<string, unknown> };
   functionResponse?: {
     name: string;
@@ -52,6 +53,13 @@ export class GeminiProvider implements AIProvider {
         ]
       : undefined;
 
+    const thinkingEnabled =
+      params.thinking?.type === "enabled" &&
+      (params.thinking as { budgetTokens: number }).budgetTokens > 0;
+    const thinkingBudget = thinkingEnabled
+      ? (params.thinking as { type: "enabled"; budgetTokens: number }).budgetTokens
+      : 0;
+
     const stream = await this.client.models.generateContentStream({
       model: params.model ?? this.defaultModel,
       contents,
@@ -61,7 +69,7 @@ export class GeminiProvider implements AIProvider {
         temperature: params.temperature,
         tools,
         thinkingConfig: {
-          thinkingBudget: 0,
+          thinkingBudget: thinkingBudget,
         },
       },
     });
@@ -75,7 +83,7 @@ export class GeminiProvider implements AIProvider {
       const model = params.model ?? this.defaultModel;
 
       const meta = chunk.usageMetadata as
-        | { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number }
+        | { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number; thoughtsTokenCount?: number }
         | undefined;
       if (meta) {
         const prompt = meta.promptTokenCount ?? 0;
@@ -84,16 +92,32 @@ export class GeminiProvider implements AIProvider {
           prompt_tokens: prompt,
           completion_tokens: completion,
           total_tokens: meta.totalTokenCount ?? (prompt + completion),
+          thinking_tokens: meta.thoughtsTokenCount || undefined,
         };
       }
 
       const candidates = chunk.candidates;
       if (!candidates || candidates.length === 0) continue;
 
-      const parts = candidates[0].content?.parts;
+      const parts = candidates[0].content?.parts as GeminiPart[] | undefined;
       if (!parts) continue;
 
       for (const part of parts) {
+        if (part.thought && part.text !== undefined && part.text !== null) {
+          yield {
+            id: chunkId,
+            model,
+            choices: [
+              {
+                index: 0,
+                delta: { thinking_content: part.text },
+                finish_reason: null,
+              },
+            ],
+          };
+          continue;
+        }
+
         if (part.text !== undefined && part.text !== null) {
           yield {
             id: chunkId,
@@ -164,7 +188,6 @@ export class GeminiProvider implements AIProvider {
   ): { contents: GeminiContent[]; systemInstruction: string | undefined } {
     const contents: GeminiContent[] = [];
 
-    // Map tool_call_id -> function name, built from assistant messages
     const toolCallIdToName = new Map<string, string>();
     for (const msg of messages) {
       if (msg.role === "assistant" && msg.tool_calls) {

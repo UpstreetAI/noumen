@@ -1,4 +1,5 @@
 import type { ChatMessage } from "../session/types.js";
+import type { ThinkingConfig } from "../thinking/types.js";
 
 export interface ToolParameterProperty {
   type: string;
@@ -27,6 +28,7 @@ export interface ToolDefinition {
 export interface ChatStreamDelta {
   role?: "assistant";
   content?: string | null;
+  thinking_content?: string | null;
   tool_calls?: Array<{
     index: number;
     id?: string;
@@ -52,6 +54,9 @@ export interface ChatStreamChunk {
     prompt_tokens: number;
     completion_tokens: number;
     total_tokens: number;
+    cache_read_tokens?: number;
+    cache_creation_tokens?: number;
+    thinking_tokens?: number;
   };
 }
 
@@ -59,6 +64,9 @@ export interface ChatCompletionUsage {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+  cache_read_tokens?: number;
+  cache_creation_tokens?: number;
+  thinking_tokens?: number;
 }
 
 export interface ChatParams {
@@ -68,8 +76,29 @@ export interface ChatParams {
   max_tokens?: number;
   system?: string;
   temperature?: number;
+  thinking?: ThinkingConfig;
 }
 
 export interface AIProvider {
   chat(params: ChatParams): AsyncIterable<ChatStreamChunk>;
+}
+
+/**
+ * Extended error type that providers can throw to convey retry-relevant metadata.
+ * Consumers (like the retry engine) can inspect these fields without knowing
+ * provider-specific SDK error types.
+ */
+export class ChatStreamError extends Error {
+  status?: number;
+  retryAfter?: string;
+
+  constructor(
+    message: string,
+    opts?: { status?: number; retryAfter?: string; cause?: unknown },
+  ) {
+    super(message, { cause: opts?.cause });
+    this.name = "ChatStreamError";
+    this.status = opts?.status;
+    this.retryAfter = opts?.retryAfter;
+  }
 }

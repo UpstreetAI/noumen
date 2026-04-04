@@ -1,5 +1,6 @@
 import type { UUID } from "../utils/uuid.js";
 import type { ChatCompletionUsage } from "../providers/types.js";
+import type { CostSummary } from "../cost/types.js";
 
 // --- Chat message types (OpenAI-compatible format) ---
 
@@ -162,6 +163,16 @@ export type StreamEvent =
       input: Record<string, unknown>;
       message: string;
     }
+  | { type: "thinking_delta"; text: string }
+  | { type: "cost_update"; summary: CostSummary }
+  | {
+      type: "retry_attempt";
+      attempt: number;
+      maxRetries: number;
+      delayMs: number;
+      error: Error;
+    }
+  | { type: "retry_exhausted"; attempts: number; error: Error }
   | { type: "subagent_start"; toolUseId: string; prompt: string }
   | { type: "subagent_end"; toolUseId: string; result: string }
   | {

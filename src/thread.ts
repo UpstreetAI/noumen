@@ -17,6 +17,9 @@ import type {
   PermissionRequest,
 } from "./permissions/types.js";
 import type { HookDefinition } from "./hooks/types.js";
+import type { ThinkingConfig } from "./thinking/types.js";
+import type { RetryConfig } from "./retry/types.js";
+import type { CostTracker } from "./cost/tracker.js";
 import {
   runPreToolUseHooks,
   runPostToolUseHooks,
@@ -40,6 +43,8 @@ import { generateUUID } from "./utils/uuid.js";
 import { activateSkillsForPaths, getActiveSkills } from "./skills/activation.js";
 import { createSkillTool } from "./tools/skill.js";
 import { resolvePermission } from "./permissions/pipeline.js";
+import { withRetry, CannotRetryError, FallbackTriggeredError } from "./retry/engine.js";
+import { classifyError } from "./retry/classify.js";
 
 const FILE_TOOLS = new Set(["ReadFile", "WriteFile", "EditFile"]);
 
@@ -66,6 +71,9 @@ export interface ThreadConfig {
   spawnSubagent?: (config: SubagentConfig) => SubagentRun;
   streamingToolExecution?: boolean;
   userInputHandler?: (question: string) => Promise<string>;
+  thinking?: ThinkingConfig;
+  retry?: RetryConfig;
+  costTracker?: CostTracker;
 }
 
 export class Thread {
@@ -157,6 +165,8 @@ export class Thread {
       const hooks = this.hooks;
 
       const useStreamingExec = this.config.streamingToolExecution ?? false;
+      const retryConfig = this.config.retry;
+      let currentMaxTokens = this.config.maxTokens;
 
       while (!signal.aborted) {
         const accumulatedContent: string[] = [];
@@ -167,7 +177,6 @@ export class Thread {
         let finishReason: string | null = null;
         let lastUsage: ChatCompletionUsage | undefined;
 
-        // Streaming executor: created per model call when enabled
         let streamingExec: StreamingToolExecutor | null = null;
         const streamingResults: StreamingExecResult[] = [];
 
@@ -178,13 +187,54 @@ export class Thread {
           );
         }
 
-        const stream = this.config.aiProvider.chat({
+        const chatParams = {
           model: this.model,
           messages: this.messages,
           tools: toolDefs,
           system: systemPrompt,
-          max_tokens: this.config.maxTokens,
-        });
+          max_tokens: currentMaxTokens,
+          thinking: this.config.thinking,
+        };
+
+        let stream: AsyncIterable<import("./providers/types.js").ChatStreamChunk>;
+
+        if (retryConfig) {
+          const retryGen = withRetry(
+            (ctx) => {
+              const params = { ...chatParams };
+              if (ctx.maxTokensOverride !== undefined) {
+                params.max_tokens = ctx.maxTokensOverride;
+              }
+              if (ctx.model !== chatParams.model) {
+                params.model = ctx.model;
+              }
+              return this.config.aiProvider.chat(params);
+            },
+            {
+              ...retryConfig,
+              model: this.model,
+              thinkingBudget:
+                this.config.thinking?.type === "enabled"
+                  ? this.config.thinking.budgetTokens
+                  : undefined,
+              signal,
+            },
+          );
+
+          let retryResult = await retryGen.next();
+          while (!retryResult.done) {
+            const event = retryResult.value;
+            yield event;
+            retryResult = await retryGen.next();
+          }
+
+          stream = retryResult.value;
+          if (retryResult.value === undefined) break;
+        } else {
+          stream = this.config.aiProvider.chat(chatParams);
+        }
+
+        const apiStartTime = Date.now();
 
         for await (const chunk of stream) {
           if (signal.aborted) break;
@@ -199,6 +249,10 @@ export class Thread {
             }
 
             const delta = choice.delta;
+
+            if (delta.thinking_content) {
+              yield { type: "thinking_delta", text: delta.thinking_content };
+            }
 
             if (delta.content) {
               accumulatedContent.push(delta.content);
@@ -227,7 +281,6 @@ export class Thread {
                     };
                   }
 
-                  // When a new tool starts, the previous one is complete
                   if (streamingExec && tc.index > 0) {
                     const prevTc = accumulatedToolCalls.get(tc.index - 1);
                     if (prevTc && !prevTc.complete) {
@@ -255,7 +308,6 @@ export class Thread {
             }
           }
 
-          // During streaming, yield any completed results from the executor
           if (streamingExec) {
             for (const result of streamingExec.getCompletedResults()) {
               streamingResults.push(result);
@@ -263,7 +315,8 @@ export class Thread {
           }
         }
 
-        // After stream ends, submit any remaining unsubmitted tool calls to streaming executor
+        const apiDurationMs = Date.now() - apiStartTime;
+
         if (streamingExec) {
           for (const [, tc] of accumulatedToolCalls) {
             if (!tc.complete) {
@@ -286,6 +339,15 @@ export class Thread {
           turnUsage.completion_tokens += lastUsage.completion_tokens;
           turnUsage.total_tokens += lastUsage.total_tokens;
           yield { type: "usage", usage: lastUsage, model: this.model };
+
+          if (this.config.costTracker) {
+            const summary = this.config.costTracker.addUsage(
+              this.model,
+              lastUsage,
+              apiDurationMs,
+            );
+            yield { type: "cost_update", summary };
+          }
         }
 
         const textContent = accumulatedContent.join("");

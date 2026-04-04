@@ -4,7 +4,7 @@ import type {
   ChatParams,
   ChatStreamChunk,
 } from "./types.js";
-import type { ChatMessage, ToolCallContent } from "../session/types.js";
+import type { ChatMessage } from "../session/types.js";
 
 export interface AnthropicProviderOptions {
   apiKey: string;
@@ -43,19 +43,41 @@ export class AnthropicProvider implements AIProvider {
       input_schema: t.function.parameters as Anthropic.Messages.Tool["input_schema"],
     }));
 
-    const stream = this.client.messages.stream({
+    const thinkingEnabled =
+      params.thinking?.type === "enabled" &&
+      (params.thinking as { budgetTokens: number }).budgetTokens > 0;
+    const budgetTokens = thinkingEnabled
+      ? (params.thinking as { type: "enabled"; budgetTokens: number }).budgetTokens
+      : 0;
+
+    const maxOutputTokens = thinkingEnabled
+      ? budgetTokens + (params.max_tokens ?? 8192)
+      : (params.max_tokens ?? 8192);
+
+    const streamParams: Anthropic.Messages.MessageStreamParams = {
       model: params.model ?? this.defaultModel,
-      max_tokens: params.max_tokens ?? 8192,
+      max_tokens: maxOutputTokens,
       system,
       messages: inputMessages,
       tools,
-    });
+    };
+
+    if (thinkingEnabled) {
+      (streamParams as unknown as Record<string, unknown>).thinking = {
+        type: "enabled",
+        budget_tokens: budgetTokens,
+      };
+    }
+
+    const stream = this.client.messages.stream(streamParams);
 
     let chunkIndex = 0;
     const toolIndexMap = new Map<string, number>();
     let nextToolIndex = 0;
     let inputTokens = 0;
     let outputTokens = 0;
+    let cacheReadTokens = 0;
+    let cacheCreationTokens = 0;
 
     for await (const event of stream) {
       const chunkId = `chatcmpl-${chunkIndex++}`;
@@ -65,6 +87,9 @@ export class AnthropicProvider implements AIProvider {
         if (msg.usage) {
           inputTokens = msg.usage.input_tokens ?? 0;
           outputTokens = msg.usage.output_tokens ?? 0;
+          const u = msg.usage as unknown as Record<string, unknown>;
+          cacheReadTokens = (u.cache_read_input_tokens as number) ?? 0;
+          cacheCreationTokens = (u.cache_creation_input_tokens as number) ?? 0;
         }
         continue;
       }
@@ -78,31 +103,44 @@ export class AnthropicProvider implements AIProvider {
       }
 
       if (event.type === "content_block_start") {
-        if (event.content_block.type === "text") {
+        const block = event.content_block as unknown as { type: string; [key: string]: unknown };
+
+        if (block.type === "thinking") {
+          yield this.makeChunk(chunkId, params.model ?? this.defaultModel, {
+            thinking_content: "",
+          });
+        } else if (block.type === "text") {
           yield this.makeChunk(chunkId, params.model ?? this.defaultModel, {
             content: "",
           });
-        } else if (event.content_block.type === "tool_use") {
-          const block = event.content_block as AnthropicToolUseBlock;
+        } else if (block.type === "tool_use") {
+          const toolBlock = block as unknown as AnthropicToolUseBlock;
           const idx = nextToolIndex++;
-          toolIndexMap.set(block.id, idx);
+          toolIndexMap.set(toolBlock.id, idx);
           yield this.makeChunk(chunkId, params.model ?? this.defaultModel, {
             tool_calls: [
               {
                 index: idx,
-                id: block.id,
+                id: toolBlock.id,
                 type: "function" as const,
-                function: { name: block.name, arguments: "" },
+                function: { name: toolBlock.name, arguments: "" },
               },
             ],
           });
         }
       } else if (event.type === "content_block_delta") {
-        if (event.delta.type === "text_delta") {
+        const deltaType = event.delta.type;
+
+        if (deltaType === "thinking_delta") {
+          const thinkingDelta = event.delta as { type: string; thinking: string };
+          yield this.makeChunk(chunkId, params.model ?? this.defaultModel, {
+            thinking_content: thinkingDelta.thinking,
+          });
+        } else if (deltaType === "text_delta") {
           yield this.makeChunk(chunkId, params.model ?? this.defaultModel, {
             content: event.delta.text,
           });
-        } else if (event.delta.type === "input_json_delta") {
+        } else if (deltaType === "input_json_delta") {
           const delta = event.delta as { type: string; partial_json: string };
           const lastToolId = Array.from(toolIndexMap.keys()).pop()!;
           const idx = toolIndexMap.get(lastToolId)!;
@@ -130,6 +168,8 @@ export class AnthropicProvider implements AIProvider {
             prompt_tokens: inputTokens,
             completion_tokens: outputTokens,
             total_tokens: inputTokens + outputTokens,
+            cache_read_tokens: cacheReadTokens || undefined,
+            cache_creation_tokens: cacheCreationTokens || undefined,
           },
         };
       }
@@ -165,7 +205,6 @@ export class AnthropicProvider implements AIProvider {
 
     for (const msg of messages) {
       if (msg.role === "system") {
-        // System messages go into the system parameter; skip in messages array
         continue;
       }
 

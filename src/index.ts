@@ -13,6 +13,7 @@ export type {
   ToolParameterProperty as ToolDefParameterProperty,
   ChatCompletionUsage,
 } from "./providers/types.js";
+export { ChatStreamError } from "./providers/types.js";
 export {
   OpenAIProvider,
   type OpenAIProviderOptions,
@@ -177,6 +178,36 @@ export {
 } from "./permissions/rules.js";
 export { resolvePermission } from "./permissions/pipeline.js";
 export { resolveToolFlag } from "./tools/registry.js";
+
+// Thinking
+export type { ThinkingConfig } from "./thinking/index.js";
+
+// Cost tracking
+export type {
+  ModelPricing,
+  UsageRecord,
+  ModelUsageSummary,
+  CostSummary,
+} from "./cost/index.js";
+export { CostTracker, calculateCost, findModelPricing, DEFAULT_PRICING } from "./cost/index.js";
+
+// Retry / error resilience
+export type {
+  RetryConfig,
+  RetryEngineOptions,
+  RetryContext,
+  RetryEvent,
+} from "./retry/index.js";
+export type { ClassifiedError } from "./retry/index.js";
+export {
+  DEFAULT_RETRY_CONFIG,
+  classifyError,
+  isRetryable,
+  getRetryDelay,
+  withRetry,
+  CannotRetryError,
+  FallbackTriggeredError,
+} from "./retry/index.js";
 
 // Hooks
 export type {
