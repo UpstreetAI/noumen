@@ -64,6 +64,9 @@ for await (const event of thread.run("Add a health-check endpoint to server.ts")
   <Card title="Teach your agent" href="/docs/skills">
     Inject markdown instructions into the system prompt. Load SKILL.md files from the filesystem.
   </Card>
+  <Card title="CLI included" href="/docs/cli">
+    Run `npx noumen` to start an interactive session with any provider. One-shot mode, JSONL output, session resume — all from the terminal.
+  </Card>
   <Card title="Project context" href="/docs/context">
     Drop a NOUMEN.md or CLAUDE.md in your repo and the agent loads project instructions automatically. Hierarchical: managed, user, project, local.
   </Card>
@@ -76,6 +79,7 @@ for await (const event of thread.run("Add a health-check endpoint to server.ts")
 
 <Cards>
   <Card title="Getting Started" description="Install, configure, and run your first agent" href="/docs/getting-started" />
+  <Card title="CLI" description="Use noumen from the terminal with any provider" href="/docs/cli" />
   <Card title="Providers" description="Configure OpenAI, Anthropic, Gemini, OpenRouter, Bedrock, or Vertex" href="/docs/providers" />
   <Card title="Tools" description="Built-in tools and custom tool authoring" href="/docs/tools" />
   <Card title="Stream Events" description="All event types emitted during agent runs" href="/docs/stream-events" />

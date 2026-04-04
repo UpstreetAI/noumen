@@ -50,6 +50,75 @@ for await (const event of thread.run("Add a health-check endpoint to server.ts")
 }
 ```
 
+## CLI
+
+noumen ships a CLI for using the agent directly from the terminal, with any provider.
+
+```bash
+# Interactive mode — auto-detects provider from env vars
+npx noumen
+
+# One-shot with a specific provider
+npx noumen -p anthropic "Add error handling to server.ts"
+
+# Pipe input
+cat plan.md | npx noumen -p openai
+
+# JSONL output for scripting
+npx noumen --json -c "List all TODO comments" > events.jsonl
+```
+
+### Setup
+
+```bash
+noumen init
+```
+
+This creates `.noumen/config.json` with your provider and model choice. The CLI also reads `NOUMEN.md` files for project instructions (see [Project Context](#project-context)).
+
+### Config file
+
+```json
+{
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-20250514",
+  "permissions": "acceptEdits"
+}
+```
+
+Place in `.noumen/config.json` at your project root. The CLI walks up from the working directory to find it.
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `-p, --provider` | `openai`, `anthropic`, `gemini`, `openrouter`, `bedrock`, `vertex` |
+| `-m, --model` | Model name (provider-specific default if omitted) |
+| `--api-key` | Override API key |
+| `-c, --prompt` | One-shot prompt (non-interactive) |
+| `--permission` | Permission mode: `default`, `plan`, `acceptEdits`, `auto`, `bypassPermissions` |
+| `--thinking` | Thinking level: `off`, `low`, `medium`, `high` |
+| `--max-turns` | Max agent turns before stopping |
+| `--json` | Emit JSONL stream events to stdout |
+| `--quiet` | Only output final text |
+| `--verbose` | Show tool calls and thinking |
+| `--cwd` | Working directory |
+
+### API key resolution
+
+1. `--api-key` flag
+2. Provider-specific env var (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`)
+3. `NOUMEN_API_KEY` generic env var
+4. `.noumen/config.json` `apiKey` field
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `noumen init` | Create `.noumen/config.json` |
+| `noumen sessions` | List past sessions |
+| `noumen resume <id>` | Resume a previous session (prefix match) |
+
 ## Providers
 
 ### OpenAI

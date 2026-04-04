@@ -78,6 +78,12 @@ const FEATURES = [
     description:
       "Built-in task management tools for decomposing work. Plan mode for read-only exploration. Git worktrees for isolated branch-based experimentation.",
   },
+  {
+    icon: "⌨️",
+    title: "CLI included",
+    description:
+      "Run npx noumen to start an interactive session with any provider. One-shot mode, JSONL pipe output, config files, and session resume — all from the terminal.",
+  },
 ];
 
 

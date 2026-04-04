@@ -53,6 +53,10 @@ Run this checklist **every time** you modify any of the files listed below:
 - Update `README.md` Permissions section
 - Update `website/docs/permissions/index.mdx` modes table
 
+### If you change CLI flags or config shape (`src/cli/*.ts`)
+- Update `README.md` CLI section (flags table, config example)
+- Update `website/docs/cli/index.mdx` (flags reference, config keys table)
+
 ## Code example rules
 
 - **Always use the `sandbox` pattern** in documentation examples:

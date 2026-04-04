@@ -1,0 +1,222 @@
+---
+title: CLI
+description: Run noumen as a terminal coding agent with any provider. Interactive REPL, one-shot mode, JSONL output, and session management.
+---
+
+noumen ships a CLI that wraps the library for direct terminal use. It auto-detects your provider from environment variables, loads `.noumen/config.json` for project settings, and reads `NOUMEN.md` files for project context.
+
+## Quick start
+
+```bash
+# Set an API key
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# Interactive mode
+npx noumen
+
+# One-shot
+npx noumen "Add error handling to server.ts"
+
+# Explicit provider and model
+npx noumen -p openai -m gpt-4o "Write tests for utils.ts"
+```
+
+## Setup
+
+Run `noumen init` to create a config file interactively:
+
+```bash
+npx noumen init
+```
+
+This creates `.noumen/config.json` and optionally a `NOUMEN.md` file in your project root.
+
+## Config file
+
+Place `.noumen/config.json` at your project root (or any ancestor directory). The CLI walks up from the working directory to find it.
+
+```json
+{
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-20250514",
+  "permissions": "acceptEdits",
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+    }
+  },
+  "lsp": {
+    "typescript": {
+      "command": "typescript-language-server",
+      "args": ["--stdio"],
+      "fileExtensions": [".ts", ".tsx"]
+    }
+  }
+}
+```
+
+All fields are optional. The full set of config keys:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `provider` | string | Provider name |
+| `model` | string | Model identifier |
+| `apiKey` | string | API key (prefer env vars instead) |
+| `permissions` | string | Permission mode |
+| `thinking` | string | `off`, `low`, `medium`, `high` |
+| `sandbox` | string | `local`, `docker`, `e2b`, `sprites` |
+| `mcpServers` | object | MCP server configs (same as `CodeOptions`) |
+| `lsp` | object | LSP server configs |
+| `hooks` | array | Hook definitions |
+| `autoCompact` | boolean | Enable auto-compaction (default: true) |
+| `enableSubagents` | boolean | Enable subagent tool |
+| `enableTasks` | boolean | Enable task management tools |
+| `enablePlanMode` | boolean | Enable plan mode tools |
+| `webSearch` | object | Web search config |
+| `maxTurns` | number | Default max agent turns |
+| `systemPrompt` | string | Custom system prompt |
+| `sessionDir` | string | Session storage directory |
+
+## Flags
+
+```
+Usage: noumen [options] [prompt...]
+
+Options:
+  -p, --provider <name>    openai | anthropic | gemini | openrouter | bedrock | vertex
+  -m, --model <model>      Model name
+  --api-key <key>          API key (overrides env vars)
+  --cwd <dir>              Working directory
+  --permission <mode>      Permission mode
+  --thinking <level>       off | low | medium | high
+  --max-turns <n>          Max agent turns
+  --json                   Emit JSONL stream events to stdout
+  --quiet                  Only output final text
+  --verbose                Show tool calls and thinking
+  -c, --prompt <text>      One-shot prompt (non-interactive)
+
+Commands:
+  init                     Create .noumen/config.json
+  sessions                 List past sessions
+  resume <session-id>      Resume a previous session
+```
+
+Flags override config file values.
+
+## API key resolution
+
+The CLI resolves API keys in this order:
+
+1. `--api-key` flag
+2. Provider-specific env var: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`
+3. `NOUMEN_API_KEY` (generic fallback)
+4. `apiKey` in `.noumen/config.json`
+
+If no `--provider` is specified, the CLI auto-detects from whichever env var is set.
+
+## Provider auto-detection
+
+When no provider is specified, the CLI checks environment variables in order:
+
+1. `ANTHROPIC_API_KEY` → anthropic
+2. `OPENAI_API_KEY` → openai
+3. `GEMINI_API_KEY` → gemini
+4. `OPENROUTER_API_KEY` → openrouter
+5. `AWS_ACCESS_KEY_ID` or `AWS_PROFILE` → bedrock
+6. `GOOGLE_APPLICATION_CREDENTIALS` or `GCLOUD_PROJECT` → vertex
+
+## Interactive mode
+
+When run without a prompt, the CLI enters an interactive REPL. The conversation persists across messages within the same session.
+
+### REPL commands
+
+| Command | Description |
+|---------|-------------|
+| `/quit`, `/exit` | Exit |
+| `/new` | Start a new conversation |
+| `/session` | Show current session ID |
+| `/sessions` | List saved sessions |
+| `/cost` | Show token usage and cost |
+| `/verbose` | Toggle verbose output |
+| `/help` | Show available commands |
+
+## One-shot mode
+
+Pass a prompt as an argument or with `-c`:
+
+```bash
+npx noumen "Refactor the auth module"
+npx noumen -c "List all exported functions in src/"
+```
+
+Or pipe from stdin:
+
+```bash
+cat requirements.md | npx noumen -p anthropic
+echo "Fix the failing test" | npx noumen
+```
+
+## JSONL output
+
+Use `--json` to emit every stream event as a JSON line to stdout. This is useful for piping to other tools or building custom UIs:
+
+```bash
+npx noumen --json -c "Describe the project structure" | jq '.type'
+```
+
+Use `--quiet` to suppress everything except the final text output:
+
+```bash
+RESULT=$(npx noumen --quiet -c "What does server.ts do?")
+```
+
+## Session management
+
+Sessions are saved as JSONL files in `.noumen/sessions/` by default.
+
+```bash
+# List sessions
+npx noumen sessions
+
+# Resume by ID (prefix match supported)
+npx noumen resume a1b2c3d4
+```
+
+## Project context
+
+The CLI automatically loads `NOUMEN.md` and `CLAUDE.md` files following the hierarchical convention:
+
+- `~/.noumen/NOUMEN.md` — global user instructions
+- `./NOUMEN.md` — project root
+- `./.noumen/rules/*.md` — scoped rules
+- `./NOUMEN.local.md` — gitignored local overrides
+
+See [Project Context](/docs/context) for details.
+
+## Thinking levels
+
+The `--thinking` flag maps to provider-specific extended thinking:
+
+| Level | Budget tokens |
+|-------|--------------|
+| `off` | Disabled |
+| `low` | 1,024 |
+| `medium` | 10,240 |
+| `high` | 32,768 |
+
+## Relation to the library
+
+The CLI is a thin wrapper (~500 lines) over the `Code` and `Thread` APIs. Every config option maps directly to `CodeOptions`. If you need more control, use the library directly:
+
+```typescript
+import { Code, LocalSandbox } from "noumen";
+import { AnthropicProvider } from "noumen/anthropic";
+
+const code = new Code({
+  aiProvider: new AnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY! }),
+  sandbox: LocalSandbox({ cwd: process.cwd() }),
+  options: { projectContext: true, costTracking: { enabled: true } },
+});
+```

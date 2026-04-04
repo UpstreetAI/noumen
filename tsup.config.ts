@@ -16,6 +16,7 @@ export default defineConfig({
     "src/acp/index.ts",
     "src/a2a/index.ts",
     "src/jsonrpc/index.ts",
+    "src/cli/index.ts",
   ],
   format: ["esm"],
   dts: true,
