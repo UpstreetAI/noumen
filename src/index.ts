@@ -32,6 +32,15 @@ export {
   type OpenRouterProviderOptions,
 } from "./providers/openrouter.js";
 
+// Sandbox (bundled VirtualFs + VirtualComputer)
+export {
+  LocalSandbox,
+  SpritesSandbox,
+  type Sandbox,
+  type LocalSandboxOptions,
+  type SpritesSandboxOptions,
+} from "./virtual/sandbox.js";
+
 // Virtual infrastructure (sandboxing primitives)
 // VirtualFs and VirtualComputer are the isolation boundary — all tool I/O
 // routes through them. Swap implementations to control the sandbox level.

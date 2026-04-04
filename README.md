@@ -17,17 +17,11 @@ pnpm add noumen
 ## Quick Start
 
 ```typescript
-import {
-  Code,
-  OpenAIProvider,
-  LocalFs,
-  LocalComputer,
-} from "noumen";
+import { Code, OpenAIProvider, LocalSandbox } from "noumen";
 
 const code = new Code({
   aiProvider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY }),
-  virtualFs: new LocalFs({ basePath: "/my/project" }),
-  virtualComputer: new LocalComputer({ defaultCwd: "/my/project" }),
+  sandbox: LocalSandbox({ cwd: "/my/project" }),
 });
 
 const thread = code.createThread();
@@ -96,19 +90,18 @@ const provider = new OpenRouterProvider({
 });
 ```
 
-## Sandboxed Virtual Infrastructure
+## Sandboxes
 
-Every file read/write and shell command the agent executes goes through two interfaces: `VirtualFs` and `VirtualComputer`. These are the sandboxing boundary — swap the implementation to control what the agent can access.
+A `Sandbox` bundles a `VirtualFs` (filesystem) and `VirtualComputer` (shell execution) into one object. Every file read/write and shell command the agent executes goes through these interfaces — swap the sandbox to control what the agent can access.
 
 ### Local (Node.js) — no isolation
 
 Backed by `fs/promises` and `child_process`. Use for local development and trusted environments:
 
 ```typescript
-import { LocalFs, LocalComputer } from "noumen";
+import { LocalSandbox } from "noumen";
 
-const fs = new LocalFs({ basePath: "/my/project" });
-const computer = new LocalComputer({ defaultCwd: "/my/project" });
+const sandbox = LocalSandbox({ cwd: "/my/project" });
 ```
 
 ### sprites.dev — full sandbox
@@ -116,14 +109,9 @@ const computer = new LocalComputer({ defaultCwd: "/my/project" });
 Run inside a remote [sprites.dev](https://docs.sprites.dev) container. The agent has no access to the host machine:
 
 ```typescript
-import { SpritesFs, SpritesComputer } from "noumen";
+import { SpritesSandbox } from "noumen";
 
-const fs = new SpritesFs({
-  token: process.env.SPRITE_TOKEN,
-  spriteName: "my-sprite",
-});
-
-const computer = new SpritesComputer({
+const sandbox = SpritesSandbox({
   token: process.env.SPRITE_TOKEN,
   spriteName: "my-sprite",
 });
@@ -131,15 +119,25 @@ const computer = new SpritesComputer({
 
 ### Custom sandboxes
 
-Implement `VirtualFs` and `VirtualComputer` to target any execution environment — Docker, E2B, Daytona, cloud VMs, or an in-memory test harness. The interfaces are intentionally minimal (one method for shell, eight for filesystem) so adapters are straightforward to write.
+Implement `VirtualFs` and `VirtualComputer` to target any execution environment — Docker, E2B, Daytona, cloud VMs, or an in-memory test harness. A custom `Sandbox` is any object with `{ fs, computer }`:
+
+```typescript
+import type { Sandbox } from "noumen";
+
+const sandbox: Sandbox = {
+  fs: new MyDockerFs({ container: "abc" }),
+  computer: new MyDockerComputer({ container: "abc" }),
+};
+```
+
+The interfaces are intentionally minimal (one method for shell, eight for filesystem) so adapters are straightforward to write.
 
 ## Options
 
 ```typescript
 const code = new Code({
   aiProvider,
-  virtualFs,
-  virtualComputer,
+  sandbox,
   options: {
     sessionDir: ".noumen/sessions", // JSONL transcript storage path
     model: "gpt-4o",                   // default model
@@ -251,8 +249,7 @@ Enable model reasoning/thinking for supported providers. Each provider maps the 
 ```typescript
 const code = new Code({
   aiProvider,
-  virtualFs,
-  virtualComputer,
+  sandbox,
   options: {
     thinking: { type: "enabled", budgetTokens: 10000 },
   },
@@ -277,8 +274,7 @@ Automatic retries with exponential backoff, Retry-After header support, context 
 ```typescript
 const code = new Code({
   aiProvider,
-  virtualFs,
-  virtualComputer,
+  sandbox,
   options: {
     retry: true, // use sensible defaults
   },
@@ -287,8 +283,7 @@ const code = new Code({
 // Or customize:
 const code2 = new Code({
   aiProvider,
-  virtualFs,
-  virtualComputer,
+  sandbox,
   options: {
     retry: {
       maxRetries: 10,
@@ -314,8 +309,7 @@ Track token usage and estimate USD costs across all model calls. Includes built-
 ```typescript
 const code = new Code({
   aiProvider,
-  virtualFs,
-  virtualComputer,
+  sandbox,
   options: {
     costTracking: { enabled: true },
   },
@@ -341,8 +335,7 @@ Supply custom pricing for unlisted models:
 ```typescript
 const code = new Code({
   aiProvider,
-  virtualFs,
-  virtualComputer,
+  sandbox,
   options: {
     costTracking: {
       enabled: true,
@@ -364,8 +357,7 @@ Skills are markdown instructions injected into the system prompt. Provide them i
 ```typescript
 const code = new Code({
   aiProvider,
-  virtualFs,
-  virtualComputer,
+  sandbox,
   options: {
     skills: [
       { name: "Testing", content: "Always write vitest tests for new code." },
@@ -394,7 +386,7 @@ Intercept tool calls, turn lifecycle, subagent spawning, compaction, and errors:
 
 ```typescript
 const code = new Code({
-  aiProvider, virtualFs, virtualComputer,
+  aiProvider, sandbox,
   options: {
     hooks: [
       {

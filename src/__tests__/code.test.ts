@@ -26,6 +26,48 @@ describe("Code", () => {
     expect(thread.sessionId).toBeTruthy();
   });
 
+  it("accepts sandbox property", () => {
+    const code = new Code({
+      aiProvider: provider,
+      sandbox: { fs, computer },
+    });
+
+    const thread = code.createThread();
+    expect(thread).toBeInstanceOf(Thread);
+  });
+
+  it("sandbox takes precedence over virtualFs/virtualComputer", async () => {
+    const sandboxFs = new MockFs();
+    const code = new Code({
+      aiProvider: provider,
+      sandbox: { fs: sandboxFs, computer },
+      virtualFs: fs,
+      virtualComputer: computer,
+    });
+
+    provider.addResponse(textResponse("ok"));
+    const thread = code.createThread({ sessionId: "s1" });
+    for await (const _ of thread.run("hi")) {
+      // consume
+    }
+
+    // Session files land on sandboxFs (from sandbox), not on fs (from virtualFs)
+    expect(sandboxFs.files.size).toBeGreaterThan(0);
+    expect(fs.files.size).toBe(0);
+  });
+
+  it("throws when neither sandbox nor virtualFs/virtualComputer provided", () => {
+    expect(
+      () => new Code({ aiProvider: provider } as any),
+    ).toThrow("Provide either `sandbox` or both `virtualFs` and `virtualComputer`.");
+  });
+
+  it("throws when only virtualFs is provided without virtualComputer", () => {
+    expect(
+      () => new Code({ aiProvider: provider, virtualFs: fs } as any),
+    ).toThrow("Provide either `sandbox` or both `virtualFs` and `virtualComputer`.");
+  });
+
   it("createThread uses provided sessionId", () => {
     const code = new Code({
       aiProvider: provider,

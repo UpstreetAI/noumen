@@ -1,6 +1,7 @@
 import type { AIProvider } from "./providers/types.js";
 import type { VirtualFs } from "./virtual/fs.js";
 import type { VirtualComputer } from "./virtual/computer.js";
+import type { Sandbox } from "./virtual/sandbox.js";
 import type { SkillDefinition } from "./skills/types.js";
 import type { Tool, SubagentConfig, SubagentRun } from "./tools/types.js";
 import type { CheckpointConfig } from "./checkpoint/types.js";
@@ -46,19 +47,24 @@ export interface CodeOptions {
   aiProvider: AIProvider;
 
   /**
-   * Filesystem sandbox. All file I/O from tools routes through this interface.
-   * Use `LocalFs` for unsandboxed local development, `SpritesFs` for isolated
-   * remote containers, or provide any custom `VirtualFs` (Docker, E2B, etc.).
+   * Bundled sandbox providing both filesystem and shell execution.
+   * Use `LocalSandbox()` for unsandboxed local development,
+   * `SpritesSandbox()` for isolated remote containers, or pass any
+   * `{ fs: VirtualFs; computer: VirtualComputer }` for custom sandboxes.
    */
-  virtualFs: VirtualFs;
+  sandbox?: Sandbox;
 
   /**
-   * Shell execution sandbox. All command execution from tools routes through
-   * this interface. Use `LocalComputer` for unsandboxed local development,
-   * `SpritesComputer` for isolated remote containers, or provide any custom
-   * `VirtualComputer` (Docker, E2B, etc.).
+   * @deprecated Use `sandbox` instead. Filesystem sandbox — all file I/O
+   * from tools routes through this interface.
    */
-  virtualComputer: VirtualComputer;
+  virtualFs?: VirtualFs;
+
+  /**
+   * @deprecated Use `sandbox` instead. Shell execution sandbox — all command
+   * execution from tools routes through this interface.
+   */
+  virtualComputer?: VirtualComputer;
 
   options?: {
     sessionDir?: string;
@@ -157,8 +163,16 @@ export class Code {
 
   constructor(opts: CodeOptions) {
     this.aiProvider = opts.aiProvider;
-    this.fs = opts.virtualFs;
-    this.computer = opts.virtualComputer;
+
+    const fs = opts.sandbox?.fs ?? opts.virtualFs;
+    const computer = opts.sandbox?.computer ?? opts.virtualComputer;
+    if (!fs || !computer) {
+      throw new Error(
+        "Provide either `sandbox` or both `virtualFs` and `virtualComputer`.",
+      );
+    }
+    this.fs = fs;
+    this.computer = computer;
     this.sessionDir = opts.options?.sessionDir ?? ".noumen/sessions";
     this.skills = opts.options?.skills ?? [];
     this.skillsPaths = opts.options?.skillsPaths ?? [];
