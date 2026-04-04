@@ -141,5 +141,11 @@ export interface Tool {
     ctx: ToolContext,
   ) => Promise<PermissionResult> | PermissionResult;
 
+  /**
+   * When true, this tool always requires interactive user input and must
+   * prompt even in bypassPermissions mode (e.g. AskUser).
+   */
+  requiresUserInteraction?: boolean;
+
   call(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult>;
 }

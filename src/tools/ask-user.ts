@@ -9,6 +9,7 @@ export const askUserTool: Tool = {
     "clarification, confirmation, or additional information before proceeding.",
   isReadOnly: true,
   isConcurrencySafe: false,
+  requiresUserInteraction: true,
   parameters: {
     type: "object",
     properties: {

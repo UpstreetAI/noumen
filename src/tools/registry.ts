@@ -27,7 +27,13 @@ export function resolveToolFlag(
   defaultValue = false,
 ): boolean {
   if (flag === undefined) return defaultValue;
-  if (typeof flag === "function") return flag(args);
+  if (typeof flag === "function") {
+    try {
+      return flag(args);
+    } catch {
+      return defaultValue;
+    }
+  }
   return flag;
 }
 

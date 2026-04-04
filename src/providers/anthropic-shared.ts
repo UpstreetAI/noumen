@@ -148,11 +148,17 @@ export function convertAnthropicMessages(
       }
       if (msg.tool_calls) {
         for (const tc of msg.tool_calls) {
+          let input: Record<string, unknown> = {};
+          try {
+            input = JSON.parse(tc.function.arguments);
+          } catch {
+            // malformed JSON from truncated stream — send empty input
+          }
           content.push({
             type: "tool_use",
             id: tc.id,
             name: tc.function.name,
-            input: JSON.parse(tc.function.arguments),
+            input,
           });
         }
       }
@@ -285,6 +291,7 @@ export async function* streamAnthropicChat(
 
   let chunkIndex = 0;
   const toolIndexMap = new Map<string, number>();
+  const blockIndexToToolId = new Map<number, string>();
   let nextToolIndex = 0;
   let inputTokens = 0;
   let outputTokens = 0;
@@ -319,6 +326,7 @@ export async function* streamAnthropicChat(
 
     if (ev.type === "content_block_start") {
       const block = (ev.content_block as Record<string, unknown>) ?? {};
+      const blockIndex = ev.index as number | undefined;
 
       if (block.type === "thinking") {
         yield makeChunk(chunkId, model, { thinking_content: "" });
@@ -328,6 +336,9 @@ export async function* streamAnthropicChat(
         const toolBlock = block as unknown as AnthropicToolUseBlock;
         const idx = nextToolIndex++;
         toolIndexMap.set(toolBlock.id, idx);
+        if (blockIndex !== undefined) {
+          blockIndexToToolId.set(blockIndex, toolBlock.id);
+        }
         yield makeChunk(chunkId, model, {
           tool_calls: [
             {
@@ -342,6 +353,7 @@ export async function* streamAnthropicChat(
     } else if (ev.type === "content_block_delta") {
       const delta = ev.delta as Record<string, unknown>;
       const deltaType = delta.type;
+      const blockIndex = ev.index as number | undefined;
 
       if (deltaType === "thinking_delta") {
         yield makeChunk(chunkId, model, {
@@ -352,16 +364,24 @@ export async function* streamAnthropicChat(
           content: delta.text as string,
         });
       } else if (deltaType === "input_json_delta") {
-        const lastToolId = Array.from(toolIndexMap.keys()).pop()!;
-        const idx = toolIndexMap.get(lastToolId)!;
-        yield makeChunk(chunkId, model, {
-          tool_calls: [
-            {
-              index: idx,
-              function: { arguments: delta.partial_json as string },
-            },
-          ],
-        });
+        let toolId: string | undefined;
+        if (blockIndex !== undefined) {
+          toolId = blockIndexToToolId.get(blockIndex);
+        }
+        if (!toolId) {
+          toolId = Array.from(toolIndexMap.keys()).pop();
+        }
+        if (toolId) {
+          const idx = toolIndexMap.get(toolId)!;
+          yield makeChunk(chunkId, model, {
+            tool_calls: [
+              {
+                index: idx,
+                function: { arguments: delta.partial_json as string },
+              },
+            ],
+          });
+        }
       }
     } else if (ev.type === "message_stop") {
       yield {

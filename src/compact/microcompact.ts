@@ -20,6 +20,8 @@ export interface MicrocompactResult {
  */
 export const COMPACTABLE_TOOLS = new Set([
   "ReadFile",
+  "EditFile",
+  "WriteFile",
   "Bash",
   "Grep",
   "Glob",

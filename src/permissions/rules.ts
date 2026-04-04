@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import type {
   PermissionBehavior,
   PermissionContext,
@@ -144,7 +145,7 @@ export function isPathInWorkingDirectories(
 }
 
 function normalizePath(p: string): string {
-  let result = p;
+  let result = path.resolve(p);
   while (result.endsWith("/") && result.length > 1) {
     result = result.slice(0, -1);
   }

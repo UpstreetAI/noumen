@@ -73,8 +73,7 @@ export function tokenCountWithEstimation(
     return estimateMessagesTokens(messages);
   }
 
-  const anchorTokens =
-    lastUsage.prompt_tokens + lastUsage.completion_tokens;
+  const anchorTokens = lastUsage.prompt_tokens;
 
   const deltaMessages = messages.slice(anchorMessageIndex + 1);
   const deltaTokens = estimateMessagesTokens(deltaMessages);

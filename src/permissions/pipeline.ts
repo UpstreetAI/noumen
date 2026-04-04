@@ -118,10 +118,12 @@ export async function resolvePermission(
       };
     }
     if (toolResult.behavior === "ask") {
-      // Ask results from the tool are bypass-resistant (safety/interaction)
-      // when the mode is NOT bypassPermissions. When bypass is on, we skip
-      // to step 4 instead of returning early.
-      if (permCtx.mode !== "bypassPermissions") {
+      // Bypass-immune guards: safety checks and interactive tools always prompt,
+      // even in bypassPermissions mode.
+      const isSafetyCheck = toolResult.reason === "safetyCheck";
+      const isInteractive = tool.requiresUserInteraction === true;
+
+      if (isSafetyCheck || isInteractive || permCtx.mode !== "bypassPermissions") {
         return {
           behavior: "ask",
           message: toolResult.message,
@@ -137,6 +139,15 @@ export async function resolvePermission(
         reason: toolResult.reason ?? "tool",
       };
     }
+  }
+
+  // 3b. Interactive tool guard (bypass-immune)
+  if (tool.requiresUserInteraction && permCtx.mode === "bypassPermissions") {
+    return {
+      behavior: "ask",
+      message: `Tool "${toolName}" requires user interaction.`,
+      reason: "interaction",
+    };
   }
 
   // 4. Mode-based bypass / enforcement

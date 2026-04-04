@@ -94,6 +94,7 @@ import { generateUUID } from "./utils/uuid.js";
 import { activateSkillsForPaths, getActiveSkills } from "./skills/activation.js";
 import { createSkillTool } from "./tools/skill.js";
 import { resolvePermission, type ResolvePermissionOptions } from "./permissions/pipeline.js";
+import { isPathInWorkingDirectories } from "./permissions/rules.js";
 import { DenialTracker } from "./permissions/denial-tracking.js";
 import { withRetry, CannotRetryError, FallbackTriggeredError } from "./retry/engine.js";
 import { classifyError } from "./retry/classify.js";
@@ -767,10 +768,7 @@ export class Thread {
         this.messages.push(assistantMsg);
         await this.storage.appendMessage(this.sessionId, assistantMsg);
 
-        if (
-          toolCalls.length > 0 &&
-          (finishReason === "tool_calls" || finishReason === "stop" || !finishReason)
-        ) {
+        if (toolCalls.length > 0) {
           const touchedFilePaths: string[] = [];
           const registry = this.toolRegistry;
           const storage = this.storage;
@@ -970,6 +968,9 @@ export class Thread {
                 }
 
                 this.denialTracker?.recordSuccess();
+                if (decision.behavior === "allow" && decision.updatedInput) {
+                  currentArgs = decision.updatedInput as Record<string, unknown>;
+                }
                 eventQueue.push({
                   type: "permission_granted",
                   toolName: tc.function.name,
@@ -994,6 +995,22 @@ export class Thread {
               }
               if (hookOutput.updatedInput) {
                 currentArgs = hookOutput.updatedInput;
+
+                // Re-validate working directory enforcement on modified input
+                if (permCtx && permCtx.workingDirectories.length > 0) {
+                  const hookFilePath =
+                    typeof currentArgs.file_path === "string" ? currentArgs.file_path
+                    : typeof currentArgs.path === "string" ? currentArgs.path
+                    : undefined;
+                  if (hookFilePath && !isPathInWorkingDirectories(hookFilePath, permCtx.workingDirectories)) {
+                    return {
+                      toolCall: tc,
+                      parsedArgs: currentArgs,
+                      result: { content: `Permission denied: Hook-modified path "${hookFilePath}" is outside working directories.`, isError: true },
+                      permissionDenied: true,
+                    };
+                  }
+                }
               }
               if (hookOutput.preventContinuation) {
                 preventContinuation = true;
@@ -1423,6 +1440,9 @@ export class Thread {
           }
 
           this.denialTracker?.recordSuccess();
+          if (decision.behavior === "allow" && decision.updatedInput) {
+            currentArgs = decision.updatedInput as Record<string, unknown>;
+          }
           events.push({ type: "permission_granted", toolName: tc.function.name, input: currentArgs });
         }
       }
@@ -1436,7 +1456,24 @@ export class Thread {
         if (hookOutput.decision === "deny") {
           return { result: { content: `Hook denied: ${hookOutput.message ?? "Blocked by hook."}`, isError: true }, permissionDenied: true, events };
         }
-        if (hookOutput.updatedInput) currentArgs = hookOutput.updatedInput;
+        if (hookOutput.updatedInput) {
+          currentArgs = hookOutput.updatedInput;
+
+          // Re-validate working directory enforcement on modified input
+          if (permCtx && permCtx.workingDirectories.length > 0) {
+            const hookFilePath =
+              typeof currentArgs.file_path === "string" ? currentArgs.file_path
+              : typeof currentArgs.path === "string" ? currentArgs.path
+              : undefined;
+            if (hookFilePath && !isPathInWorkingDirectories(hookFilePath, permCtx.workingDirectories)) {
+              return {
+                result: { content: `Permission denied: Hook-modified path "${hookFilePath}" is outside working directories.`, isError: true },
+                permissionDenied: true,
+                events,
+              };
+            }
+          }
+        }
         if (hookOutput.preventContinuation) hookPreventContinuation = true;
       }
 

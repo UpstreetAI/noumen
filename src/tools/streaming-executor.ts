@@ -112,6 +112,8 @@ export class StreamingToolExecutor {
       tracked.status = "completed";
       this.progressResolve?.();
     })();
+
+    void tracked.promise.finally(() => void this.processQueue());
   }
 
   /**

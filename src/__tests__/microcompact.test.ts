@@ -66,7 +66,7 @@ describe("microcompactMessages", () => {
     expect(result.tokensFreed).toBeGreaterThan(0);
   });
 
-  it("skips non-compactable tools (Edit, Write)", () => {
+  it("clears compactable tool results including Edit and Write", () => {
     const msgs: ChatMessage[] = [
       { role: "user", content: "go" },
       assistantWithToolCalls([
@@ -81,9 +81,9 @@ describe("microcompactMessages", () => {
 
     const result = microcompactMessages(msgs, { enabled: true, keepRecent: 0 });
 
-    // Only ReadFile is compactable
-    expect((result.messages[2] as { content: string }).content).toBe("edit result");
-    expect((result.messages[3] as { content: string }).content).toBe("write result");
+    // All three are compactable
+    expect((result.messages[2] as { content: string }).content).toBe(CLEARED_PLACEHOLDER);
+    expect((result.messages[3] as { content: string }).content).toBe(CLEARED_PLACEHOLDER);
     expect((result.messages[4] as { content: string }).content).toBe(CLEARED_PLACEHOLDER);
   });
 
@@ -116,12 +116,12 @@ describe("microcompactMessages", () => {
 
   it("exports the expected compactable tool set", () => {
     expect(COMPACTABLE_TOOLS).toContain("ReadFile");
+    expect(COMPACTABLE_TOOLS).toContain("EditFile");
+    expect(COMPACTABLE_TOOLS).toContain("WriteFile");
     expect(COMPACTABLE_TOOLS).toContain("Bash");
     expect(COMPACTABLE_TOOLS).toContain("Grep");
     expect(COMPACTABLE_TOOLS).toContain("Glob");
     expect(COMPACTABLE_TOOLS).toContain("WebFetch");
     expect(COMPACTABLE_TOOLS).toContain("WebSearch");
-    expect(COMPACTABLE_TOOLS).not.toContain("EditFile");
-    expect(COMPACTABLE_TOOLS).not.toContain("WriteFile");
   });
 });

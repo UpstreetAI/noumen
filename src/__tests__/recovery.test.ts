@@ -67,11 +67,14 @@ describe("filterWhitespaceOnlyAssistantMessages", () => {
     ];
     const result = filterWhitespaceOnlyAssistantMessages(messages);
     expect(result.removed).toBe(1);
-    // Consecutive users should be merged
+    // Consecutive users should be merged into ContentPart[]
     expect(result.messages).toHaveLength(1);
     expect(result.messages[0].role).toBe("user");
-    expect(result.messages[0].content).toContain("hi");
-    expect(result.messages[0].content).toContain("again");
+    const parts = result.messages[0].content as Array<{ type: string; text: string }>;
+    expect(Array.isArray(parts)).toBe(true);
+    const texts = parts.map((p) => p.text);
+    expect(texts).toContain("hi");
+    expect(texts).toContain("again");
   });
 
   it("keeps assistants with tool_calls even if text is empty", () => {

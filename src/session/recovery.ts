@@ -10,6 +10,7 @@ import type {
   ChatMessage,
   AssistantMessage,
   ToolResultMessage,
+  ContentPart,
 } from "./types.js";
 import { contentToString } from "../utils/content.js";
 
@@ -174,7 +175,8 @@ export function detectTurnInterruption(messages: ChatMessage[]): TurnInterruptio
  */
 export function sanitizeForResume(messages: ChatMessage[]): SanitizeResult {
   const step1 = filterUnresolvedToolUses(messages);
-  const step2 = filterOrphanedThinkingMessages(step1.messages);
+  const step1b = fillPartiallyResolvedToolCalls(step1.messages);
+  const step2 = filterOrphanedThinkingMessages(step1b.messages);
   const step3 = filterWhitespaceOnlyAssistantMessages(step2.messages);
 
   const interruption = detectTurnInterruption(step3.messages);
@@ -188,6 +190,44 @@ export function sanitizeForResume(messages: ChatMessage[]): SanitizeResult {
       orphanedThinking: step2.removed,
     },
   };
+}
+
+/**
+ * For assistant messages that have SOME resolved tool_calls but not all,
+ * generate synthetic error results for the missing ones so the API
+ * receives a complete conversation.
+ */
+function fillPartiallyResolvedToolCalls(messages: ChatMessage[]): {
+  messages: ChatMessage[];
+} {
+  const resolvedIds = new Set<string>();
+  for (const msg of messages) {
+    if (msg.role === "tool") {
+      resolvedIds.add((msg as ToolResultMessage).tool_call_id);
+    }
+  }
+
+  const result: ChatMessage[] = [];
+  for (const msg of messages) {
+    result.push(msg);
+    if (msg.role !== "assistant") continue;
+    const asst = msg as AssistantMessage;
+    if (!asst.tool_calls || asst.tool_calls.length === 0) continue;
+
+    for (const tc of asst.tool_calls) {
+      if (!resolvedIds.has(tc.id)) {
+        const synthetic: ToolResultMessage = {
+          role: "tool",
+          tool_call_id: tc.id,
+          content: "Error: Tool result missing due to interrupted session.",
+        };
+        result.push(synthetic);
+        resolvedIds.add(tc.id);
+      }
+    }
+  }
+
+  return { messages: result };
 }
 
 // ---------------------------------------------------------------------------
@@ -208,11 +248,19 @@ function mergeConsecutiveSameRole(messages: ChatMessage[]): ChatMessage[] {
     const curr = messages[i];
 
     if (prev.role === "user" && curr.role === "user") {
-      const prevText = typeof prev.content === "string" ? prev.content : contentToString(prev.content);
-      const currText = typeof curr.content === "string" ? curr.content : contentToString(curr.content);
+      const prevParts: ContentPart[] = typeof prev.content === "string"
+        ? [{ type: "text", text: prev.content }]
+        : Array.isArray(prev.content)
+          ? (prev.content as ContentPart[])
+          : [{ type: "text", text: contentToString(prev.content) }];
+      const currParts: ContentPart[] = typeof curr.content === "string"
+        ? [{ type: "text", text: curr.content }]
+        : Array.isArray(curr.content)
+          ? (curr.content as ContentPart[])
+          : [{ type: "text", text: contentToString(curr.content) }];
       result[result.length - 1] = {
         role: "user",
-        content: prevText + "\n" + currText,
+        content: [...prevParts, ...currParts],
       };
     } else {
       result.push(curr);

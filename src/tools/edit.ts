@@ -1,5 +1,5 @@
 import type { Tool, ToolResult, ToolContext } from "./types.js";
-import { findActualString, countOccurrences, preserveQuoteStyle } from "./edit-utils.js";
+import { findActualString, preserveQuoteStyle } from "./edit-utils.js";
 import { EDIT_PROMPT } from "./prompts/edit.js";
 
 export const editFileTool: Tool = {
@@ -65,7 +65,7 @@ export const editFileTool: Tool = {
         try {
           const stat = await ctx.fs.stat(filePath);
           const mtime = stat.modifiedAt ? Math.floor(stat.modifiedAt.getTime()) : 0;
-          if (mtime > cached.timestamp && cached.offset !== undefined) {
+          if (mtime > cached.timestamp) {
             return {
               content: `Error: ${filePath} has been modified since last read. Re-read the file before editing.`,
               isError: true,
@@ -92,7 +92,7 @@ export const editFileTool: Tool = {
       }
 
       if (!replaceAll) {
-        const count = countOccurrences(content, oldString);
+        const count = content.split(actualOldString).length - 1;
         if (count > 1) {
           return {
             content: `Error: old_string appears ${count} times in ${filePath}. Provide more context to make it unique, or set replace_all to true.`,

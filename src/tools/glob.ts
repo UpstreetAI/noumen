@@ -1,5 +1,6 @@
 import type { Tool, ToolResult, ToolContext } from "./types.js";
 import { GLOB_PROMPT } from "./prompts/glob.js";
+import { shellEscape } from "../utils/shell-escape.js";
 
 const MAX_RESULTS = 200;
 
@@ -39,7 +40,7 @@ export const globTool: Tool = {
       ? pattern
       : `**/${pattern}`;
 
-    const command = `rg --files --glob '${fullPattern}' --sort=modified 2>/dev/null | head -n ${MAX_RESULTS + 1}`;
+    const command = `rg --files --glob ${shellEscape(fullPattern)} --sort=modified 2>/dev/null | head -n ${MAX_RESULTS + 1}`;
 
     try {
       const result = await ctx.computer.executeCommand(command, {

@@ -43,6 +43,17 @@ export const writeFileTool: Tool = {
       }
 
       const existed = await ctx.fs.exists(filePath);
+
+      if (existed && ctx.fileStateCache) {
+        const cached = ctx.fileStateCache.get(filePath);
+        if (!cached) {
+          return {
+            content: `Error: File ${filePath} exists but has not been read yet. Read it first before overwriting.`,
+            isError: true,
+          };
+        }
+      }
+
       await ctx.fs.writeFile(filePath, content);
 
       // Update file state cache with the written content

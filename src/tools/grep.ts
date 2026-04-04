@@ -1,5 +1,6 @@
 import type { Tool, ToolResult, ToolContext } from "./types.js";
 import { GREP_PROMPT } from "./prompts/grep.js";
+import { shellEscape } from "../utils/shell-escape.js";
 
 const MAX_MATCHES = 250;
 
@@ -59,9 +60,9 @@ export const grepTool: Tool = {
 
     if (caseInsensitive) rgArgs.push("-i");
     if (contextLines !== undefined) rgArgs.push(`-C${contextLines}`);
-    if (glob) rgArgs.push(`--glob='${glob}'`);
+    if (glob) rgArgs.push(`--glob=${shellEscape(glob)}`);
 
-    rgArgs.push(`'${pattern.replace(/'/g, "'\\''")}'`);
+    rgArgs.push(shellEscape(pattern));
     rgArgs.push(".");
 
     const command = rgArgs.join(" ");

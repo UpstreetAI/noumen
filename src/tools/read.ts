@@ -10,6 +10,29 @@ import {
 import * as path from "node:path";
 
 const DEFAULT_MAX_IMAGE_TOKENS = 1600;
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+
+const BLOCKED_DEVICE_PATHS = new Set([
+  "/dev/zero",
+  "/dev/random",
+  "/dev/urandom",
+  "/dev/full",
+  "/dev/stdin",
+  "/dev/tty",
+  "/dev/console",
+  "/dev/stdout",
+  "/dev/stderr",
+  "/dev/fd/0",
+  "/dev/fd/1",
+  "/dev/fd/2",
+]);
+
+const BINARY_EXTENSIONS = new Set([
+  ".exe", ".dll", ".so", ".dylib", ".bin", ".zip", ".tar", ".gz", ".bz2",
+  ".xz", ".7z", ".rar", ".wasm", ".o", ".a", ".obj", ".lib", ".class",
+  ".pyc", ".pyo", ".jar", ".war", ".ear", ".iso", ".img", ".dmg",
+  ".msi", ".deb", ".rpm", ".apk", ".ipa",
+]);
 
 export const readFileTool: Tool = {
   name: "ReadFile",
@@ -50,10 +73,41 @@ export const readFileTool: Tool = {
     const limit = args.limit as number | undefined;
 
     try {
-      // Check if this is an image file
+      // Block device files that can hang or cause OOM
+      const resolved = path.resolve(ctx.cwd, filePath);
+      if (BLOCKED_DEVICE_PATHS.has(resolved)) {
+        return {
+          content: `Error: Cannot read device file ${filePath}.`,
+          isError: true,
+        };
+      }
+
       const ext = path.extname(filePath).toLowerCase();
+
+      // Block binary files (except images, handled below)
+      if (BINARY_EXTENSIONS.has(ext)) {
+        return {
+          content: `Error: Cannot read binary ${ext} file. This tool only reads text files.`,
+          isError: true,
+        };
+      }
+
+      // Check if this is an image file
       if (IMAGE_EXTENSIONS.has(ext) && ctx.fs.readFileBytes) {
         return readImageFile(filePath, ext, ctx);
+      }
+
+      // File size guard
+      try {
+        const stat = await ctx.fs.stat(filePath);
+        if (stat.size !== undefined && stat.size > MAX_FILE_SIZE) {
+          return {
+            content: `Error: File is too large (${Math.round(stat.size / 1024 / 1024)}MB). Use offset/limit to read specific portions.`,
+            isError: true,
+          };
+        }
+      } catch {
+        // stat may fail for virtual/remote filesystems — proceed with read
       }
 
       // Dedup: if cache has same path/offset/limit and mtime is unchanged, skip re-read
