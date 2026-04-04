@@ -1,9 +1,9 @@
 ---
 title: Hooks
-description: Intercept and customize tool execution, turn lifecycle, subagent spawning, compaction, and error handling with pre/post hooks.
+description: Intercept and customize tool execution, session lifecycle, permissions, file writes, compaction, and more with 18 hook events.
 ---
 
-Hooks let you intercept key moments in the agent lifecycle — before and after tool calls, at turn boundaries, when subagents start and stop, around compaction, and on errors. They can modify tool inputs/outputs, deny tool calls, or run side effects like logging and analytics.
+Hooks let you intercept key moments in the agent lifecycle — before and after tool calls, at session and turn boundaries, when permissions are requested or denied, when files are written, when models switch, around compaction, retry, memory extraction, and on errors. They can modify tool inputs/outputs, deny tool calls, or run side effects like logging and analytics.
 
 ## Defining hooks
 
@@ -14,6 +14,12 @@ import { Code, type HookDefinition } from "noumen";
 
 const hooks: HookDefinition[] = [
   {
+    event: "SessionStart",
+    handler: async (input) => {
+      console.log(`Session ${input.sessionId} started (resume: ${input.isResume})`);
+    },
+  },
+  {
     event: "PreToolUse",
     matcher: "Bash",
     handler: async (input) => {
@@ -22,9 +28,9 @@ const hooks: HookDefinition[] = [
     },
   },
   {
-    event: "TurnEnd",
+    event: "FileWrite",
     handler: async (input) => {
-      console.log(`Turn ended for session ${input.sessionId}`);
+      console.log(`${input.toolName} wrote ${input.filePath} (new: ${input.isNew})`);
     },
   },
 ];
@@ -38,17 +44,55 @@ const code = new Code({
 
 ## Hook events
 
+noumen provides **18 hook events** across six categories.
+
+### Session lifecycle
+
+| Event | Type | Description |
+|-------|------|-------------|
+| `SessionStart` | Notification | Fires at the start of `thread.run()`, after session restore. Includes `prompt` and `isResume`. |
+| `SessionEnd` | Notification | Fires when `thread.run()` completes. Includes `reason`: `"complete"`, `"abort"`, `"maxTurns"`, or `"error"`. |
+| `TurnStart` | Notification | Fires at the beginning of each provider call (before the LLM request). |
+| `TurnEnd` | Notification | Fires after the agent turn completes with a final text response. |
+| `Error` | Notification | Fires when an error occurs during the agent loop. |
+
+### Tool execution
+
 | Event | Type | Description |
 |-------|------|-------------|
 | `PreToolUse` | Interceptor | Fires before a tool executes. Can allow, deny, or modify input. |
 | `PostToolUse` | Interceptor | Fires after a tool executes. Can modify output or stop the loop. |
-| `TurnStart` | Notification | Fires at the beginning of each agent turn (before the provider call). |
-| `TurnEnd` | Notification | Fires after the agent turn completes. |
+| `PostToolUseFailure` | Interceptor | Fires after a tool execution that returned an error. Can modify the error output. |
+| `FileWrite` | Notification | Fires after WriteFile or EditFile successfully writes to disk. Includes `filePath` and `isNew`. |
+
+### Permissions
+
+| Event | Type | Description |
+|-------|------|-------------|
+| `PermissionRequest` | Notification | Fires before the user/handler is asked for permission. Includes `toolName`, `input`, and `mode`. |
+| `PermissionDenied` | Notification | Fires when a tool call is denied by rules, the user, or missing handler. Includes `reason`. |
+
+### Subagents
+
+| Event | Type | Description |
+|-------|------|-------------|
 | `SubagentStart` | Notification | Fires when a subagent is spawned. |
 | `SubagentStop` | Notification | Fires when a subagent finishes. |
-| `PreCompact` | Notification | Fires before conversation compaction. |
+
+### Compaction
+
+| Event | Type | Description |
+|-------|------|-------------|
+| `PreCompact` | Notification | Fires before conversation compaction (proactive or reactive). |
 | `PostCompact` | Notification | Fires after compaction completes. |
-| `Error` | Notification | Fires when an error occurs during the agent loop. |
+
+### System
+
+| Event | Type | Description |
+|-------|------|-------------|
+| `ModelSwitch` | Notification | Fires when `setModel()` or `setProvider()` changes the active model. Includes `previousModel` and `newModel`. |
+| `RetryAttempt` | Notification | Fires before each retry attempt. Includes `attempt`, `maxAttempts`, `error`, and `delay`. |
+| `MemoryUpdate` | Notification | Fires after memory extraction creates, updates, or deletes entries. |
 
 ## PreToolUse hooks
 
@@ -93,6 +137,86 @@ Post-tool hooks run after execution. They can modify the output returned to the 
 }
 ```
 
+## PostToolUseFailure hooks
+
+Failure hooks fire only when a tool returns an error (`isError: true`). Use them for error logging, alerting, or modifying the error message:
+
+```typescript
+{
+  event: "PostToolUseFailure",
+  handler: async (input) => {
+    console.error(`Tool ${input.toolName} failed: ${input.errorMessage}`);
+  },
+}
+```
+
+## Session lifecycle hooks
+
+Track when sessions start and end:
+
+```typescript
+{
+  event: "SessionStart",
+  handler: async (input) => {
+    await analytics.track("session_started", {
+      sessionId: input.sessionId,
+      isResume: input.isResume,
+    });
+  },
+}
+```
+
+```typescript
+{
+  event: "SessionEnd",
+  handler: async (input) => {
+    await analytics.track("session_ended", {
+      sessionId: input.sessionId,
+      reason: input.reason, // "complete" | "abort" | "maxTurns" | "error"
+    });
+  },
+}
+```
+
+## Permission hooks
+
+Observe permission decisions for audit trails and alerting:
+
+```typescript
+{
+  event: "PermissionDenied",
+  handler: async (input) => {
+    await audit.log(`Permission denied for ${input.toolName}: ${input.reason}`);
+  },
+}
+```
+
+## File write hooks
+
+Get notified whenever the agent writes to the filesystem:
+
+```typescript
+{
+  event: "FileWrite",
+  handler: async (input) => {
+    console.log(`[audit] ${input.toolName} wrote ${input.filePath} (new: ${input.isNew})`);
+  },
+}
+```
+
+## Model switch hooks
+
+Track model changes during a session:
+
+```typescript
+{
+  event: "ModelSwitch",
+  handler: async (input) => {
+    console.log(`Model changed: ${input.previousModel} → ${input.newModel}`);
+  },
+}
+```
+
 ## Matcher patterns
 
 The optional `matcher` field filters which tools a hook applies to. It supports simple glob patterns:
@@ -102,20 +226,11 @@ The optional `matcher` field filters which tools a hook applies to. It supports 
 - `"*File"` — suffix match (ReadFile, WriteFile, EditFile)
 - `"*"` — match all tools
 
-Omitting `matcher` means the hook applies to all tools (for `PreToolUse`/`PostToolUse`) or all events of that type (for notifications).
+Omitting `matcher` means the hook applies to all tools (for `PreToolUse`/`PostToolUse`/`PostToolUseFailure`) or all events of that type (for notifications).
 
 ## Notification hooks
 
-Notification hooks are fire-and-forget — they have no return value and errors are silently swallowed. Use them for logging, analytics, or side effects.
-
-```typescript
-{
-  event: "SubagentStart",
-  handler: async (input) => {
-    console.log(`Subagent ${input.sessionId} spawned by ${input.parentSessionId}`);
-  },
-}
-```
+Notification hooks are fire-and-forget — they have no return value and errors are silently swallowed. Use them for logging, analytics, or side effects. All events except `PreToolUse`, `PostToolUse`, and `PostToolUseFailure` are notification hooks.
 
 ## HookDefinition type
 
@@ -125,4 +240,15 @@ interface HookDefinition {
   matcher?: string;
   handler: (input: HookInput) => Promise<HookOutput> | HookOutput;
 }
+
+type HookEvent =
+  | "PreToolUse" | "PostToolUse" | "PostToolUseFailure"
+  | "TurnStart" | "TurnEnd"
+  | "SessionStart" | "SessionEnd"
+  | "SubagentStart" | "SubagentStop"
+  | "PreCompact" | "PostCompact"
+  | "PermissionRequest" | "PermissionDenied"
+  | "FileWrite" | "ModelSwitch"
+  | "RetryAttempt" | "MemoryUpdate"
+  | "Error";
 ```

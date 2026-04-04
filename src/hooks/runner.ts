@@ -7,6 +7,8 @@ import type {
   PreToolUseHookOutput,
   PostToolUseHookInput,
   PostToolUseHookOutput,
+  PostToolUseFailureHookInput,
+  PostToolUseFailureHookOutput,
 } from "./types.js";
 
 /**
@@ -87,6 +89,37 @@ export async function runPostToolUseHooks(
   for (const hook of matching) {
     try {
       const output = (await hook.handler(input)) as PostToolUseHookOutput | void;
+      if (!output) continue;
+
+      if (output.updatedOutput !== undefined) {
+        merged.updatedOutput = output.updatedOutput;
+        input = { ...input, toolOutput: output.updatedOutput };
+      }
+      if (output.preventContinuation !== undefined) {
+        merged.preventContinuation = output.preventContinuation;
+      }
+    } catch {
+      // skip failing hooks — don't block tool execution
+    }
+  }
+
+  return merged;
+}
+
+/**
+ * Run post-tool-use-failure hooks. Same shape as post-tool-use hooks but
+ * triggers on the PostToolUseFailure event, fired only when `isError` is true.
+ */
+export async function runPostToolUseFailureHooks(
+  hooks: HookDefinition[],
+  input: PostToolUseFailureHookInput,
+): Promise<PostToolUseFailureHookOutput> {
+  const matching = getMatchingHooks(hooks, "PostToolUseFailure", input.toolName);
+  let merged: PostToolUseFailureHookOutput = {};
+
+  for (const hook of matching) {
+    try {
+      const output = (await hook.handler(input)) as PostToolUseFailureHookOutput | void;
       if (!output) continue;
 
       if (output.updatedOutput !== undefined) {

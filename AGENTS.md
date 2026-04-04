@@ -48,6 +48,15 @@ Run this checklist **every time** you modify any of the files listed below:
 ### If you change hooks events (`src/hooks/types.ts`)
 - Update `README.md` Hooks section
 - Update `website/docs/hooks/index.mdx` event table
+- Update `website/docs/embedding/index.mdx` if hook examples are affected
+
+### If you add/change presets (`src/presets.ts`)
+- Update `README.md` Presets section
+- Update `website/docs/getting-started/index.mdx` preset quick-start
+- Update `website/docs/embedding/index.mdx` preset examples
+
+### If you add/change the server/client API (`src/server/index.ts`, `src/client/index.ts`)
+- Update `website/docs/embedding/index.mdx` server/client examples
 
 ### If you change permission modes (`src/permissions/types.ts`)
 - Update `README.md` Permissions section
@@ -85,7 +94,7 @@ These numeric claims appear in multiple places. Grep for them when changing the 
 - **Provider count** — currently 7 (OpenAI, Anthropic, Gemini, OpenRouter, Bedrock, Vertex, Ollama)
 - **Core tool count** — currently 9 (ReadFile, WriteFile, EditFile, Bash, Glob, Grep, WebFetch, NotebookEdit, AskUser)
 - **Sandbox backend count** — currently 4 (Local, Sprites, Docker, E2B)
-- **Hook event count** — currently 9 (PreToolUse, PostToolUse, TurnStart, TurnEnd, SubagentStart, SubagentStop, PreCompact, PostCompact, Error)
+- **Hook event count** — currently 18 (PreToolUse, PostToolUse, PostToolUseFailure, TurnStart, TurnEnd, SessionStart, SessionEnd, SubagentStart, SubagentStop, PreCompact, PostCompact, PermissionRequest, PermissionDenied, FileWrite, ModelSwitch, RetryAttempt, MemoryUpdate, Error)
 - **Permission mode count** — currently 6 (default, plan, acceptEdits, auto, bypassPermissions, dontAsk)
 
 ## MCP config format

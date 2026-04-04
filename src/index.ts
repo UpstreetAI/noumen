@@ -1,5 +1,8 @@
 // Main API
-export { Code, type CodeOptions } from "./code.js";
+export { Code, type CodeOptions, type DiagnoseResult } from "./code.js";
+
+// Presets
+export { codingAgent, planningAgent, reviewAgent, type PresetOptions } from "./presets.js";
 export { Thread, type ThreadOptions, type ThreadConfig } from "./thread.js";
 
 // AI Provider types (shared interface — concrete providers are subpath exports)
@@ -463,13 +466,24 @@ export type {
   PreToolUseHookOutput,
   PostToolUseHookInput,
   PostToolUseHookOutput,
+  PostToolUseFailureHookInput,
+  PostToolUseFailureHookOutput,
   SubagentStartHookInput,
   SubagentStopHookInput,
+  SessionStartHookInput,
+  SessionEndHookInput,
+  PermissionRequestHookInput,
+  PermissionDeniedHookInput,
+  FileWriteHookInput,
+  ModelSwitchHookInput,
+  RetryAttemptHookInput,
+  MemoryUpdateHookInput,
   NotificationHookInput,
 } from "./hooks/types.js";
 export {
   runPreToolUseHooks,
   runPostToolUseHooks,
+  runPostToolUseFailureHooks,
   runNotificationHooks,
 } from "./hooks/runner.js";
 

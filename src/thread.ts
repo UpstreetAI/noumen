@@ -41,6 +41,7 @@ import { generateMissingToolResults } from "./session/recovery.js";
 import {
   runPreToolUseHooks,
   runPostToolUseHooks,
+  runPostToolUseFailureHooks,
   runNotificationHooks,
 } from "./hooks/runner.js";
 import { ToolRegistry, resolveToolFlag } from "./tools/registry.js";
@@ -267,6 +268,8 @@ export class Thread {
     const interactionStart = Date.now();
     yield { type: "span_start", name: "noumen.interaction", spanId: this.sessionId };
 
+    const isResumeRun = this.resumeRequested;
+
     try {
       if (!this.loaded) {
         if (this.resumeRequested) {
@@ -354,6 +357,14 @@ export class Thread {
         yield { type: "checkpoint_snapshot", messageId: turnMessageId };
       }
 
+      // --- SessionStart hook ---
+      await runNotificationHooks(this.hooks, "SessionStart", {
+        event: "SessionStart",
+        sessionId: this.sessionId,
+        prompt,
+        isResume: isResumeRun,
+      } as import("./hooks/types.js").SessionStartHookInput);
+
       const allSkills = this.config.skills ?? [];
       let systemPrompt = await this.buildCurrentSystemPromptAsync(allSkills);
 
@@ -408,6 +419,9 @@ export class Thread {
           toolCtx.cwd = newCwd;
         },
         fileStateCache: this.fileStateCache ?? undefined,
+        notifyHook: this.hooks.length > 0
+          ? (event, input) => runNotificationHooks(this.hooks, event as import("./hooks/types.js").HookEvent, input as import("./hooks/types.js").HookInput)
+          : undefined,
       };
 
       const turnUsage: ChatCompletionUsage = {
@@ -591,6 +605,17 @@ export class Thread {
           let retryResult = await retryGen.next();
           while (!retryResult.done) {
             const event = retryResult.value;
+            if (event.type === "retry_attempt" && hooks.length > 0) {
+              const re = event as { attempt: number; maxRetries: number; delayMs: number; error: Error };
+              await runNotificationHooks(hooks, "RetryAttempt", {
+                event: "RetryAttempt",
+                sessionId: this.sessionId,
+                attempt: re.attempt,
+                maxAttempts: re.maxRetries,
+                error: re.error.message,
+                delay: re.delayMs,
+              } as import("./hooks/types.js").RetryAttemptHookInput);
+            }
             yield event;
             retryResult = await retryGen.next();
           }
@@ -617,6 +642,10 @@ export class Thread {
             providerSpan.end();
             yield { type: "span_end", name: "noumen.provider.chat", spanId: providerSpanId, durationMs: Date.now() - providerStart, error: "context overflow" };
 
+            await runNotificationHooks(hooks, "PreCompact", {
+              event: "PreCompact",
+              sessionId: this.sessionId,
+            });
             yield { type: "compact_start" };
             const recovered = await tryReactiveCompact(
               this.config.aiProvider,
@@ -630,9 +659,17 @@ export class Thread {
               this.lastUsage = undefined;
               this.anchorMessageIndex = undefined;
               yield { type: "compact_complete" };
+              await runNotificationHooks(hooks, "PostCompact", {
+                event: "PostCompact",
+                sessionId: this.sessionId,
+              });
               continue;
             }
             yield { type: "compact_complete" };
+            await runNotificationHooks(hooks, "PostCompact", {
+              event: "PostCompact",
+              sessionId: this.sessionId,
+            });
           }
 
           // Generate synthetic tool results for any pending tool_calls before re-throwing
@@ -950,6 +987,10 @@ export class Thread {
                     input: currentArgs,
                     message: decision.message,
                   });
+                  await runNotificationHooks(hooks, "PermissionDenied", {
+                    event: "PermissionDenied", sessionId, toolName: tc.function.name,
+                    input: currentArgs, reason: decision.message,
+                  } as import("./hooks/types.js").PermissionDeniedHookInput);
                   if (this.denialTracker?.shouldFallback()) {
                     const state = this.denialTracker.getState();
                     eventQueue.push({
@@ -964,6 +1005,10 @@ export class Thread {
                 }
 
                 if (decision.behavior === "ask") {
+                  await runNotificationHooks(hooks, "PermissionRequest", {
+                    event: "PermissionRequest", sessionId, toolName: tc.function.name,
+                    input: currentArgs, mode: permCtx?.mode ?? "default",
+                  } as import("./hooks/types.js").PermissionRequestHookInput);
                   eventQueue.push({
                     type: "permission_request",
                     toolName: tc.function.name,
@@ -993,6 +1038,10 @@ export class Thread {
                         input: currentArgs,
                         message: feedback,
                       });
+                      await runNotificationHooks(hooks, "PermissionDenied", {
+                        event: "PermissionDenied", sessionId, toolName: tc.function.name,
+                        input: currentArgs, reason: feedback,
+                      } as import("./hooks/types.js").PermissionDeniedHookInput);
                       if (this.denialTracker?.shouldFallback()) {
                         const state = this.denialTracker.getState();
                         eventQueue.push({
@@ -1020,6 +1069,10 @@ export class Thread {
                       input: currentArgs,
                       message: "No permission handler configured.",
                     });
+                    await runNotificationHooks(hooks, "PermissionDenied", {
+                      event: "PermissionDenied", sessionId, toolName: tc.function.name,
+                      input: currentArgs, reason: "No permission handler configured.",
+                    } as import("./hooks/types.js").PermissionDeniedHookInput);
                     if (this.denialTracker?.shouldFallback()) {
                       const state = this.denialTracker.getState();
                       eventQueue.push({
@@ -1114,6 +1167,25 @@ export class Thread {
               }
               if (postOutput.preventContinuation) {
                 preventContinuation = true;
+              }
+
+              // --- PostToolUseFailure hooks ---
+              if (result.isError) {
+                const failOutput = await runPostToolUseFailureHooks(hooks, {
+                  event: "PostToolUseFailure",
+                  toolName: tc.function.name,
+                  toolInput: currentArgs,
+                  toolUseId: tc.id,
+                  toolOutput: contentToString(result.content),
+                  errorMessage: contentToString(result.content),
+                  sessionId,
+                });
+                if (failOutput.updatedOutput !== undefined) {
+                  result = { ...result, content: failOutput.updatedOutput };
+                }
+                if (failOutput.preventContinuation) {
+                  preventContinuation = true;
+                }
               }
             }
 
@@ -1309,6 +1381,16 @@ export class Thread {
               updated: extractResult.updated,
               deleted: extractResult.deleted,
             };
+            const allEntries = [
+              ...extractResult.created.map((e) => ({ type: "created", content: e.content })),
+              ...extractResult.updated.map((e) => ({ type: "updated", content: e.content })),
+              ...extractResult.deleted.map((id) => ({ type: "deleted", content: id })),
+            ];
+            await runNotificationHooks(this.hooks, "MemoryUpdate", {
+              event: "MemoryUpdate",
+              sessionId: this.sessionId,
+              entries: allEntries,
+            } as import("./hooks/types.js").MemoryUpdateHookInput);
           }
         } catch {
           // Memory extraction is best-effort; don't fail the turn.
@@ -1318,6 +1400,18 @@ export class Thread {
       interactionSpan.setStatus(SpanStatusCode.OK);
       interactionSpan.end();
       yield { type: "span_end", name: "noumen.interaction", spanId: this.sessionId, durationMs: Date.now() - interactionStart };
+
+      // Determine session end reason
+      const endReason: "complete" | "abort" | "maxTurns" = signal.aborted
+        ? "abort"
+        : (opts?.maxTurns !== undefined && callCount >= opts.maxTurns)
+          ? "maxTurns"
+          : "complete";
+      await runNotificationHooks(this.hooks, "SessionEnd", {
+        event: "SessionEnd",
+        sessionId: this.sessionId,
+        reason: endReason,
+      } as import("./hooks/types.js").SessionEndHookInput);
     } catch (err) {
       if (!signal.aborted) {
         const error = err instanceof Error ? err : new Error(String(err));
@@ -1338,6 +1432,12 @@ export class Thread {
         interactionSpan.end();
         yield { type: "span_end", name: "noumen.interaction", spanId: this.sessionId, durationMs: Date.now() - interactionStart };
       }
+
+      await runNotificationHooks(this.hooks, "SessionEnd", {
+        event: "SessionEnd",
+        sessionId: this.sessionId,
+        reason: signal.aborted ? "abort" : "error",
+      } as import("./hooks/types.js").SessionEndHookInput);
     }
   }
 
@@ -1393,6 +1493,10 @@ export class Thread {
           if (decision.behavior === "deny") {
             this.denialTracker?.recordDenial();
             events.push({ type: "permission_denied", toolName: tc.function.name, input: currentArgs, message: decision.message });
+            await runNotificationHooks(hooks, "PermissionDenied", {
+              event: "PermissionDenied", sessionId, toolName: tc.function.name,
+              input: currentArgs, reason: decision.message,
+            } as import("./hooks/types.js").PermissionDeniedHookInput);
             if (this.denialTracker?.shouldFallback()) {
               const state = this.denialTracker.getState();
               events.push({ type: "denial_limit_exceeded", consecutiveDenials: state.consecutiveDenials, totalDenials: state.totalDenials });
@@ -1401,6 +1505,10 @@ export class Thread {
           }
 
           if (decision.behavior === "ask") {
+            await runNotificationHooks(hooks, "PermissionRequest", {
+              event: "PermissionRequest", sessionId, toolName: tc.function.name,
+              input: currentArgs, mode: permCtx?.mode ?? "default",
+            } as import("./hooks/types.js").PermissionRequestHookInput);
             events.push({ type: "permission_request", toolName: tc.function.name, input: currentArgs, message: decision.message });
             if (permHandler) {
               const isReadOnly = resolveToolFlag(tool.isReadOnly, currentArgs);
@@ -1417,6 +1525,10 @@ export class Thread {
                 this.denialTracker?.recordDenial();
                 const feedback = response.feedback ?? "User denied permission.";
                 events.push({ type: "permission_denied", toolName: tc.function.name, input: currentArgs, message: feedback });
+                await runNotificationHooks(hooks, "PermissionDenied", {
+                  event: "PermissionDenied", sessionId, toolName: tc.function.name,
+                  input: currentArgs, reason: feedback,
+                } as import("./hooks/types.js").PermissionDeniedHookInput);
                 if (this.denialTracker?.shouldFallback()) {
                   const state = this.denialTracker.getState();
                   events.push({ type: "denial_limit_exceeded", consecutiveDenials: state.consecutiveDenials, totalDenials: state.totalDenials });
@@ -1428,6 +1540,10 @@ export class Thread {
             } else {
               this.denialTracker?.recordDenial();
               events.push({ type: "permission_denied", toolName: tc.function.name, input: currentArgs, message: "No permission handler configured." });
+              await runNotificationHooks(hooks, "PermissionDenied", {
+                event: "PermissionDenied", sessionId, toolName: tc.function.name,
+                input: currentArgs, reason: "No permission handler configured.",
+              } as import("./hooks/types.js").PermissionDeniedHookInput);
               if (this.denialTracker?.shouldFallback()) {
                 const state = this.denialTracker.getState();
                 events.push({ type: "denial_limit_exceeded", consecutiveDenials: state.consecutiveDenials, totalDenials: state.totalDenials });
@@ -1490,6 +1606,17 @@ export class Thread {
           result = { ...result, content: postOutput.updatedOutput };
         }
         if (postOutput.preventContinuation) hookPreventContinuation = true;
+
+        if (result.isError) {
+          const failOutput = await runPostToolUseFailureHooks(hooks, {
+            event: "PostToolUseFailure", toolName: tc.function.name, toolInput: currentArgs, toolUseId: tc.id,
+            toolOutput: contentToString(result.content), errorMessage: contentToString(result.content), sessionId,
+          });
+          if (failOutput.updatedOutput !== undefined) {
+            result = { ...result, content: failOutput.updatedOutput };
+          }
+          if (failOutput.preventContinuation) hookPreventContinuation = true;
+        }
       }
 
       return { result, preventContinuation: hookPreventContinuation || undefined, events };
@@ -1636,12 +1763,30 @@ export class Thread {
   }
 
   setModel(model: string): void {
+    const prev = this.model;
     this.model = model;
+    if (prev !== model && this.hooks.length > 0) {
+      runNotificationHooks(this.hooks, "ModelSwitch", {
+        event: "ModelSwitch",
+        sessionId: this.sessionId,
+        previousModel: prev,
+        newModel: model,
+      } as import("./hooks/types.js").ModelSwitchHookInput).catch(() => {});
+    }
   }
 
   setProvider(provider: AIProvider, model?: string): void {
+    const prev = this.model;
     this.config.aiProvider = provider;
     if (model) this.model = model;
+    if (model && prev !== model && this.hooks.length > 0) {
+      runNotificationHooks(this.hooks, "ModelSwitch", {
+        event: "ModelSwitch",
+        sessionId: this.sessionId,
+        previousModel: prev,
+        newModel: model,
+      } as import("./hooks/types.js").ModelSwitchHookInput).catch(() => {});
+    }
   }
 
   getModel(): string {

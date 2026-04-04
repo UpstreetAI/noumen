@@ -45,6 +45,13 @@ import { DEFAULT_RETRY_CONFIG } from "./retry/types.js";
 import type { ContextFile, ProjectContextConfig } from "./context/types.js";
 import { loadProjectContext } from "./context/loader.js";
 
+export interface DiagnoseResult {
+  provider: { ok: boolean; error?: string };
+  sandbox: { fs: boolean; computer: boolean; error?: string };
+  mcp: Record<string, { ok: boolean; error?: string }>;
+  lsp: Record<string, { ok: boolean; error?: string }>;
+}
+
 export interface CodeOptions {
   aiProvider: AIProvider;
 
@@ -489,6 +496,82 @@ export class Code {
     }
 
     await Promise.all(tasks);
+  }
+
+  /**
+   * Run health checks on the provider, sandbox, MCP servers, and LSP servers.
+   * Returns a structured report — useful for debugging integration issues.
+   */
+  async diagnose(): Promise<DiagnoseResult> {
+    const result: DiagnoseResult = {
+      provider: { ok: false },
+      sandbox: { fs: false, computer: false },
+      mcp: {},
+      lsp: {},
+    };
+
+    // Provider check
+    try {
+      const stream = this.aiProvider.chat({
+        model: this.model ?? "gpt-4o-mini",
+        messages: [{ role: "user", content: "Say ok" }],
+        tools: [],
+        system: "",
+      });
+      for await (const _ of stream) { break; }
+      result.provider = { ok: true };
+    } catch (err) {
+      result.provider = { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+
+    // Sandbox filesystem check
+    try {
+      await this.fs.exists("/");
+      result.sandbox.fs = true;
+    } catch (err) {
+      result.sandbox.error = err instanceof Error ? err.message : String(err);
+    }
+
+    // Sandbox computer check
+    try {
+      const cmd = await this.computer.executeCommand("echo ok");
+      result.sandbox.computer = cmd.exitCode === 0;
+      if (cmd.exitCode !== 0) {
+        result.sandbox.error = (result.sandbox.error ? result.sandbox.error + "; " : "") + "Shell returned non-zero";
+      }
+    } catch (err) {
+      result.sandbox.computer = false;
+      const msg = err instanceof Error ? err.message : String(err);
+      result.sandbox.error = (result.sandbox.error ? result.sandbox.error + "; " : "") + msg;
+    }
+
+    // MCP server status
+    if (this.mcpManager) {
+      try {
+        const tools = await this.mcpManager.getTools();
+        for (const name of Object.keys(this.mcpServerConfigs ?? {})) {
+          const hasTools = tools.some((t) => t.name.startsWith(`mcp__${name}`));
+          result.mcp[name] = { ok: hasTools };
+        }
+      } catch (err) {
+        for (const name of Object.keys(this.mcpServerConfigs ?? {})) {
+          result.mcp[name] = { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+      }
+    }
+
+    // LSP server status
+    if (this.lspManager) {
+      for (const name of Object.keys(this.lspConfigs ?? {})) {
+        try {
+          result.lsp[name] = { ok: true };
+        } catch (err) {
+          result.lsp[name] = { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+      }
+    }
+
+    return result;
   }
 
   /**

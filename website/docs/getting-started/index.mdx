@@ -213,9 +213,36 @@ for await (const event of thread.run("Add input validation to the signup handler
 }
 ```
 
+## Quick start with presets
+
+For the fastest setup, use a preset instead of configuring `Code` manually:
+
+```typescript
+import { codingAgent } from "noumen";
+import { OpenAIProvider } from "noumen/openai";
+
+const code = codingAgent({
+  provider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY! }),
+  cwd: process.cwd(),
+});
+
+await code.init();
+const thread = code.createThread();
+
+for await (const event of thread.run("Add input validation to the signup handler")) {
+  if (event.type === "text_delta") process.stdout.write(event.text);
+}
+
+await code.close();
+```
+
+Presets configure sensible defaults: `codingAgent` enables subagents, tasks, plan mode, auto-compact, retry, cost tracking, and project context. See also `planningAgent` (read-only) and `reviewAgent` (read-only + web search).
+
 ## What's next
 
+- [Embedding](/docs/embedding) -- integrate noumen into Next.js, Electron, VS Code, or any application
 - [Providers](/docs/providers) -- detailed configuration for each AI provider
 - [Tools](/docs/tools) -- the built-in coding tools and how to add your own
+- [Hooks](/docs/hooks) -- 18 events to intercept and customize the agent lifecycle
 - [Project Context](/docs/context) -- configure NOUMEN.md / CLAUDE.md for project-level instructions
 - [Stream Events](/docs/stream-events) -- every event type your app can handle

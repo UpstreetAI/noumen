@@ -66,6 +66,8 @@ export interface ToolContext {
   currentMessageId?: string;
   /** File state cache for read-before-edit enforcement and dedup. */
   fileStateCache?: FileStateCache;
+  /** Fire a notification hook from within a tool (populated by Thread). */
+  notifyHook?: (event: string, input: Record<string, unknown>) => Promise<void>;
 }
 
 export interface ToolParameterProperty {

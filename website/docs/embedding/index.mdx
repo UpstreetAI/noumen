@@ -1,0 +1,316 @@
+---
+title: Embedding
+description: Four ways to integrate noumen into your application — in-process, HTTP/SSE, WebSocket, and framework-specific patterns.
+---
+
+noumen is designed as a library first. Whether you're building a VS Code extension, a web app with an AI coding assistant, or a CI pipeline, you can embed the full agent loop directly into your application.
+
+## In-process (Node.js / Bun)
+
+The simplest integration: import `Code`, create a thread, and iterate over events.
+
+```typescript
+import { Code, LocalSandbox } from "noumen";
+import { AnthropicProvider } from "noumen/anthropic";
+
+const code = new Code({
+  aiProvider: new AnthropicProvider({
+    apiKey: process.env.ANTHROPIC_API_KEY!,
+  }),
+  sandbox: LocalSandbox({ cwd: "/my/project" }),
+  options: {
+    permissions: { mode: "bypassPermissions" },
+    autoCompact: true,
+    costTracking: { enabled: true },
+  },
+});
+
+await code.init();
+
+const thread = code.createThread();
+
+for await (const event of thread.run("Add error handling to server.ts")) {
+  switch (event.type) {
+    case "text_delta":
+      process.stdout.write(event.text);
+      break;
+    case "tool_use_start":
+      console.log(`\n[tool] ${event.toolName}`);
+      break;
+    case "tool_result":
+      console.log(`[done] ${event.toolName}`);
+      break;
+    case "turn_complete":
+      console.log(`\n[cost] ${event.usage.total_tokens} tokens`);
+      break;
+  }
+}
+
+await code.close();
+```
+
+### Using presets
+
+For quicker setup, use a preset that configures sensible defaults:
+
+```typescript
+import { codingAgent } from "noumen";
+import { OpenAIProvider } from "noumen/openai";
+
+const code = codingAgent({
+  provider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY! }),
+  cwd: "/my/project",
+});
+
+await code.init();
+const thread = code.createThread();
+
+for await (const event of thread.run("Refactor the auth module")) {
+  if (event.type === "text_delta") process.stdout.write(event.text);
+}
+
+await code.close();
+```
+
+Three presets are available:
+
+| Preset | Permissions | Features |
+|--------|------------|----------|
+| `codingAgent` | `default` | Subagents, tasks, plan mode, retry, cost tracking, project context |
+| `planningAgent` | `plan` | Read-only exploration, plan mode |
+| `reviewAgent` | `plan` | Read-only with web search for documentation lookups |
+
+### Health checks
+
+Before running prompts, verify that all integrations are working:
+
+```typescript
+const result = await code.diagnose();
+console.log(result);
+// {
+//   provider: { ok: true },
+//   sandbox: { fs: true, computer: true },
+//   mcp: { filesystem: { ok: true } },
+//   lsp: {}
+// }
+```
+
+## HTTP / SSE server
+
+Expose the agent over HTTP using the built-in server. Clients connect via Server-Sent Events for streaming.
+
+```typescript
+import { Code, LocalSandbox } from "noumen";
+import { createServer } from "noumen/server";
+import { AnthropicProvider } from "noumen/anthropic";
+
+const code = new Code({
+  aiProvider: new AnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY! }),
+  sandbox: LocalSandbox({ cwd: "/workspace" }),
+  options: { permissions: { mode: "bypassPermissions" } },
+});
+
+await code.init();
+
+const server = createServer(code, {
+  port: 3001,
+  auth: { type: "bearer", token: process.env.API_TOKEN! },
+  cors: true,
+});
+
+await server.start();
+console.log("Agent server running on http://localhost:3001");
+```
+
+### Client connection
+
+Connect from any HTTP client or use the built-in `NoumenClient`:
+
+```typescript
+import { NoumenClient } from "noumen/client";
+
+const client = new NoumenClient({
+  baseUrl: "http://localhost:3001",
+  token: process.env.API_TOKEN,
+  transport: "sse",
+});
+
+for await (const event of client.run("Fix the failing test in auth.test.ts")) {
+  if (event.type === "text_delta") process.stdout.write(event.text);
+}
+```
+
+## WebSocket
+
+For bidirectional communication (permissions, user input), use the WebSocket transport:
+
+```typescript
+import { createServer } from "noumen/server";
+
+const server = createServer(code, {
+  port: 3001,
+  ws: true,
+  auth: { type: "bearer", token: process.env.API_TOKEN! },
+});
+
+await server.start();
+```
+
+The client can handle permission requests and user input interactively:
+
+```typescript
+import { NoumenClient } from "noumen/client";
+
+const client = new NoumenClient({
+  baseUrl: "http://localhost:3001",
+  token: process.env.API_TOKEN,
+  transport: "ws",
+});
+
+for await (const event of client.run("Deploy to staging", {
+  onPermissionRequest: async (req) => {
+    const approved = await askUser(`Allow ${req.toolName}?`);
+    return { allow: approved };
+  },
+  onUserInput: async (question) => {
+    return await askUser(question);
+  },
+})) {
+  if (event.type === "text_delta") process.stdout.write(event.text);
+}
+```
+
+## Framework examples
+
+### Next.js API route
+
+Stream agent events to the browser via a Next.js route handler:
+
+```typescript
+// app/api/agent/route.ts
+import { Code, LocalSandbox } from "noumen";
+import { OpenAIProvider } from "noumen/openai";
+
+const code = new Code({
+  aiProvider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY! }),
+  sandbox: LocalSandbox({ cwd: process.env.WORKSPACE_DIR! }),
+  options: { permissions: { mode: "bypassPermissions" } },
+});
+
+export async function POST(req: Request) {
+  const { prompt } = await req.json();
+  const thread = code.createThread();
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      const encoder = new TextEncoder();
+      for await (const event of thread.run(prompt)) {
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify(event)}\n\n`),
+        );
+      }
+      controller.close();
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+    },
+  });
+}
+```
+
+### Electron main process
+
+Run the agent in Electron's main process and communicate with the renderer via IPC:
+
+```typescript
+// main.ts
+import { app, ipcMain } from "electron";
+import { codingAgent } from "noumen";
+import { AnthropicProvider } from "noumen/anthropic";
+
+const code = codingAgent({
+  provider: new AnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY! }),
+  cwd: app.getPath("documents"),
+});
+
+app.whenReady().then(async () => {
+  await code.init();
+
+  ipcMain.handle("agent:run", async (event, prompt: string) => {
+    const thread = code.createThread();
+    const events = [];
+    for await (const e of thread.run(prompt)) {
+      event.sender.send("agent:event", e);
+      events.push(e);
+    }
+    return events;
+  });
+});
+```
+
+### VS Code extension
+
+Integrate the agent into a VS Code extension:
+
+```typescript
+// extension.ts
+import * as vscode from "vscode";
+import { codingAgent } from "noumen";
+import { OpenAIProvider } from "noumen/openai";
+
+export function activate(context: vscode.ExtensionContext) {
+  const code = codingAgent({
+    provider: new OpenAIProvider({
+      apiKey: vscode.workspace.getConfiguration("noumen").get("apiKey")!,
+    }),
+    cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+  });
+
+  const disposable = vscode.commands.registerCommand(
+    "noumen.run",
+    async () => {
+      const prompt = await vscode.window.showInputBox({
+        prompt: "What should the agent do?",
+      });
+      if (!prompt) return;
+
+      await code.init();
+      const thread = code.createThread();
+
+      const output = vscode.window.createOutputChannel("noumen");
+      output.show();
+
+      for await (const event of thread.run(prompt)) {
+        if (event.type === "text_delta") output.append(event.text);
+        if (event.type === "tool_use_start") {
+          output.appendLine(`\n[${event.toolName}]`);
+        }
+      }
+
+      await code.close();
+    },
+  );
+
+  context.subscriptions.push(disposable);
+}
+```
+
+## Key stream events to handle
+
+When embedding, you'll typically handle these core events:
+
+| Event | When | What to do |
+|-------|------|------------|
+| `text_delta` | Model streams text | Display to user |
+| `tool_use_start` | Tool call begins | Show activity indicator |
+| `tool_result` | Tool completes | Show result summary |
+| `permission_request` | Agent needs approval | Prompt user (WebSocket) or auto-approve |
+| `error` | Something went wrong | Display error, retry, or abort |
+| `turn_complete` | Run finished | Show cost/token summary |
+| `session_resumed` | Resuming a saved session | Confirm to user |
+
+See [Stream Events](/docs/stream-events) for the complete reference of all event types.

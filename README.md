@@ -51,6 +51,37 @@ for await (const event of thread.run("Add a health-check endpoint to server.ts")
 }
 ```
 
+## Presets
+
+For zero-config setup, use a preset that configures everything for you:
+
+```typescript
+import { codingAgent } from "noumen";
+import { OpenAIProvider } from "noumen/openai";
+
+const code = codingAgent({
+  provider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY! }),
+  cwd: "/my/project",
+});
+
+await code.init();
+const thread = code.createThread();
+
+for await (const event of thread.run("Refactor the auth module")) {
+  if (event.type === "text_delta") process.stdout.write(event.text);
+}
+
+await code.close();
+```
+
+Three presets are available:
+
+| Preset | Mode | Includes |
+|--------|------|----------|
+| `codingAgent` | `default` | Subagents, tasks, plan mode, auto-compact, retry, cost tracking, project context |
+| `planningAgent` | `plan` | Read-only exploration, plan mode enabled |
+| `reviewAgent` | `plan` | Read-only + web search for documentation lookups |
+
 ## CLI
 
 noumen ships a CLI for using the agent directly from the terminal, with any provider.
@@ -122,6 +153,44 @@ Ollama, Bedrock, and Vertex do not require an API key.
 | `noumen init` | Create `.noumen/config.json` |
 | `noumen sessions` | List past sessions |
 | `noumen resume <id>` | Resume a previous session (prefix match) |
+
+## Embedding
+
+noumen is a library first. Four integration patterns:
+
+**In-process** — `Code` + `Thread.run()` async iterator, direct import:
+
+```typescript
+const thread = code.createThread();
+for await (const event of thread.run("Fix the bug")) {
+  if (event.type === "text_delta") process.stdout.write(event.text);
+}
+```
+
+**HTTP/SSE server** — expose the agent over HTTP:
+
+```typescript
+import { createServer } from "noumen/server";
+const server = createServer(code, { port: 3001, auth: { type: "bearer", token: "..." } });
+await server.start();
+```
+
+**WebSocket** — bidirectional with permission handling:
+
+```typescript
+import { NoumenClient } from "noumen/client";
+const client = new NoumenClient({ baseUrl: "http://localhost:3001", transport: "ws" });
+for await (const event of client.run("Deploy to staging")) { /* ... */ }
+```
+
+**Frameworks** — Next.js API routes, Electron IPC, VS Code extensions. See the [full embedding guide](https://noumen.dev/docs/embedding).
+
+**Health checks** — verify all integrations work before running:
+
+```typescript
+const result = await code.diagnose();
+// { provider: { ok: true }, sandbox: { fs: true, computer: true }, mcp: {}, lsp: {} }
+```
 
 ## Providers
 
@@ -627,13 +696,19 @@ const sessions = await code.listSessions();
 
 ## Hooks
 
-Intercept tool calls, turn lifecycle, subagent spawning, compaction, and errors:
+18 hook events across six categories — intercept tool calls, session lifecycle, permissions, file writes, model switches, compaction, retry, memory, and errors:
 
 ```typescript
 const code = new Code({
   aiProvider, sandbox,
   options: {
     hooks: [
+      {
+        event: "SessionStart",
+        handler: async (input) => {
+          console.log(`Session ${input.sessionId} started (resume: ${input.isResume})`);
+        },
+      },
       {
         event: "PreToolUse",
         matcher: "Bash",
@@ -643,9 +718,15 @@ const code = new Code({
         },
       },
       {
-        event: "TurnEnd",
+        event: "FileWrite",
         handler: async (input) => {
-          console.log(`Turn ended for ${input.sessionId}`);
+          console.log(`${input.toolName} wrote ${input.filePath}`);
+        },
+      },
+      {
+        event: "PermissionDenied",
+        handler: async (input) => {
+          console.log(`Denied ${input.toolName}: ${input.reason}`);
         },
       },
     ],
@@ -653,7 +734,16 @@ const code = new Code({
 });
 ```
 
-Events: `PreToolUse`, `PostToolUse`, `TurnStart`, `TurnEnd`, `SubagentStart`, `SubagentStop`, `PreCompact`, `PostCompact`, `Error`.
+| Category | Events |
+|----------|--------|
+| Session lifecycle | `SessionStart`, `SessionEnd`, `TurnStart`, `TurnEnd`, `Error` |
+| Tool execution | `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `FileWrite` |
+| Permissions | `PermissionRequest`, `PermissionDenied` |
+| Subagents | `SubagentStart`, `SubagentStop` |
+| Compaction | `PreCompact`, `PostCompact` |
+| System | `ModelSwitch`, `RetryAttempt`, `MemoryUpdate` |
+
+See the [hooks documentation](https://noumen.dev/docs/hooks) for full details on each event.
 
 ## Permissions
 

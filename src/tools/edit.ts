@@ -137,6 +137,14 @@ export const editFileTool: Tool = {
 
       await ctx.fs.writeFile(filePath, updated);
 
+      ctx.notifyHook?.("FileWrite", {
+        event: "FileWrite",
+        sessionId: ctx.sessionId ?? "",
+        toolName: "EditFile",
+        filePath,
+        isNew: false,
+      }).catch(() => {});
+
       // Update cache with the full post-edit content
       if (ctx.fileStateCache) {
         let mtime = 0;

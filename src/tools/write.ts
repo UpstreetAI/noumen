@@ -56,6 +56,14 @@ export const writeFileTool: Tool = {
 
       await ctx.fs.writeFile(filePath, content);
 
+      ctx.notifyHook?.("FileWrite", {
+        event: "FileWrite",
+        sessionId: ctx.sessionId ?? "",
+        toolName: "WriteFile",
+        filePath,
+        isNew: !existed,
+      }).catch(() => {});
+
       // Update file state cache with the written content
       if (ctx.fileStateCache) {
         let mtime = 0;

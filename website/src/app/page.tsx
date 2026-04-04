@@ -79,6 +79,18 @@ const FEATURES = [
       "Built-in task management tools for decomposing work. Plan mode for read-only exploration. Git worktrees for isolated branch-based experimentation.",
   },
   {
+    icon: "🪝",
+    title: "18 hook events",
+    description:
+      "Intercept tool calls, session lifecycle, permissions, file writes, model switches, retry, compaction, and memory extraction. Modify inputs, deny actions, or run side effects.",
+  },
+  {
+    icon: "📦",
+    title: "Embed in any app",
+    description:
+      "Use in-process with async iterators, expose over HTTP/SSE or WebSocket, or drop into Next.js, Electron, and VS Code extensions. Presets for zero-config setup.",
+  },
+  {
     icon: "⌨️",
     title: "CLI included",
     description:
