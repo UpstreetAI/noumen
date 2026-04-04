@@ -1,8 +1,10 @@
 # noumen
 
-Programmatic AI coding agent library with pluggable providers and virtual infrastructure.
+A pluggable coding agent with adapters for everything.
 
-`noumen` gives you a headless, API-only coding agent that can read, write, edit files, run shell commands, and search codebases — all backed by swappable AI providers (OpenAI, Anthropic, Google Gemini) and virtual filesystems/computers (local Node.js, [sprites.dev](https://sprites.dev) containers).
+`noumen` is a headless, API-only coding agent library. It reads, writes, edits files, runs shell commands, and searches codebases — all backed by swappable AI providers (OpenAI, Anthropic, Google Gemini) and virtual infrastructure (local Node.js, [sprites.dev](https://sprites.dev) containers). Bring your own keys, pick a filesystem, and stream the results.
+
+**[Documentation](https://noumen.dev)** · **[npm](https://www.npmjs.com/package/noumen)** · **[GitHub](https://github.com/UpstreetAI/noumen)**
 
 ## Install
 

@@ -30,6 +30,19 @@ body {
 
   --color-success: #22c55e;
   --color-error: #ef4444;
+
+  --animate-float: float 6s ease-in-out infinite;
+  --animate-sparkle: sparkle 2s ease-in-out infinite;
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-12px); }
+}
+
+@keyframes sparkle {
+  0%, 100% { opacity: 0.3; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.2); }
 }
 
 ::selection {
