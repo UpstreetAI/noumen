@@ -31,14 +31,26 @@ export {
   OpenRouterProvider,
   type OpenRouterProviderOptions,
 } from "./providers/openrouter.js";
+export {
+  BedrockAnthropicProvider,
+  type BedrockAnthropicProviderOptions,
+} from "./providers/bedrock.js";
+export {
+  VertexAnthropicProvider,
+  type VertexAnthropicProviderOptions,
+} from "./providers/vertex.js";
 
 // Sandbox (bundled VirtualFs + VirtualComputer)
 export {
   LocalSandbox,
   SpritesSandbox,
+  DockerSandbox,
+  E2BSandbox,
   type Sandbox,
   type LocalSandboxOptions,
   type SpritesSandboxOptions,
+  type DockerSandboxOptions,
+  type E2BSandboxOptions,
 } from "./virtual/sandbox.js";
 
 // Virtual infrastructure (sandboxing primitives)
@@ -65,6 +77,18 @@ export {
   SpritesComputer,
   type SpritesComputerOptions,
 } from "./virtual/sprites-computer.js";
+export { DockerFs, type DockerFsOptions } from "./virtual/docker-fs.js";
+export {
+  DockerComputer,
+  type DockerComputerOptions,
+  type DockerContainer,
+} from "./virtual/docker-computer.js";
+export { E2BFs, type E2BFsOptions } from "./virtual/e2b-fs.js";
+export {
+  E2BComputer,
+  type E2BComputerOptions,
+  type E2BSandboxInstance,
+} from "./virtual/e2b-computer.js";
 
 // File State Cache
 export type { FileState, FileStateCacheConfig } from "./file-state/types.js";

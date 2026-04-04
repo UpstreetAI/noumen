@@ -90,6 +90,61 @@ const provider = new OpenRouterProvider({
 });
 ```
 
+### AWS Bedrock (Anthropic)
+
+Route Anthropic models through AWS Bedrock. Requires `@anthropic-ai/bedrock-sdk` as an optional peer dependency:
+
+```bash
+pnpm add @anthropic-ai/bedrock-sdk
+```
+
+```typescript
+import { BedrockAnthropicProvider } from "noumen";
+
+const provider = new BedrockAnthropicProvider({
+  region: "us-west-2",                                     // default: us-east-1
+  model: "us.anthropic.claude-sonnet-4-20250514-v1:0",     // default
+  credentials: {                                            // optional, falls back to default chain
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
+    sessionToken: process.env.AWS_SESSION_TOKEN,
+  },
+  cacheControl: { enabled: true },                          // optional prompt caching
+});
+```
+
+When `credentials` is omitted, the SDK uses the standard AWS credential chain (env vars, `~/.aws/credentials`, IAM roles, etc.).
+
+### Google Vertex AI (Anthropic)
+
+Route Anthropic models through Google Cloud Vertex AI. Requires `@anthropic-ai/vertex-sdk` and `google-auth-library` as optional peer dependencies:
+
+```bash
+pnpm add @anthropic-ai/vertex-sdk google-auth-library
+```
+
+```typescript
+import { VertexAnthropicProvider } from "noumen";
+
+const provider = new VertexAnthropicProvider({
+  projectId: "my-gcp-project",
+  region: "us-east5",                     // default
+  model: "claude-sonnet-4@20250514",      // default
+  cacheControl: { enabled: true },        // optional prompt caching
+});
+```
+
+When `googleAuth` is omitted, the provider creates a `GoogleAuth` instance using application default credentials. You can pass your own `googleAuth` instance for custom authentication:
+
+```typescript
+import { GoogleAuth } from "google-auth-library";
+
+const provider = new VertexAnthropicProvider({
+  projectId: "my-project",
+  googleAuth: new GoogleAuth({ keyFile: "/path/to/service-account.json" }),
+});
+```
+
 ## Sandboxes
 
 A `Sandbox` bundles a `VirtualFs` (filesystem) and `VirtualComputer` (shell execution) into one object. Every file read/write and shell command the agent executes goes through these interfaces — swap the sandbox to control what the agent can access.
@@ -117,16 +172,78 @@ const sandbox = SpritesSandbox({
 });
 ```
 
+### Docker — container isolation
+
+Run the agent inside a Docker container. Requires `dockerode` as an optional peer dependency:
+
+```bash
+pnpm add dockerode
+```
+
+```typescript
+import Docker from "dockerode";
+import { DockerSandbox } from "noumen";
+
+const docker = new Docker();
+const container = await docker.createContainer({
+  Image: "node:22",
+  Cmd: ["sleep", "infinity"],
+  Tty: false,
+});
+await container.start();
+
+const sandbox = DockerSandbox({
+  container,
+  cwd: "/workspace",
+});
+
+// Use the sandbox normally — all commands/files run inside the container
+const code = new Code({ aiProvider, sandbox });
+
+// Clean up when done
+await container.stop();
+await container.remove();
+```
+
+You are responsible for container lifecycle (create, start, stop, remove). The sandbox just wraps the running container.
+
+### E2B — cloud sandbox
+
+Run the agent inside an [E2B](https://e2b.dev) cloud sandbox. Requires `e2b` as an optional peer dependency:
+
+```bash
+pnpm add e2b
+```
+
+```typescript
+import { Sandbox as E2BSandboxSDK } from "e2b";
+import { E2BSandbox } from "noumen";
+
+const e2b = await E2BSandboxSDK.create();
+
+const sandbox = E2BSandbox({
+  sandbox: e2b,
+  cwd: "/home/user",
+});
+
+const code = new Code({ aiProvider, sandbox });
+
+// Clean up when done
+await e2b.close();
+```
+
+You are responsible for sandbox lifecycle (create, close). The adapter maps `VirtualFs` and `VirtualComputer` to E2B's `files` and `commands` APIs.
+
 ### Custom sandboxes
 
-Implement `VirtualFs` and `VirtualComputer` to target any execution environment — Docker, E2B, Daytona, cloud VMs, or an in-memory test harness. A custom `Sandbox` is any object with `{ fs, computer }`:
+Implement `VirtualFs` and `VirtualComputer` to target any execution environment — Daytona, cloud VMs, or an in-memory test harness. A custom `Sandbox` is any object with `{ fs, computer }`:
 
 ```typescript
 import type { Sandbox } from "noumen";
 
 const sandbox: Sandbox = {
-  fs: new MyDockerFs({ container: "abc" }),
-  computer: new MyDockerComputer({ container: "abc" }),
+  fs: new MyCustomFs(),
+  computer: new MyCustomComputer(),
 };
 ```
 
