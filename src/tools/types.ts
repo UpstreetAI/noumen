@@ -7,6 +7,14 @@ export interface ToolResult {
   isError?: boolean;
 }
 
+/**
+ * Execution context passed to every tool call. All file and shell access
+ * goes through `fs` and `computer`, which are the sandboxing boundary —
+ * tools never touch `node:fs` or `child_process` directly. The isolation
+ * level is determined by which VirtualFs/VirtualComputer implementations
+ * the consumer provides (e.g. `LocalFs` for local dev, `SpritesFs` for
+ * remote sandboxed containers).
+ */
 export interface ToolContext {
   fs: VirtualFs;
   computer: VirtualComputer;

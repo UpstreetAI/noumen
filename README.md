@@ -2,9 +2,9 @@
 
 The coding agent you `npm install`.
 
-LLM SDKs give you chat. Sandbox providers give you containers. `noumen` is everything in between: the tool loop, file editing, shell execution, context compaction, and session management that turn a language model into a coding agent.
+`noumen` gives you the full agentic coding loop — tool execution, file editing, shell commands, context compaction, and session management — with sandboxed virtual infrastructure that isolates your agent from the host machine.
 
-Any provider. Any filesystem. One package.
+Any provider. Any sandbox. One package.
 
 **[Documentation](https://noumen.dev)** · **[npm](https://www.npmjs.com/package/noumen)** · **[GitHub](https://github.com/UpstreetAI/noumen)**
 
@@ -83,11 +83,13 @@ const provider = new GeminiProvider({
 });
 ```
 
-## Virtual Infrastructure
+## Sandboxed Virtual Infrastructure
 
-### Local (Node.js)
+Every file read/write and shell command the agent executes goes through two interfaces: `VirtualFs` and `VirtualComputer`. These are the sandboxing boundary — swap the implementation to control what the agent can access.
 
-Backed by `fs/promises` and `child_process`:
+### Local (Node.js) — no isolation
+
+Backed by `fs/promises` and `child_process`. Use for local development and trusted environments:
 
 ```typescript
 import { LocalFs, LocalComputer } from "noumen";
@@ -96,9 +98,9 @@ const fs = new LocalFs({ basePath: "/my/project" });
 const computer = new LocalComputer({ defaultCwd: "/my/project" });
 ```
 
-### sprites.dev
+### sprites.dev — full sandbox
 
-Run inside a remote [sprites.dev](https://docs.sprites.dev) container:
+Run inside a remote [sprites.dev](https://docs.sprites.dev) container. The agent has no access to the host machine:
 
 ```typescript
 import { SpritesFs, SpritesComputer } from "noumen";
@@ -113,6 +115,10 @@ const computer = new SpritesComputer({
   spriteName: "my-sprite",
 });
 ```
+
+### Custom sandboxes
+
+Implement `VirtualFs` and `VirtualComputer` to target any execution environment — Docker, E2B, Daytona, cloud VMs, or an in-memory test harness. The interfaces are intentionally minimal (one method for shell, eight for filesystem) so adapters are straightforward to write.
 
 ## Options
 

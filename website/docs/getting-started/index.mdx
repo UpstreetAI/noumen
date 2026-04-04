@@ -56,9 +56,9 @@ Every noumen agent needs three things: an **AI provider**, a **virtual filesyste
   </Step>
 
   <Step>
-    ### Configure virtual infrastructure
+    ### Configure virtual infrastructure (sandbox)
 
-    For local development, use the Node.js-backed implementations:
+    All tool I/O routes through `VirtualFs` and `VirtualComputer` — the sandboxing boundary. For local development, use the unsandboxed Node.js implementations:
 
     ```typescript
     import { LocalFs, LocalComputer } from "noumen";
@@ -67,7 +67,7 @@ Every noumen agent needs three things: an **AI provider**, a **virtual filesyste
     const computer = new LocalComputer({ defaultCwd: "/path/to/your/project" });
     ```
 
-    For remote sandboxed execution, see [Virtual Infrastructure](/docs/virtual).
+    For production or untrusted agents, swap in a sandboxed implementation like `SpritesFs` / `SpritesComputer` (remote containers) or write your own adapter for Docker, E2B, etc. See [Virtual Infrastructure](/docs/virtual).
   </Step>
 
   <Step>

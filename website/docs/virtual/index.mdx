@@ -1,13 +1,17 @@
 ---
-title: Virtual Infrastructure
-description: noumen uses abstract filesystem and computer interfaces that can be backed by local Node.js or remote containers.
+title: Virtual Infrastructure (Sandboxing)
+description: "VirtualFs and VirtualComputer are noumen's sandboxing primitives — the isolation boundary between the agent and the outside world."
 ---
 
-noumen separates the agent logic from the execution environment through two interfaces: `VirtualFs` for file operations and `VirtualComputer` for shell commands. This lets you run the same agent locally during development and in sandboxed containers in production.
+`VirtualFs` and `VirtualComputer` are noumen's **sandboxing primitives**. Every file read/write and every shell command the agent executes is routed through these two interfaces — built-in tools never touch `node:fs` or `child_process` directly. The isolation level of your agent is determined entirely by which implementations you provide.
 
-## VirtualFs
+<Callout type="info" title="This is your security boundary">
+  Swapping `LocalFs` / `LocalComputer` for `SpritesFs` / `SpritesComputer` (or any custom implementation) is all it takes to move from unsandboxed local execution to a fully isolated remote container. The agent code, tools, and prompts stay exactly the same.
+</Callout>
 
-The filesystem interface covers file and directory operations:
+## VirtualFs — filesystem sandbox
+
+The filesystem interface that all file tools (`ReadFile`, `WriteFile`, `EditFile`) delegate to:
 
 ```typescript
 interface VirtualFs {
@@ -22,9 +26,9 @@ interface VirtualFs {
 }
 ```
 
-## VirtualComputer
+## VirtualComputer — shell execution sandbox
 
-The computer interface handles shell command execution:
+The shell execution interface that all command tools (`Bash`, `Glob`, `Grep`) delegate to:
 
 ```typescript
 interface VirtualComputer {
@@ -34,9 +38,11 @@ interface VirtualComputer {
 
 Where `ExecOptions` supports `cwd`, `timeout`, and `env`, and `CommandResult` returns `exitCode`, `stdout`, and `stderr`.
 
-## Local (Node.js)
+## Built-in implementations
 
-For local development, use the Node.js-backed implementations:
+### Local (Node.js) — no isolation
+
+For local development and trusted environments. Commands and file operations run directly on the host machine:
 
 ```typescript
 import { LocalFs, LocalComputer } from "noumen";
@@ -45,17 +51,21 @@ const fs = new LocalFs({ basePath: "/my/project" });
 const computer = new LocalComputer({ defaultCwd: "/my/project" });
 ```
 
-`LocalFs` uses `node:fs/promises` under the hood. All paths are resolved relative to `basePath`, which acts as a security boundary -- the agent cannot access files outside it.
+`LocalFs` uses `node:fs/promises` under the hood. Paths resolve relative to `basePath`.
 
 `LocalComputer` uses `node:child_process.exec` with a configurable default working directory, timeout, and maximum output buffer size.
 
-### LocalFs options
+<Callout type="warn" title="No isolation">
+  `LocalFs` and `LocalComputer` provide no sandboxing. The agent can access anything the host process can. Use these for development, or in environments where you trust the agent and the prompts.
+</Callout>
+
+#### LocalFs options
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `basePath` | `string` | required | Root directory for all file operations |
 
-### LocalComputer options
+#### LocalComputer options
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
@@ -63,9 +73,9 @@ const computer = new LocalComputer({ defaultCwd: "/my/project" });
 | `timeout` | `number` | `30000` | Command timeout in milliseconds |
 | `maxBuffer` | `number` | `10 * 1024 * 1024` | Maximum stdout/stderr buffer size |
 
-## sprites.dev (Remote containers)
+### sprites.dev — full sandbox
 
-For sandboxed execution in remote [sprites.dev](https://docs.sprites.dev) containers:
+For production and untrusted agents. All file and shell operations execute inside a remote [sprites.dev](https://docs.sprites.dev) container over HTTPS. The agent has zero access to the host machine's filesystem, processes, or network:
 
 ```typescript
 import { SpritesFs, SpritesComputer } from "noumen";
@@ -81,9 +91,7 @@ const computer = new SpritesComputer({
 });
 ```
 
-The Sprites implementations use the sprites.dev HTTP API. The agent runs against a remote filesystem and shell, providing full isolation.
-
-### SpritesFs options
+#### SpritesFs options
 
 | Option | Type | Description |
 |--------|------|-------------|
@@ -91,7 +99,7 @@ The Sprites implementations use the sprites.dev HTTP API. The agent runs against
 | `spriteName` | `string` | Name of the sprite container |
 | `baseURL` | `string` | API base URL (optional) |
 
-### SpritesComputer options
+#### SpritesComputer options
 
 | Option | Type | Description |
 |--------|------|-------------|
@@ -99,6 +107,21 @@ The Sprites implementations use the sprites.dev HTTP API. The agent runs against
 | `spriteName` | `string` | Name of the sprite container |
 | `baseURL` | `string` | API base URL (optional) |
 
-## Custom implementations
+## Custom sandbox implementations
 
-You can implement `VirtualFs` and `VirtualComputer` for any backend -- Docker containers, cloud VMs, in-memory test environments, or anything else. The interfaces are intentionally minimal to make this straightforward.
+Implement `VirtualFs` and `VirtualComputer` to target any execution environment — Docker, E2B, Daytona, cloud VMs, or an in-memory test harness. The interfaces are intentionally minimal (one method for shell, eight for filesystem) so adapters are straightforward to write.
+
+```typescript
+import type { VirtualComputer, CommandResult, ExecOptions } from "noumen";
+
+class DockerComputer implements VirtualComputer {
+  constructor(private containerId: string) {}
+
+  async executeCommand(command: string, opts?: ExecOptions): Promise<CommandResult> {
+    // docker exec ${this.containerId} bash -c "${command}"
+    // ... your implementation here
+  }
+}
+```
+
+Any object that satisfies the interface works — no base classes, no registration, no framework lock-in.

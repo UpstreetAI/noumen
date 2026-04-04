@@ -1,9 +1,9 @@
 ---
 title: Built-in Tools
-description: noumen ships with six coding tools that cover file operations, shell commands, and codebase search.
+description: noumen ships with six coding tools that cover file operations, shell commands, and codebase search — all sandboxed through VirtualFs and VirtualComputer.
 ---
 
-Every noumen agent has access to six built-in tools. These are automatically registered in the `ToolRegistry` and available to the AI model during agent runs.
+Every noumen agent has access to six built-in tools. These are automatically registered in the `ToolRegistry` and available to the AI model during agent runs. All tools delegate file and shell access through `VirtualFs` and `VirtualComputer` — they never touch the host directly — so the isolation level is controlled entirely by which implementations you provide.
 
 ## Tool reference
 
@@ -12,7 +12,7 @@ Every noumen agent has access to six built-in tools. These are automatically reg
 | **ReadFile** | Read file contents with optional line offset and limit. Returns numbered lines. |
 | **WriteFile** | Create or overwrite a file at a given path. |
 | **EditFile** | Find-and-replace string editing within a file. |
-| **Bash** | Execute shell commands via the VirtualComputer. |
+| **Bash** | Execute shell commands via VirtualComputer (sandboxed). |
 | **Glob** | Find files matching a glob pattern (backed by ripgrep's `--files --glob`). |
 | **Grep** | Search file contents by regex pattern (backed by ripgrep). |
 

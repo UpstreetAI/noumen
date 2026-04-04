@@ -11,6 +11,13 @@ export interface SpritesFsOptions {
   workingDir?: string;
 }
 
+/**
+ * Sandboxed VirtualFs backed by a remote sprites.dev container. All file
+ * operations are executed over the sprites.dev HTTP API — the agent has no
+ * access to the host filesystem. This is the recommended VirtualFs for
+ * production deployments and untrusted agents. See `LocalFs` for an
+ * unsandboxed local alternative.
+ */
 export class SpritesFs implements VirtualFs {
   private token: string;
   private spriteName: string;

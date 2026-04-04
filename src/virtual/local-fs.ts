@@ -6,6 +6,13 @@ export interface LocalFsOptions {
   basePath?: string;
 }
 
+/**
+ * Unsandboxed VirtualFs backed by `node:fs/promises` on the host machine.
+ * Paths resolve relative to `basePath`. Suitable for local development and
+ * trusted environments. For production or untrusted agents, use a sandboxed
+ * implementation like `SpritesFs` (remote container) or a custom
+ * Docker/E2B adapter instead.
+ */
 export class LocalFs implements VirtualFs {
   private basePath: string;
 

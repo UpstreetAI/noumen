@@ -16,12 +16,16 @@ export interface SpritesComputerOptions {
 }
 
 /**
- * Executes commands inside a sprites.dev container via the exec REST endpoint.
+ * Sandboxed VirtualComputer that executes commands inside a remote
+ * sprites.dev container. All shell execution is fully isolated — the agent
+ * has no access to the host machine's processes, filesystem, or network.
  *
- * Uses the non-interactive exec mode: POST a command and get back
- * stdout/stderr/exit_code. For more complex use cases (streaming, TTY),
- * the WebSocket exec endpoint would be used, but for tool-call purposes
- * the REST endpoint is sufficient.
+ * This is the recommended VirtualComputer for production deployments and
+ * untrusted agents. See `LocalComputer` for an unsandboxed local alternative.
+ *
+ * Uses the non-interactive exec REST endpoint (POST command, receive
+ * stdout/stderr/exit_code). The WebSocket exec endpoint can be used for
+ * streaming/TTY use cases, but REST is sufficient for tool calls.
  */
 export class SpritesComputer implements VirtualComputer {
   private token: string;

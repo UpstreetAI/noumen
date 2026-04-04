@@ -14,8 +14,22 @@ import { buildUserContext } from "./prompt/context.js";
 
 export interface CodeOptions {
   aiProvider: AIProvider;
+
+  /**
+   * Filesystem sandbox. All file I/O from tools routes through this interface.
+   * Use `LocalFs` for unsandboxed local development, `SpritesFs` for isolated
+   * remote containers, or provide any custom `VirtualFs` (Docker, E2B, etc.).
+   */
   virtualFs: VirtualFs;
+
+  /**
+   * Shell execution sandbox. All command execution from tools routes through
+   * this interface. Use `LocalComputer` for unsandboxed local development,
+   * `SpritesComputer` for isolated remote containers, or provide any custom
+   * `VirtualComputer` (Docker, E2B, etc.).
+   */
   virtualComputer: VirtualComputer;
+
   options?: {
     sessionDir?: string;
     skills?: SkillDefinition[];

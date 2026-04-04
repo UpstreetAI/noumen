@@ -3,7 +3,7 @@ title: Introduction
 description: "noumen is the coding agent you npm install — the missing layer between LLMs and codebases, with pluggable providers and virtual infrastructure."
 ---
 
-The coding agent you `npm install`. LLM SDKs give you chat. Sandbox providers give you containers. noumen is everything in between — the tool loop, file editing, shell execution, and session management that turn a language model into a coding agent.
+The coding agent you `npm install`. noumen gives you the full agentic coding loop — tool execution, file editing, shell commands, context compaction, and session management — with sandboxed virtual infrastructure that isolates your agent from the host machine. Any provider, any sandbox backend, one package.
 
 ## Install
 
@@ -52,8 +52,8 @@ for await (const event of thread.run("Add a health-check endpoint to server.ts")
   <Card title="Swap models in one line" href="/docs/providers">
     OpenAI, Anthropic, Google Gemini. Same streaming interface, same tool dispatch. Bring your own keys.
   </Card>
-  <Card title="Run anywhere" href="/docs/virtual">
-    Local Node.js, remote containers via sprites.dev, or implement VirtualFs yourself. The agent doesn't care.
+  <Card title="Sandboxed by default" href="/docs/virtual">
+    All tool I/O routes through VirtualFs and VirtualComputer — the sandboxing boundary. Swap in a remote container (sprites.dev) or your own Docker/E2B adapter for full isolation.
   </Card>
   <Card title="Read, write, edit, execute" href="/docs/tools">
     ReadFile, WriteFile, EditFile, Bash, Glob, Grep — the same tools shipping inside production coding agents.

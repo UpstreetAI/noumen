@@ -26,7 +26,9 @@ export {
   type GeminiProviderOptions,
 } from "./providers/gemini.js";
 
-// Virtual infrastructure
+// Virtual infrastructure (sandboxing primitives)
+// VirtualFs and VirtualComputer are the isolation boundary — all tool I/O
+// routes through them. Swap implementations to control the sandbox level.
 export type {
   VirtualFs,
   FileEntry,

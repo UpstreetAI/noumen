@@ -6,6 +6,13 @@ export interface LocalComputerOptions {
   defaultTimeout?: number;
 }
 
+/**
+ * Unsandboxed VirtualComputer that runs commands directly on the host via
+ * `node:child_process`. Suitable for local development and trusted
+ * environments. For production or untrusted agents, use a sandboxed
+ * implementation like `SpritesComputer` (remote container) or a custom
+ * Docker/E2B adapter instead.
+ */
 export class LocalComputer implements VirtualComputer {
   private defaultCwd: string;
   private defaultTimeout: number;

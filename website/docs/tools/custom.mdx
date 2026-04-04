@@ -65,7 +65,7 @@ const code = new Code({
 
 ## Using ToolContext
 
-The `call` function receives a `ToolContext` with access to the agent's infrastructure:
+The `call` function receives a `ToolContext` with access to the agent's sandboxed infrastructure. Always use `ctx.fs` and `ctx.computer` for file and shell operations — these route through the VirtualFs/VirtualComputer sandbox boundary, so your tool automatically inherits whatever isolation level the consumer configured (local, remote container, etc.):
 
 ```typescript
 const myTool: Tool = {
