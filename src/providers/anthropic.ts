@@ -69,6 +69,22 @@ export class AnthropicProvider implements AIProvider {
       };
     }
 
+    if (params.outputFormat?.type === "json_schema") {
+      const extra = streamParams as unknown as Record<string, unknown>;
+      extra.output_config = {
+        format: {
+          type: "json_schema",
+          schema: params.outputFormat.schema,
+        },
+      };
+      const betas: string[] =
+        (extra.betas as string[] | undefined) ?? [];
+      if (!betas.includes("structured-outputs-2025-12-15")) {
+        betas.push("structured-outputs-2025-12-15");
+      }
+      extra.betas = betas;
+    }
+
     const stream = this.client.messages.stream(streamParams);
 
     let chunkIndex = 0;

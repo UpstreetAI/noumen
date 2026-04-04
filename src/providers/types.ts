@@ -69,6 +69,20 @@ export interface ChatCompletionUsage {
   thinking_tokens?: number;
 }
 
+/**
+ * Structured output format. When provided, the model is constrained to
+ * produce a response matching the given JSON schema.
+ */
+export interface OutputFormat {
+  type: "json_schema";
+  /** JSON Schema object describing the expected output shape. */
+  schema: Record<string, unknown>;
+  /** Optional name for the schema (required by some providers). */
+  name?: string;
+  /** When true, the provider enforces strict schema adherence. */
+  strict?: boolean;
+}
+
 export interface ChatParams {
   model: string;
   messages: ChatMessage[];
@@ -77,6 +91,8 @@ export interface ChatParams {
   system?: string;
   temperature?: number;
   thinking?: ThinkingConfig;
+  /** Constrain the model to produce structured output matching this schema. */
+  outputFormat?: OutputFormat;
 }
 
 export interface AIProvider {

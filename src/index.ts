@@ -12,6 +12,7 @@ export type {
   ToolDefinition,
   ToolParameterProperty as ToolDefParameterProperty,
   ChatCompletionUsage,
+  OutputFormat,
 } from "./providers/types.js";
 export { ChatStreamError } from "./providers/types.js";
 export {
@@ -113,8 +114,68 @@ export {
   type StreamingToolExecutorFn,
 } from "./tools/streaming-executor.js";
 
+// Task management
+export type { Task, TaskStatus, TaskCreateInput, TaskUpdateInput } from "./tasks/types.js";
+export { TaskStore } from "./tasks/store.js";
+export { taskCreateTool } from "./tools/task-create.js";
+export { taskListTool } from "./tools/task-list.js";
+export { taskGetTool } from "./tools/task-get.js";
+export { taskUpdateTool } from "./tools/task-update.js";
+
+// Plan mode + Worktree tools
+export { enterPlanModeTool, exitPlanModeTool } from "./tools/plan-mode.js";
+export { enterWorktreeTool, exitWorktreeTool } from "./tools/worktree.js";
+export {
+  findGitRoot,
+  createWorktree,
+  removeWorktree,
+  listWorktrees,
+  getWorktreeChanges,
+  sanitizeWorktreeSlug,
+} from "./utils/worktree.js";
+export type { WorktreeInfo } from "./utils/worktree.js";
+
+// LSP integration
+export type {
+  LspServerConfig,
+  LspServerState,
+  LspDiagnostic,
+  LspOperation,
+  LspLocation,
+  LspSymbol,
+} from "./lsp/types.js";
+export { LspClient } from "./lsp/client.js";
+export { LspServerManager } from "./lsp/manager.js";
+export { DiagnosticRegistry } from "./lsp/diagnostics.js";
+export { lspTool } from "./tools/lsp.js";
+
+// Multi-agent swarm
+export type {
+  SwarmConfig,
+  SwarmMember,
+  SwarmMemberConfig,
+  SwarmMemberStatus,
+  SwarmMessage,
+  SwarmStatus,
+  SwarmEvents,
+} from "./swarm/types.js";
+export { SwarmManager } from "./swarm/manager.js";
+export { Mailbox } from "./swarm/mailbox.js";
+export type { SwarmBackend } from "./swarm/backends/types.js";
+export { InProcessBackend } from "./swarm/backends/in-process.js";
+
 // Utilities
 export { all } from "./utils/generators.js";
+export {
+  zodToJsonSchema,
+  registerZodToJsonSchema,
+  formatZodValidationError,
+} from "./utils/zod.js";
+export type {
+  ZodLikeSchema,
+  SafeParseResult,
+  JsonSchemaType,
+} from "./utils/zod.js";
 
 // Skills
 export type { SkillDefinition } from "./skills/types.js";
@@ -142,12 +203,28 @@ export {
 } from "./mcp/normalization.js";
 
 // Compaction
-export { compactConversation } from "./compact/compact.js";
+export { compactConversation, estimateCompactionSavings } from "./compact/compact.js";
+export type { CompactOptions } from "./compact/compact.js";
 export {
   createAutoCompactConfig,
   shouldAutoCompact,
   type AutoCompactConfig,
 } from "./compact/auto-compact.js";
+
+// Context window / token utilities
+export {
+  getContextWindowForModel,
+  getEffectiveContextWindow,
+  getAutoCompactThreshold,
+  registerContextWindows,
+} from "./utils/context.js";
+export {
+  estimateTokens,
+  estimateMessagesTokens,
+  tokenCountWithEstimation,
+  truncateHeadForPTLRetry,
+  groupMessagesByTurn,
+} from "./utils/tokens.js";
 
 // System prompt
 export { buildSystemPrompt } from "./prompt/system.js";
@@ -157,6 +234,7 @@ export type {
   PermissionMode,
   PermissionBehavior,
   PermissionRule,
+  PermissionRuleSource,
   PermissionAllowResult,
   PermissionDenyResult,
   PermissionAskResult,
@@ -168,7 +246,11 @@ export type {
   PermissionHandler,
   PermissionConfig,
   PermissionContext,
+  PermissionUpdate,
+  AutoModeConfig,
+  DenialTrackingConfig,
 } from "./permissions/types.js";
+export { RULE_SOURCE_PRECEDENCE } from "./permissions/types.js";
 export {
   toolMatchesRule,
   contentMatchesRule,
@@ -177,7 +259,13 @@ export {
   isPathInWorkingDirectories,
 } from "./permissions/rules.js";
 export { resolvePermission } from "./permissions/pipeline.js";
+export type { ResolvePermissionOptions } from "./permissions/pipeline.js";
 export { resolveToolFlag } from "./tools/registry.js";
+export { applyPermissionUpdate, applyPermissionUpdates } from "./permissions/updates.js";
+export { DenialTracker } from "./permissions/denial-tracking.js";
+export type { DenialLimits, DenialState } from "./permissions/denial-tracking.js";
+export { classifyPermission } from "./permissions/classifier.js";
+export type { ClassifierResult } from "./permissions/classifier.js";
 
 // Thinking
 export type { ThinkingConfig } from "./thinking/index.js";

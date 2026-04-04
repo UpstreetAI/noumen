@@ -2,6 +2,8 @@ import type { VirtualFs } from "../virtual/fs.js";
 import type { VirtualComputer } from "../virtual/computer.js";
 import type { PermissionResult } from "../permissions/types.js";
 import type { PermissionMode } from "../permissions/types.js";
+import type { TaskStore } from "../tasks/store.js";
+import type { LspServerManager } from "../lsp/manager.js";
 
 export interface ToolResult {
   content: string;
@@ -40,6 +42,16 @@ export interface ToolContext {
   spawnSubagent?: (config: SubagentConfig) => SubagentRun;
   /** Handler for user input requests from the AskUser tool. */
   userInputHandler?: (question: string) => Promise<string>;
+  /** Task store for TaskCreate/List/Get/Update tools. */
+  taskStore?: TaskStore;
+  /** Set the current permission mode (used by PlanMode tools). */
+  setPermissionMode?: (mode: PermissionMode) => void;
+  /** Get the current permission mode. */
+  getPermissionMode?: () => PermissionMode;
+  /** Set the thread's working directory (used by Worktree tools). */
+  setCwd?: (cwd: string) => void;
+  /** LSP server manager for the LSP tool. */
+  lspManager?: LspServerManager;
 }
 
 export interface ToolParameterProperty {
@@ -61,6 +73,17 @@ export interface Tool {
   name: string;
   description: string;
   parameters: ToolParameters;
+  /**
+   * Optional Zod schema for input validation. When present, tool input is
+   * validated via `safeParse` before execution. Validation errors are returned
+   * to the model as tool_result errors so it can self-correct.
+   */
+  inputSchema?: import("../utils/zod.js").ZodLikeSchema;
+  /**
+   * Raw JSON Schema for tool input — sent directly to providers that support
+   * strict mode. When omitted, `parameters` is used as the JSON schema.
+   */
+  inputJSONSchema?: Record<string, unknown>;
   /** Present on tools sourced from an MCP server */
   mcpInfo?: { serverName: string; toolName: string };
 

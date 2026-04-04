@@ -1,4 +1,5 @@
 import type { AIProvider, ChatCompletionUsage } from "./providers/types.js";
+import { truncateHeadForPTLRetry } from "./utils/tokens.js";
 import type { VirtualFs } from "./virtual/fs.js";
 import type { VirtualComputer } from "./virtual/computer.js";
 import type {
@@ -10,6 +11,8 @@ import type {
 } from "./session/types.js";
 import type { SkillDefinition } from "./skills/types.js";
 import type { Tool, ToolContext, SubagentConfig, SubagentRun } from "./tools/types.js";
+import type { TaskStore } from "./tasks/store.js";
+import type { LspServerManager } from "./lsp/manager.js";
 import type {
   PermissionConfig,
   PermissionContext,
@@ -71,6 +74,8 @@ export interface ThreadConfig {
   spawnSubagent?: (config: SubagentConfig) => SubagentRun;
   streamingToolExecution?: boolean;
   userInputHandler?: (question: string) => Promise<string>;
+  taskStore?: TaskStore;
+  lspManager?: LspServerManager;
   thinking?: ThinkingConfig;
   retry?: RetryConfig;
   costTracker?: CostTracker;
@@ -91,6 +96,9 @@ export class Thread {
   private permissionContext: PermissionContext | null = null;
   private permissionHandler: PermissionHandler | null = null;
   private hooks: HookDefinition[];
+  private lastUsage: ChatCompletionUsage | undefined;
+  private anchorMessageIndex: number | undefined;
+  private prePlanMode: import("./permissions/types.js").PermissionMode | null = null;
 
   constructor(config: ThreadConfig, opts?: ThreadOptions) {
     this.config = config;
@@ -153,6 +161,30 @@ export class Thread {
         cwd: this.cwd,
         spawnSubagent: this.config.spawnSubagent,
         userInputHandler: this.config.userInputHandler,
+        taskStore: this.config.taskStore,
+        lspManager: this.config.lspManager,
+        setPermissionMode: this.permissionContext
+          ? (mode) => {
+              if (this.permissionContext) {
+                if (mode === "plan" && this.permissionContext.mode !== "plan") {
+                  this.prePlanMode = this.permissionContext.mode;
+                }
+                if (mode !== "plan" && this.permissionContext.mode === "plan" && this.prePlanMode) {
+                  this.permissionContext.mode = this.prePlanMode;
+                  this.prePlanMode = null;
+                } else {
+                  this.permissionContext.mode = mode;
+                }
+              }
+            }
+          : undefined,
+        getPermissionMode: this.permissionContext
+          ? () => this.permissionContext!.mode
+          : undefined,
+        setCwd: (newCwd: string) => {
+          this.cwd = newCwd;
+          toolCtx.cwd = newCwd;
+        },
       };
 
       const turnUsage: ChatCompletionUsage = {
@@ -338,6 +370,8 @@ export class Thread {
           turnUsage.prompt_tokens += lastUsage.prompt_tokens;
           turnUsage.completion_tokens += lastUsage.completion_tokens;
           turnUsage.total_tokens += lastUsage.total_tokens;
+          this.lastUsage = lastUsage;
+          this.anchorMessageIndex = this.messages.length - 1;
           yield { type: "usage", usage: lastUsage, model: this.model };
 
           if (this.config.costTracker) {
@@ -640,7 +674,7 @@ export class Thread {
       // --- Compaction with hooks ---
       const autoCompactConfig =
         this.config.autoCompact ?? createAutoCompactConfig();
-      if (shouldAutoCompact(this.messages, autoCompactConfig)) {
+      if (shouldAutoCompact(this.messages, autoCompactConfig, this.lastUsage, this.anchorMessageIndex)) {
         await runNotificationHooks(hooks, "PreCompact", {
           event: "PreCompact",
           sessionId: this.sessionId,
@@ -654,7 +688,13 @@ export class Thread {
             this.messages,
             this.storage,
             this.sessionId,
+            {
+              tailMessagesToKeep: autoCompactConfig.tailMessagesToKeep,
+              stripBinaryContent: true,
+            },
           );
+          this.lastUsage = undefined;
+          this.anchorMessageIndex = undefined;
           yield { type: "compact_complete" };
 
           await runNotificationHooks(hooks, "PostCompact", {

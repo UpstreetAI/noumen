@@ -1,11 +1,15 @@
 import type { Tool, ToolContext } from "../tools/types.js";
+import type { AIProvider } from "../providers/types.js";
+import type { ChatMessage } from "../session/types.js";
 import type {
   PermissionContext,
   PermissionDecision,
   PermissionResult,
+  AutoModeConfig,
 } from "./types.js";
 import { getMatchingRules, isPathInWorkingDirectories } from "./rules.js";
 import { resolveToolFlag } from "../tools/registry.js";
+import { classifyPermission } from "./classifier.js";
 
 /**
  * Resolve the permission decision for a tool invocation.
@@ -18,11 +22,20 @@ import { resolveToolFlag } from "../tools/registry.js";
  *  5. Content-specific allow rules
  *  6. Fallback: passthrough → ask
  */
+export interface ResolvePermissionOptions {
+  aiProvider?: AIProvider;
+  model?: string;
+  recentMessages?: ChatMessage[];
+  autoModeConfig?: AutoModeConfig;
+  signal?: AbortSignal;
+}
+
 export async function resolvePermission(
   tool: Tool,
   input: Record<string, unknown>,
   ctx: ToolContext,
   permCtx: PermissionContext,
+  opts?: ResolvePermissionOptions,
 ): Promise<PermissionDecision> {
   const toolName = tool.name;
   const contentHint = extractContentHint(tool, input);
@@ -121,12 +134,58 @@ export async function resolvePermission(
   }
 
   const isReadOnly = resolveToolFlag(tool.isReadOnly, input);
+  const isDestructive = resolveToolFlag(tool.isDestructive, input);
 
   if (permCtx.mode === "plan" && !isReadOnly) {
     return {
       behavior: "deny",
       message: `Tool "${toolName}" is not allowed in plan mode (read-only).`,
       reason: "mode",
+    };
+  }
+
+  if (permCtx.mode === "acceptEdits") {
+    if (isDestructive) {
+      return {
+        behavior: "ask",
+        message: `Tool "${toolName}" is destructive and requires approval in acceptEdits mode.`,
+        reason: "mode",
+      };
+    }
+    return {
+      behavior: "allow",
+      updatedInput: input,
+      reason: "mode",
+    };
+  }
+
+  // Auto mode: use classifier to decide
+  if (permCtx.mode === "auto" && opts?.autoModeConfig) {
+    const result = await classifyPermission(
+      toolName,
+      input,
+      opts.recentMessages ?? [],
+      opts.aiProvider!,
+      {
+        classifierPrompt: opts.autoModeConfig.classifierPrompt,
+        classifierModel: opts.autoModeConfig.classifierModel,
+        model: opts.model,
+        signal: opts.signal,
+      },
+    );
+
+    if (result.shouldBlock) {
+      return {
+        behavior: "ask",
+        message: `Auto-mode classifier flagged this call: ${result.reason}`,
+        reason: "classifier",
+      };
+    }
+
+    return {
+      behavior: "allow",
+      updatedInput: input,
+      reason: "classifier",
     };
   }
 

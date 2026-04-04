@@ -48,6 +48,17 @@ export class OpenAIProvider implements AIProvider {
       createParams.temperature = params.temperature;
     }
 
+    if (params.outputFormat?.type === "json_schema") {
+      (createParams as unknown as Record<string, unknown>).response_format = {
+        type: "json_schema",
+        json_schema: {
+          name: params.outputFormat.name ?? "response",
+          schema: params.outputFormat.schema,
+          strict: params.outputFormat.strict ?? false,
+        },
+      };
+    }
+
     const stream = await this.client.chat.completions.create(createParams);
 
     for await (const chunk of stream) {

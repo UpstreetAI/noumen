@@ -1,5 +1,6 @@
 import type { Tool, ToolContext } from "./types.js";
 import type { ToolDefinition } from "../providers/types.js";
+import { formatZodValidationError } from "../utils/zod.js";
 import { readFileTool } from "./read.js";
 import { writeFileTool } from "./write.js";
 import { editFileTool } from "./edit.js";
@@ -67,6 +68,17 @@ export class ToolRegistry {
         isError: true,
       };
     }
+
+    if (tool.inputSchema) {
+      const parsed = tool.inputSchema.safeParse(args);
+      if (!parsed.success) {
+        return {
+          content: formatZodValidationError(name, parsed.error),
+          isError: true,
+        };
+      }
+    }
+
     return tool.call(args, ctx);
   }
 

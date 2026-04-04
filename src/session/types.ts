@@ -179,6 +179,11 @@ export type StreamEvent =
       type: "user_input_request";
       toolUseId: string;
       question: string;
+    }
+  | {
+      type: "denial_limit_exceeded";
+      consecutiveDenials: number;
+      totalDenials: number;
     };
 
 export interface RunOptions {

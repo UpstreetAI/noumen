@@ -28,6 +28,13 @@ export const agentTool: Tool = {
         description:
           "Comma-separated list of tool names the subagent may use. Omit to inherit all parent tools except Agent.",
       },
+      async: {
+        type: "string",
+        description:
+          'Set to "true" to run the agent in the background and return immediately with a taskId. ' +
+          "Check status with TaskGet.",
+        enum: ["true", "false"],
+      },
     },
     required: ["prompt"],
   },
@@ -49,6 +56,7 @@ export const agentTool: Tool = {
     const allowedTools = allowedToolsRaw
       ? allowedToolsRaw.split(",").map((t) => t.trim()).filter(Boolean)
       : undefined;
+    const isAsync = args.async === "true";
 
     const maxTurns = DEFAULT_MAX_TURNS;
     const { sessionId, events } = ctx.spawnSubagent({
@@ -58,6 +66,47 @@ export const agentTool: Tool = {
       maxTurns,
     });
 
+    if (isAsync && ctx.taskStore) {
+      const task = await ctx.taskStore.create({
+        subject: `Agent: ${prompt.slice(0, 80)}`,
+        description: `Async agent running with sessionId: ${sessionId}`,
+      });
+      await ctx.taskStore.update(task.id, { status: "in_progress" });
+
+      // Fire and forget — collect results into task store when done.
+      (async () => {
+        const assistantTexts: string[] = [];
+        try {
+          for await (const event of events) {
+            if (event.type === "message_complete" && event.message.content) {
+              assistantTexts.push(event.message.content);
+            }
+            if (event.type === "turn_complete") break;
+          }
+          const result = assistantTexts.join("\n\n") || "(no output)";
+          await ctx.taskStore!.update(task.id, {
+            status: "completed",
+            description: result.slice(0, 10_000),
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          await ctx.taskStore!.update(task.id, {
+            status: "completed",
+            description: `Error: ${msg}`,
+          });
+        }
+      })();
+
+      return {
+        content: JSON.stringify({
+          taskId: task.id,
+          sessionId,
+          message: "Agent launched in background. Use TaskGet to check status.",
+        }),
+      };
+    }
+
+    // Synchronous mode (original behavior)
     const assistantTexts: string[] = [];
     let turnCount = 0;
 

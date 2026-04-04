@@ -5,6 +5,15 @@ import type { SkillDefinition } from "./skills/types.js";
 import type { Tool, SubagentConfig, SubagentRun } from "./tools/types.js";
 import { agentTool } from "./tools/agent.js";
 import { createWebSearchTool, type WebSearchConfig } from "./tools/web-search.js";
+import { taskCreateTool } from "./tools/task-create.js";
+import { taskListTool } from "./tools/task-list.js";
+import { taskGetTool } from "./tools/task-get.js";
+import { taskUpdateTool } from "./tools/task-update.js";
+import { enterPlanModeTool, exitPlanModeTool } from "./tools/plan-mode.js";
+import { enterWorktreeTool, exitWorktreeTool } from "./tools/worktree.js";
+import { lspTool } from "./tools/lsp.js";
+import { LspServerManager } from "./lsp/manager.js";
+import type { LspServerConfig } from "./lsp/types.js";
 import type { SessionInfo } from "./session/types.js";
 import type { McpServerConfig } from "./mcp/types.js";
 import type { PermissionConfig } from "./permissions/types.js";
@@ -15,6 +24,7 @@ import type { ModelPricing } from "./cost/types.js";
 import { CostTracker } from "./cost/tracker.js";
 import { McpClientManager } from "./mcp/client.js";
 import { SessionStorage } from "./session/storage.js";
+import { TaskStore } from "./tasks/store.js";
 import { Thread, type ThreadOptions } from "./thread.js";
 import { createAutoCompactConfig } from "./compact/auto-compact.js";
 import { buildUserContext } from "./prompt/context.js";
@@ -53,6 +63,11 @@ export interface CodeOptions {
     permissions?: PermissionConfig;
     hooks?: HookDefinition[];
     enableSubagents?: boolean;
+    enableTasks?: boolean;
+    tasksDir?: string;
+    enablePlanMode?: boolean;
+    enableWorktrees?: boolean;
+    lsp?: Record<string, LspServerConfig>;
     streamingToolExecution?: boolean;
     webSearch?: WebSearchConfig;
     userInputHandler?: (question: string) => Promise<string>;
@@ -86,6 +101,11 @@ export class Code {
   private permissions?: PermissionConfig;
   private hooks: HookDefinition[];
   private enableSubagents: boolean;
+  private enableTasks: boolean;
+  private taskStore: TaskStore | null = null;
+  private enablePlanMode: boolean;
+  private enableWorktrees: boolean;
+  private lspManager: LspServerManager | null = null;
   private streamingToolExecution: boolean;
   private webSearchConfig?: WebSearchConfig;
   private userInputHandler?: (question: string) => Promise<string>;
@@ -111,6 +131,17 @@ export class Code {
     this.permissions = opts.options?.permissions;
     this.hooks = opts.options?.hooks ?? [];
     this.enableSubagents = opts.options?.enableSubagents ?? false;
+    this.enableTasks = opts.options?.enableTasks ?? false;
+    if (this.enableTasks) {
+      const tasksDir = opts.options?.tasksDir ?? ".noumen/tasks";
+      this.taskStore = new TaskStore(this.fs, tasksDir);
+    }
+    this.enablePlanMode = opts.options?.enablePlanMode ?? false;
+    this.enableWorktrees = opts.options?.enableWorktrees ?? false;
+    if (opts.options?.lsp && Object.keys(opts.options.lsp).length > 0) {
+      const rootUri = `file://${this.cwd}`;
+      this.lspManager = new LspServerManager(opts.options.lsp, rootUri);
+    }
     this.streamingToolExecution = opts.options?.streamingToolExecution ?? false;
     this.webSearchConfig = opts.options?.webSearch;
     this.userInputHandler = opts.options?.userInputHandler;
@@ -149,6 +180,18 @@ export class Code {
     if (this.enableSubagents) {
       tools.push(agentTool);
     }
+    if (this.enableTasks) {
+      tools.push(taskCreateTool, taskListTool, taskGetTool, taskUpdateTool);
+    }
+    if (this.enablePlanMode) {
+      tools.push(enterPlanModeTool, exitPlanModeTool);
+    }
+    if (this.enableWorktrees) {
+      tools.push(enterWorktreeTool, exitWorktreeTool);
+    }
+    if (this.lspManager) {
+      tools.push(lspTool);
+    }
     if (this.webSearchConfig) {
       tools.push(createWebSearchTool(this.webSearchConfig));
     }
@@ -178,6 +221,8 @@ export class Code {
             ? { mode: config.permissionMode }
             : { mode: "bypassPermissions" },
           hooks: this.hooks,
+          taskStore: this.taskStore ?? undefined,
+          lspManager: this.lspManager ?? undefined,
           thinking: this.thinkingConfig,
           retry: this.retryConfig,
           costTracker: this.costTracker ?? undefined,
@@ -220,6 +265,8 @@ export class Code {
           : undefined,
         streamingToolExecution: this.streamingToolExecution,
         userInputHandler: this.userInputHandler,
+        taskStore: this.taskStore ?? undefined,
+        lspManager: this.lspManager ?? undefined,
         thinking: this.thinkingConfig,
         retry: this.retryConfig,
         costTracker: this.costTracker ?? undefined,
@@ -262,9 +309,17 @@ export class Code {
    * Disconnect all MCP clients. Call when done with this Code instance.
    */
   async close(): Promise<void> {
+    const tasks: Promise<void>[] = [];
     if (this.mcpManager) {
-      await this.mcpManager.close();
-      this.mcpTools = [];
+      tasks.push(
+        this.mcpManager.close().then(() => {
+          this.mcpTools = [];
+        }),
+      );
     }
+    if (this.lspManager) {
+      tasks.push(this.lspManager.shutdown());
+    }
+    await Promise.all(tasks);
   }
 }

@@ -60,18 +60,25 @@ export class GeminiProvider implements AIProvider {
       ? (params.thinking as { type: "enabled"; budgetTokens: number }).budgetTokens
       : 0;
 
+    const config: Record<string, unknown> = {
+      systemInstruction: systemInstruction || undefined,
+      maxOutputTokens: params.max_tokens,
+      temperature: params.temperature,
+      tools,
+      thinkingConfig: {
+        thinkingBudget: thinkingBudget,
+      },
+    };
+
+    if (params.outputFormat?.type === "json_schema") {
+      config.responseSchema = params.outputFormat.schema;
+      config.responseMimeType = "application/json";
+    }
+
     const stream = await this.client.models.generateContentStream({
       model: params.model ?? this.defaultModel,
       contents,
-      config: {
-        systemInstruction: systemInstruction || undefined,
-        maxOutputTokens: params.max_tokens,
-        temperature: params.temperature,
-        tools,
-        thinkingConfig: {
-          thinkingBudget: thinkingBudget,
-        },
-      },
+      config,
     });
 
     let chunkIndex = 0;

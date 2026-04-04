@@ -5,6 +5,8 @@ import type { ToolContext } from "../tools/types.js";
 export type PermissionMode =
   | "default"
   | "plan"
+  | "acceptEdits"
+  | "auto"
   | "bypassPermissions"
   | "dontAsk";
 
@@ -12,13 +14,40 @@ export type PermissionMode =
 
 export type PermissionBehavior = "allow" | "deny" | "ask";
 
+// --- Rule source provenance ---
+
+export type PermissionRuleSource =
+  | "user"
+  | "project"
+  | "session"
+  | "policy";
+
+/** Precedence order: policy > project > user > session. */
+export const RULE_SOURCE_PRECEDENCE: PermissionRuleSource[] = [
+  "policy",
+  "project",
+  "user",
+  "session",
+];
+
 // --- Rules ---
 
 export interface PermissionRule {
   toolName: string;
   ruleContent?: string;
   behavior: PermissionBehavior;
+  /** Where this rule came from. Higher-precedence sources override lower ones. */
+  source?: PermissionRuleSource;
 }
+
+// --- Permission updates ---
+
+export type PermissionUpdate =
+  | { type: "addRules"; rules: PermissionRule[] }
+  | { type: "removeRules"; toolName: string; behavior?: PermissionBehavior }
+  | { type: "setMode"; mode: PermissionMode }
+  | { type: "addDirectories"; directories: string[] }
+  | { type: "removeDirectories"; directories: string[] };
 
 // --- Decision result types ---
 
@@ -97,11 +126,31 @@ export type PermissionHandler = (
 
 // --- Configuration ---
 
+export interface AutoModeConfig {
+  /** Custom system prompt for the classifier. When omitted, uses a default. */
+  classifierPrompt?: string;
+  /** Model to use for classification. When omitted, uses the thread's model. */
+  classifierModel?: string;
+}
+
+export interface DenialTrackingConfig {
+  /** Max consecutive denials before fallback (default: 3). */
+  maxConsecutive?: number;
+  /** Max total denials before fallback (default: 20). */
+  maxTotal?: number;
+}
+
 export interface PermissionConfig {
   mode?: PermissionMode;
   rules?: PermissionRule[];
   handler?: PermissionHandler;
   workingDirectories?: string[];
+  /** Called when a permission update is applied (for host-side persistence). */
+  onPermissionUpdate?: (update: PermissionUpdate) => void;
+  /** Configuration for auto mode classifier. */
+  autoMode?: AutoModeConfig;
+  /** Configuration for denial tracking limits. */
+  denialTracking?: DenialTrackingConfig;
 }
 
 export interface PermissionContext {
