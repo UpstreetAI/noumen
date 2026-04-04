@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { SiteHeader } from "@/components/site-header";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -21,6 +22,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
       <body className="bg-[var(--color-base-body)] text-[var(--color-text-primary)] min-h-screen antialiased">
+        <SiteHeader />
         {children}
       </body>
     </html>

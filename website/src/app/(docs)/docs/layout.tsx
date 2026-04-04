@@ -8,9 +8,9 @@ import { SidebarInstallCTA } from "./sidebar-install-cta";
 
 export default function Layout({ children }: { children: ReactNode }) {
   return (
-    <div className="relative min-h-screen">
+    <div className="relative min-h-[calc(100vh-3.5rem)]">
       <div
-        className="pointer-events-none fixed inset-0 z-0"
+        className="pointer-events-none fixed inset-0 top-14 z-0"
         aria-hidden="true"
         style={{
           background:

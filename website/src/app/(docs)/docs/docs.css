@@ -31,6 +31,7 @@ html {
 
 #nd-docs-layout {
   --fd-banner-height: calc(3.5rem + 1px);
+  --fd-nav-offset: 3.5rem;
   --fd-layout-width: 100vw;
 }
 
