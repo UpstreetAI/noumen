@@ -49,6 +49,28 @@ for await (const event of thread.run("Add error handling to server.ts")) {
 await code.close();
 ```
 
+### One-shot with `run()` and `execute()`
+
+For simple tasks you can skip `createThread()` entirely. `run()` streams events, `execute()` runs to completion and returns a result.
+
+```typescript
+import { Agent } from "noumen";
+
+const agent = new Agent({ provider: "anthropic", cwd: "." });
+
+// Streaming — same events as thread.run()
+for await (const event of agent.run("Add a health-check endpoint")) {
+  if (event.type === "text_delta") process.stdout.write(event.text);
+}
+
+// Execute — runs to completion, optional callbacks along the way
+const result = await agent.execute("Fix the auth bug", {
+  onText: (text) => process.stdout.write(text),
+  onToolUse: (name) => console.log(`Using ${name}`),
+});
+console.log(`Done — ${result.toolCalls} tool calls, ${result.usage.total_tokens} tokens`);
+```
+
 ### Using presets
 
 For quicker setup, use a preset that configures sensible defaults:

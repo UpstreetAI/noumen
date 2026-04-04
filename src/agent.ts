@@ -492,46 +492,16 @@ export class Agent {
   }
 
   /**
-   * One-shot convenience: creates an ephemeral thread and streams events.
+   * One-shot streaming: creates an ephemeral thread and yields events.
+   * Auto-resolves string providers on first call (no need to call `init()`).
    *
-   * Streaming usage:
    * ```ts
-   * for await (const event of agent.run("Fix the bug")) { ... }
-   * ```
-   *
-   * Callback usage:
-   * ```ts
-   * await agent.run("Fix the bug", {
-   *   onText: (text) => process.stdout.write(text),
-   *   onToolUse: (name) => console.log(`Using ${name}`),
-   * });
+   * for await (const event of agent.run("Fix the bug")) {
+   *   if (event.type === "text_delta") process.stdout.write(event.text);
+   * }
    * ```
    */
-  run(
-    prompt: string | ContentPart[],
-    opts: RunOptions & ThreadOptions & RunCallbacks,
-  ): Promise<RunResult>;
-  run(
-    prompt: string | ContentPart[],
-    opts?: RunOptions & ThreadOptions,
-  ): AsyncGenerator<StreamEvent, void, unknown>;
-  run(
-    prompt: string | ContentPart[],
-    opts?: RunOptions & ThreadOptions & RunCallbacks,
-  ): AsyncGenerator<StreamEvent, void, unknown> | Promise<RunResult> {
-    const hasCallbacks = opts && (
-      "onText" in opts || "onThinking" in opts || "onToolUse" in opts ||
-      "onToolResult" in opts || "onError" in opts || "onComplete" in opts
-    );
-
-    if (hasCallbacks) {
-      return this._runWithCallbacks(prompt, opts!);
-    }
-
-    return this._runStreaming(prompt, opts);
-  }
-
-  private async *_runStreaming(
+  async *run(
     prompt: string | ContentPart[],
     opts?: RunOptions & ThreadOptions,
   ): AsyncGenerator<StreamEvent, void, unknown> {
@@ -540,9 +510,20 @@ export class Agent {
     yield* thread.run(prompt, opts);
   }
 
-  private async _runWithCallbacks(
+  /**
+   * One-shot execution: runs the prompt to completion and returns a result
+   * summary. Optional callbacks fire as events arrive.
+   *
+   * ```ts
+   * const result = await agent.execute("Fix the bug", {
+   *   onText: (text) => process.stdout.write(text),
+   * });
+   * console.log(`Done — ${result.toolCalls} tool calls`);
+   * ```
+   */
+  async execute(
     prompt: string | ContentPart[],
-    opts: RunOptions & ThreadOptions & RunCallbacks,
+    opts?: RunOptions & ThreadOptions & RunCallbacks,
   ): Promise<RunResult> {
     await this.ensureProvider();
     const thread = this.createThread(opts);
@@ -554,20 +535,20 @@ export class Agent {
       switch (event.type) {
         case "text_delta":
           text += event.text;
-          opts.onText?.(event.text);
+          opts?.onText?.(event.text);
           break;
         case "thinking_delta":
-          opts.onThinking?.(event.text);
+          opts?.onThinking?.(event.text);
           break;
         case "tool_use_start":
           toolCalls++;
-          opts.onToolUse?.(event.toolName, {});
+          opts?.onToolUse?.(event.toolName, {});
           break;
         case "tool_result":
-          opts.onToolResult?.(event.toolName, event.result);
+          opts?.onToolResult?.(event.toolName, event.result);
           break;
         case "error":
-          opts.onError?.(event.error);
+          opts?.onError?.(event.error);
           break;
         case "turn_complete":
           lastUsage = event.usage;
@@ -582,7 +563,7 @@ export class Agent {
       sessionId: thread.sessionId,
     };
 
-    opts.onComplete?.(result);
+    opts?.onComplete?.(result);
     return result;
   }
 

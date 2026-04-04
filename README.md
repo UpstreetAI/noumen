@@ -37,15 +37,17 @@ for await (const event of agent.run("Add a health-check endpoint to server.ts"))
 
 Three lines to a working coding agent. The string provider auto-detects your `ANTHROPIC_API_KEY` from the environment, and `cwd` defaults to a local sandbox.
 
-### Callback style
+### Execute (run to completion)
 
 ```typescript
-await agent.run("Fix the auth bug", {
+const result = await agent.execute("Fix the auth bug", {
   onText: (text) => process.stdout.write(text),
   onToolUse: (name) => console.log(`Using ${name}`),
-  onComplete: (result) => console.log(`Done — ${result.toolCalls} tool calls`),
 });
+console.log(`Done — ${result.toolCalls} tool calls`);
 ```
+
+`agent.run()` streams events via an async generator. `agent.execute()` runs to completion and returns a `RunResult` — callbacks are optional event listeners along the way.
 
 ### Full control
 
