@@ -529,6 +529,134 @@ describe("GeminiProvider", () => {
   });
 });
 
+describe("OpenRouterProvider", () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  it("sets OpenRouter base URL and default model", async () => {
+    let capturedOpts: Record<string, unknown> = {};
+
+    vi.doMock("openai", () => ({
+      default: class {
+        constructor(opts: Record<string, unknown>) {
+          capturedOpts = opts;
+        }
+        chat = {
+          completions: {
+            create: vi.fn().mockResolvedValue(
+              (async function* () {
+                yield {
+                  id: "c1",
+                  model: "anthropic/claude-sonnet-4",
+                  choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+                };
+              })(),
+            ),
+          },
+        };
+      },
+    }));
+
+    const { OpenRouterProvider } = await import("../providers/openrouter.js");
+    const provider = new OpenRouterProvider({ apiKey: "or-test-key" });
+
+    for await (const _ of provider.chat({
+      model: "anthropic/claude-sonnet-4",
+      messages: [{ role: "user", content: "hi" }],
+    })) {
+      // consume
+    }
+
+    expect(capturedOpts.apiKey).toBe("or-test-key");
+    expect(capturedOpts.baseURL).toBe("https://openrouter.ai/api/v1");
+  });
+
+  it("passes appName and appUrl as default headers", async () => {
+    let capturedOpts: Record<string, unknown> = {};
+
+    vi.doMock("openai", () => ({
+      default: class {
+        constructor(opts: Record<string, unknown>) {
+          capturedOpts = opts;
+        }
+        chat = {
+          completions: {
+            create: vi.fn().mockResolvedValue(
+              (async function* () {
+                yield {
+                  id: "c1",
+                  model: "anthropic/claude-sonnet-4",
+                  choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+                };
+              })(),
+            ),
+          },
+        };
+      },
+    }));
+
+    const { OpenRouterProvider } = await import("../providers/openrouter.js");
+    new OpenRouterProvider({
+      apiKey: "or-test-key",
+      appName: "My App",
+      appUrl: "https://myapp.com",
+    });
+
+    const headers = capturedOpts.defaultHeaders as Record<string, string>;
+    expect(headers["X-Title"]).toBe("My App");
+    expect(headers["HTTP-Referer"]).toBe("https://myapp.com");
+  });
+
+  it("streams chunks through the inherited OpenAI chat method", async () => {
+    const mockChunks = [
+      {
+        id: "c1",
+        model: "anthropic/claude-sonnet-4",
+        choices: [
+          { index: 0, delta: { role: "assistant", content: "Hello from OpenRouter" }, finish_reason: null },
+        ],
+      },
+      {
+        id: "c2",
+        model: "anthropic/claude-sonnet-4",
+        choices: [
+          { index: 0, delta: {}, finish_reason: "stop" },
+        ],
+      },
+    ];
+
+    vi.doMock("openai", () => ({
+      default: class {
+        chat = {
+          completions: {
+            create: vi.fn().mockResolvedValue(
+              (async function* () {
+                for (const chunk of mockChunks) yield chunk;
+              })(),
+            ),
+          },
+        };
+      },
+    }));
+
+    const { OpenRouterProvider } = await import("../providers/openrouter.js");
+    const provider = new OpenRouterProvider({ apiKey: "or-test-key" });
+
+    const chunks: ChatStreamChunk[] = [];
+    for await (const chunk of provider.chat({
+      model: "anthropic/claude-sonnet-4",
+      messages: [{ role: "user", content: "hi" }],
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0].choices[0].delta.content).toBe("Hello from OpenRouter");
+    expect(chunks[1].choices[0].finish_reason).toBe("stop");
+  });
+});
+
 interface GeminiPartLike {
   text?: string;
   functionCall?: { name: string; args: Record<string, unknown> };

@@ -1,0 +1,57 @@
+---
+title: OpenRouter
+description: Configure the OpenRouter provider to access hundreds of models through a single API key.
+---
+
+## Setup
+
+```typescript
+import { OpenRouterProvider } from "noumen";
+
+const provider = new OpenRouterProvider({
+  apiKey: "sk-or-...",
+  model: "anthropic/claude-sonnet-4",  // default model
+});
+```
+
+## Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `apiKey` | `string` | required | OpenRouter API key |
+| `model` | `string` | `"anthropic/claude-sonnet-4"` | Default model for all calls |
+| `appName` | `string` | — | Your app name, shown on openrouter.ai rankings (sent as `X-Title` header) |
+| `appUrl` | `string` | — | Your app URL, used for openrouter.ai rankings (sent as `HTTP-Referer` header) |
+
+## App identification
+
+OpenRouter optionally accepts headers to identify your app on their leaderboards:
+
+```typescript
+const provider = new OpenRouterProvider({
+  apiKey: "sk-or-...",
+  appName: "My Coding Agent",
+  appUrl: "https://myapp.com",
+});
+```
+
+## Models
+
+OpenRouter gives you access to models from every major provider through a single API. Pass any model ID listed on [openrouter.ai/models](https://openrouter.ai/models):
+
+- `anthropic/claude-sonnet-4` — Claude Sonnet 4
+- `anthropic/claude-opus-4` — Claude Opus 4
+- `openai/gpt-4o` — GPT-4o
+- `openai/gpt-4.1` — GPT-4.1
+- `google/gemini-2.5-flash` — Gemini 2.5 Flash
+- `google/gemini-2.5-pro` — Gemini 2.5 Pro
+- `deepseek/deepseek-r1` — DeepSeek R1
+- `meta-llama/llama-4-maverick` — Llama 4 Maverick
+
+## How it works
+
+`OpenRouterProvider` extends `OpenAIProvider` under the hood — OpenRouter exposes an OpenAI-compatible API. The provider pre-configures the base URL (`https://openrouter.ai/api/v1`) and optional ranking headers so you don't have to.
+
+## Streaming
+
+Streaming works identically to the OpenAI provider. No additional configuration is needed.

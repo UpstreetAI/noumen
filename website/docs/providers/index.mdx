@@ -1,6 +1,6 @@
 ---
 title: Providers
-description: noumen supports OpenAI, Anthropic, and Google Gemini as AI providers, all behind a unified interface.
+description: noumen supports OpenAI, Anthropic, Google Gemini, and OpenRouter as AI providers, all behind a unified interface.
 ---
 
 noumen is provider-agnostic. Every provider implements the `AIProvider` interface, which accepts OpenAI-compatible chat parameters and returns an async iterable of streaming chunks. You can swap providers without changing any application code.
@@ -11,6 +11,7 @@ noumen is provider-agnostic. Every provider implements the `AIProvider` interfac
   <Card title="OpenAI" description="GPT-4o, GPT-4.1, and any OpenAI-compatible API" href="/docs/providers/openai" />
   <Card title="Anthropic" description="Claude Sonnet, Opus, and Haiku models" href="/docs/providers/anthropic" />
   <Card title="Google Gemini" description="Gemini 2.5 Flash and Pro models" href="/docs/providers/gemini" />
+  <Card title="OpenRouter" description="Hundreds of models from every provider through a single API" href="/docs/providers/openrouter" />
 </Cards>
 
 ## The AIProvider interface

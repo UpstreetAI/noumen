@@ -16,7 +16,7 @@ const FEATURES = [
     icon: "🔌",
     title: "Swap models in one line",
     description:
-      "OpenAI, Anthropic, Google Gemini. Same streaming interface, same tool dispatch, same results. Bring your own keys.",
+      "OpenAI, Anthropic, Google Gemini, OpenRouter. Same streaming interface, same tool dispatch, same results. Bring your own keys.",
   },
   {
     icon: "💻",

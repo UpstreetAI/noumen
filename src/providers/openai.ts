@@ -10,6 +10,7 @@ export interface OpenAIProviderOptions {
   apiKey: string;
   baseURL?: string;
   model?: string;
+  defaultHeaders?: Record<string, string | undefined>;
 }
 
 const O_SERIES_PATTERN = /^o[1-9]/;
@@ -22,6 +23,7 @@ export class OpenAIProvider implements AIProvider {
     this.client = new OpenAI({
       apiKey: opts.apiKey,
       baseURL: opts.baseURL,
+      defaultHeaders: opts.defaultHeaders,
     });
     this.defaultModel = opts.model ?? "gpt-4o";
   }

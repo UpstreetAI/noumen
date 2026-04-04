@@ -27,6 +27,10 @@ export {
   GeminiProvider,
   type GeminiProviderOptions,
 } from "./providers/gemini.js";
+export {
+  OpenRouterProvider,
+  type OpenRouterProviderOptions,
+} from "./providers/openrouter.js";
 
 // Virtual infrastructure (sandboxing primitives)
 // VirtualFs and VirtualComputer are the isolation boundary — all tool I/O

@@ -38,6 +38,12 @@ const ROWS: AdapterRow[] = [
         importName: "GeminiProvider",
         code: "new GeminiProvider({ apiKey: process.env.GEMINI_API_KEY })",
       },
+      {
+        id: "openrouter",
+        name: "OpenRouter",
+        importName: "OpenRouterProvider",
+        code: "new OpenRouterProvider({ apiKey: process.env.OPENROUTER_API_KEY })",
+      },
     ],
   },
   {

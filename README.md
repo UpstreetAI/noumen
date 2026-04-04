@@ -83,6 +83,19 @@ const provider = new GeminiProvider({
 });
 ```
 
+### OpenRouter
+
+```typescript
+import { OpenRouterProvider } from "noumen";
+
+const provider = new OpenRouterProvider({
+  apiKey: "sk-or-...",
+  model: "anthropic/claude-sonnet-4",  // default
+  appName: "My Agent",                 // optional, for openrouter.ai rankings
+  appUrl: "https://myapp.com",         // optional
+});
+```
+
 ## Sandboxed Virtual Infrastructure
 
 Every file read/write and shell command the agent executes goes through two interfaces: `VirtualFs` and `VirtualComputer`. These are the sandboxing boundary — swap the implementation to control what the agent can access.
