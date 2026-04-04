@@ -84,10 +84,32 @@ export { editFileTool } from "./tools/edit.js";
 export { bashTool } from "./tools/bash.js";
 export { globTool } from "./tools/glob.js";
 export { grepTool } from "./tools/grep.js";
+export { createSkillTool } from "./tools/skill.js";
 
 // Skills
 export type { SkillDefinition } from "./skills/types.js";
 export { loadSkills } from "./skills/loader.js";
+export { parseFrontmatter, parseAllowedTools, parsePaths } from "./skills/frontmatter.js";
+export type { FrontmatterData, ParsedFrontmatter } from "./skills/frontmatter.js";
+export { activateSkillsForPaths, getActiveSkills } from "./skills/activation.js";
+
+// MCP
+export { McpClientManager } from "./mcp/client.js";
+export type {
+  McpServerConfig,
+  McpStdioServerConfig,
+  McpHttpServerConfig,
+  McpConfig,
+  McpConnection,
+  McpToolInfo,
+} from "./mcp/types.js";
+export { createMcpServer, type McpServerOptions } from "./mcp/server.js";
+export {
+  normalizeNameForMCP,
+  buildMcpToolName,
+  getMcpPrefix,
+  parseMcpToolName,
+} from "./mcp/normalization.js";
 
 // Compaction
 export { compactConversation } from "./compact/compact.js";

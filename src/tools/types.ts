@@ -31,5 +31,7 @@ export interface Tool {
   name: string;
   description: string;
   parameters: ToolParameters;
+  /** Present on tools sourced from an MCP server */
+  mcpInfo?: { serverName: string; toolName: string };
   call(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult>;
 }

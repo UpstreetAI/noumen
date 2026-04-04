@@ -85,10 +85,10 @@ describe("Code", () => {
       // consume
     }
 
-    // The system prompt sent to the provider should include the skill
+    // With skills present, the Skill tool is added and skills are listed compactly
     const systemPrompt = provider.calls[0].system;
     expect(systemPrompt).toContain("TestSkill");
-    expect(systemPrompt).toContain("Always test.");
+    expect(systemPrompt).toContain("Skill tool");
   });
 
   it("init() resolves skills from paths", async () => {

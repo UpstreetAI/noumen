@@ -28,16 +28,17 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "openai": "^4.85.0",
     "@anthropic-ai/sdk": "^0.39.0",
     "@google/genai": "^1.48.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "openai": "^4.85.0",
     "uuid": "^11.1.0"
   },
   "devDependencies": {
-    "typescript": "^5.7.0",
     "@types/node": "^22.0.0",
     "@types/uuid": "^10.0.0",
     "tsup": "^8.4.0",
+    "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   }
 }

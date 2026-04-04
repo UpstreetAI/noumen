@@ -9,7 +9,7 @@ import type {
   RunOptions,
 } from "./session/types.js";
 import type { SkillDefinition } from "./skills/types.js";
-import type { ToolContext } from "./tools/types.js";
+import type { Tool, ToolContext } from "./tools/types.js";
 import { ToolRegistry } from "./tools/registry.js";
 import { SessionStorage } from "./session/storage.js";
 import { buildSystemPrompt } from "./prompt/system.js";
@@ -20,6 +20,10 @@ import {
   type AutoCompactConfig,
 } from "./compact/auto-compact.js";
 import { generateUUID } from "./utils/uuid.js";
+import { activateSkillsForPaths, getActiveSkills } from "./skills/activation.js";
+import { createSkillTool } from "./tools/skill.js";
+
+const FILE_TOOLS = new Set(["ReadFile", "WriteFile", "EditFile"]);
 
 export interface ThreadOptions {
   sessionId?: string;
@@ -34,6 +38,7 @@ export interface ThreadConfig {
   computer: VirtualComputer;
   sessionDir: string;
   skills?: SkillDefinition[];
+  tools?: Tool[];
   systemPrompt?: string;
   model?: string;
   maxTokens?: number;
@@ -51,6 +56,7 @@ export class Thread {
   private abortController: AbortController | null = null;
   private cwd: string;
   private model: string;
+  private activatedSkills: Set<string> = new Set();
 
   constructor(config: ThreadConfig, opts?: ThreadOptions) {
     this.config = config;
@@ -58,10 +64,20 @@ export class Thread {
     this.cwd = opts?.cwd ?? "/";
     this.model = opts?.model ?? config.model ?? "gpt-4o";
     this.storage = new SessionStorage(config.fs, config.sessionDir);
-    this.toolRegistry = new ToolRegistry();
+
+    const extraTools = [...(config.tools ?? [])];
+
+    // Add the Skill tool when skills are configured
+    const allSkills = config.skills ?? [];
+    if (allSkills.length > 0) {
+      extraTools.push(
+        createSkillTool(() => getActiveSkills(allSkills, this.activatedSkills)),
+      );
+    }
+
+    this.toolRegistry = new ToolRegistry(extraTools.length > 0 ? extraTools : undefined);
 
     if (opts?.resume) {
-      // Messages will be loaded on first run
       this.loaded = false;
     }
   }
@@ -74,23 +90,17 @@ export class Thread {
     const signal = opts?.signal ?? this.abortController.signal;
 
     try {
-      // Load existing messages if resuming
       if (!this.loaded) {
         this.messages = await this.storage.loadMessages(this.sessionId);
         this.loaded = true;
       }
 
-      // Add user message
       const userMessage: ChatMessage = { role: "user", content: prompt };
       this.messages.push(userMessage);
       await this.storage.appendMessage(this.sessionId, userMessage);
 
-      // Build system prompt
-      const systemPrompt = buildSystemPrompt({
-        customPrompt: this.config.systemPrompt,
-        skills: this.config.skills,
-        tools: this.toolRegistry.listTools(),
-      });
+      const allSkills = this.config.skills ?? [];
+      let systemPrompt = this.buildCurrentSystemPrompt(allSkills);
 
       const toolDefs = this.toolRegistry.toToolDefinitions();
       const toolCtx: ToolContext = {
@@ -99,7 +109,6 @@ export class Thread {
         cwd: this.cwd,
       };
 
-      // Agent loop: keep calling the model until it stops issuing tool calls
       while (!signal.aborted) {
         const accumulatedContent: string[] = [];
         const accumulatedToolCalls = new Map<
@@ -126,13 +135,11 @@ export class Thread {
 
             const delta = choice.delta;
 
-            // Text content
             if (delta.content) {
               accumulatedContent.push(delta.content);
               yield { type: "text_delta", text: delta.content };
             }
 
-            // Tool calls
             if (delta.tool_calls) {
               for (const tc of delta.tool_calls) {
                 const existing = accumulatedToolCalls.get(tc.index);
@@ -171,7 +178,6 @@ export class Thread {
 
         if (signal.aborted) break;
 
-        // Build assistant message
         const textContent = accumulatedContent.join("");
         const toolCalls: ToolCallContent[] = Array.from(
           accumulatedToolCalls.values(),
@@ -193,11 +199,12 @@ export class Thread {
         this.messages.push(assistantMsg);
         await this.storage.appendMessage(this.sessionId, assistantMsg);
 
-        // If model called tools, execute them and continue the loop
         if (
           toolCalls.length > 0 &&
           (finishReason === "tool_calls" || finishReason === "stop" || !finishReason)
         ) {
+          const touchedFilePaths: string[] = [];
+
           for (const tc of toolCalls) {
             let parsedArgs: Record<string, unknown> = {};
             try {
@@ -227,18 +234,32 @@ export class Thread {
 
             this.messages.push(toolResultMsg);
             await this.storage.appendMessage(this.sessionId, toolResultMsg);
+
+            if (FILE_TOOLS.has(tc.function.name) && typeof parsedArgs.file_path === "string") {
+              touchedFilePaths.push(parsedArgs.file_path);
+            }
           }
 
-          // Continue the loop -- model needs to process tool results
+          // Activate conditional skills when file tools touch matching paths
+          if (touchedFilePaths.length > 0 && allSkills.length > 0) {
+            const newlyActivated = activateSkillsForPaths(
+              allSkills,
+              touchedFilePaths,
+              this.cwd,
+              this.activatedSkills,
+            );
+            if (newlyActivated.length > 0) {
+              systemPrompt = this.buildCurrentSystemPrompt(allSkills);
+            }
+          }
+
           continue;
         }
 
-        // No tool calls: model is done
         yield { type: "message_complete", message: assistantMsg };
         break;
       }
 
-      // Check auto-compact after the turn
       const autoCompactConfig =
         this.config.autoCompact ?? createAutoCompactConfig();
       if (shouldAutoCompact(this.messages, autoCompactConfig)) {
@@ -271,6 +292,15 @@ export class Thread {
         };
       }
     }
+  }
+
+  private buildCurrentSystemPrompt(allSkills: SkillDefinition[]): string {
+    const activeSkills = getActiveSkills(allSkills, this.activatedSkills);
+    return buildSystemPrompt({
+      customPrompt: this.config.systemPrompt,
+      skills: activeSkills,
+      tools: this.toolRegistry.listTools(),
+    });
   }
 
   async getMessages(): Promise<ChatMessage[]> {

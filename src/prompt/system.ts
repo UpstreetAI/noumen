@@ -47,7 +47,6 @@ export function buildSystemPrompt(opts: {
 
   const sections: string[] = [BASE_SYSTEM_PROMPT];
 
-  // Date context
   const date = opts.date ?? new Date().toLocaleDateString("en-US", {
     weekday: "long",
     year: "numeric",
@@ -56,14 +55,28 @@ export function buildSystemPrompt(opts: {
   });
   sections.push(`\nToday's date is ${date}.`);
 
-  // Skills
   if (opts.skills && opts.skills.length > 0) {
-    sections.push("\n# Available Skills");
-    for (const skill of opts.skills) {
+    const hasSkillTool = opts.tools?.some((t) => t.name === "Skill");
+
+    if (hasSkillTool) {
+      sections.push("\n# Available Skills");
       sections.push(
-        `\n## Skill: ${skill.name}${skill.description ? ` - ${skill.description}` : ""}`,
+        "Use the Skill tool to invoke any of these skills by name. " +
+        "The skill's full instructions will be expanded when invoked.",
       );
-      sections.push(skill.content);
+      for (const skill of opts.skills) {
+        const desc = skill.description ? `: ${skill.description}` : "";
+        const hint = skill.argumentHint ? ` (args: ${skill.argumentHint})` : "";
+        sections.push(`- **${skill.name}**${desc}${hint}`);
+      }
+    } else {
+      sections.push("\n# Available Skills");
+      for (const skill of opts.skills) {
+        sections.push(
+          `\n## Skill: ${skill.name}${skill.description ? ` - ${skill.description}` : ""}`,
+        );
+        sections.push(skill.content);
+      }
     }
   }
 

@@ -1,5 +1,6 @@
 import type { VirtualFs } from "../virtual/fs.js";
 import type { SkillDefinition } from "./types.js";
+import { parseFrontmatter, parseAllowedTools, parsePaths } from "./frontmatter.js";
 
 /**
  * Load skill definitions from SKILL.md files found at the given paths on the VirtualFs.
@@ -35,15 +36,35 @@ async function loadSkillFile(
   filePath: string,
 ): Promise<SkillDefinition | null> {
   try {
-    const content = await fs.readFile(filePath);
-    const name = extractSkillName(filePath, content);
-    const description = extractDescription(content);
+    const raw = await fs.readFile(filePath);
+    const { frontmatter, body } = parseFrontmatter(raw);
+
+    const name = extractSkillName(filePath, body);
+
+    const fmDescription = frontmatter.description;
+    const description =
+      typeof fmDescription === "string" && fmDescription
+        ? fmDescription
+        : extractDescription(body);
+
+    const globs = parsePaths(frontmatter.paths);
+    const allowedTools = parseAllowedTools(frontmatter["allowed-tools"]);
+
+    const context = frontmatter.context === "fork" ? "fork" as const : undefined;
+    const argumentHint =
+      typeof frontmatter["argument-hint"] === "string"
+        ? frontmatter["argument-hint"]
+        : undefined;
 
     return {
       name,
-      content,
+      content: body,
       path: filePath,
       description,
+      ...(globs.length > 0 ? { globs } : {}),
+      ...(allowedTools.length > 0 ? { allowedTools } : {}),
+      ...(context ? { context } : {}),
+      ...(argumentHint ? { argumentHint } : {}),
     };
   } catch {
     return null;
@@ -67,7 +88,6 @@ async function loadSkillsFromDir(
         const skill = await loadSkillFile(fs, entry.path);
         if (skill) skills.push(skill);
       } else if (entry.isDirectory) {
-        // Check for SKILL.md inside subdirectories
         const skillMdPath = `${entry.path}/SKILL.md`;
         const skill = await loadSkillFile(fs, skillMdPath);
         if (skill) skills.push(skill);
@@ -81,11 +101,9 @@ async function loadSkillsFromDir(
 }
 
 function extractSkillName(filePath: string, content: string): string {
-  // Try to extract from first H1 heading
   const h1Match = content.match(/^#\s+(.+)$/m);
   if (h1Match) return h1Match[1].trim();
 
-  // Fall back to directory/file name
   const parts = filePath.split("/");
   const fileName = parts[parts.length - 1];
   if (fileName === "SKILL.md" && parts.length >= 2) {
@@ -95,7 +113,6 @@ function extractSkillName(filePath: string, content: string): string {
 }
 
 function extractDescription(content: string): string | undefined {
-  // Take first non-heading, non-empty line as description
   const lines = content.split("\n");
   for (const line of lines) {
     const trimmed = line.trim();
