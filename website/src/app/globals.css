@@ -45,6 +45,21 @@ body {
   50% { opacity: 1; transform: scale(1.2); }
 }
 
+@keyframes fadeInOut {
+  0% { opacity: 0; transform: translateX(-50%) translateY(4px); }
+  15% { opacity: 1; transform: translateX(-50%) translateY(0); }
+  80% { opacity: 1; transform: translateX(-50%) translateY(0); }
+  100% { opacity: 0; transform: translateX(-50%) translateY(-4px); }
+}
+
+@keyframes glitchIn {
+  0% { opacity: 0; transform: scale(0.8) translateY(20px); filter: blur(8px) saturate(3); }
+  30% { opacity: 1; transform: scale(1.02) translateY(-4px); filter: blur(0) saturate(1.5); }
+  50% { transform: scale(0.99) translateX(3px); filter: hue-rotate(20deg); }
+  70% { transform: scale(1.01) translateX(-2px); filter: hue-rotate(-10deg); }
+  100% { opacity: 1; transform: scale(1) translate(0); filter: none; }
+}
+
 ::selection {
   background: var(--color-accent-blue-dim);
   color: var(--color-text-primary);

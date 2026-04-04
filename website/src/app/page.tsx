@@ -1,7 +1,9 @@
 import Link from "next/link";
+import Image from "next/image";
 import { TerminalBlock } from "@/components/TerminalBlock";
 import { HeroTerminal } from "@/components/HeroTerminal";
 import { Sparkles } from "@/components/Sparkles";
+import { EasterEggFooter } from "@/components/EasterEggFooter";
 
 const FEATURES = [
   {
@@ -161,9 +163,19 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Right: animated terminal */}
+          {/* Right: serpent illustration + animated terminal */}
           <div className="relative hidden lg:block">
             <div className="animate-float">
+              <Image
+                src="/images/hero-serpent.webp"
+                alt="A glitch-occult serpent ouroboros made of code and circuit traces"
+                width={640}
+                height={640}
+                className="rounded-2xl opacity-90"
+                priority
+              />
+            </div>
+            <div className="mt-4">
               <HeroTerminal />
             </div>
           </div>
@@ -317,9 +329,7 @@ export default function Home() {
               npm
             </a>
           </div>
-          <p className="text-xs text-[var(--color-text-tertiary)]">
-            🐍 &copy; {new Date().getFullYear()} noumen &mdash; MIT License
-          </p>
+          <EasterEggFooter />
         </div>
       </footer>
     </>
