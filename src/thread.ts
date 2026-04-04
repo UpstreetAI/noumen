@@ -11,6 +11,9 @@ import type {
   RunOptions,
 } from "./session/types.js";
 import type { SkillDefinition } from "./skills/types.js";
+import type { ContextFile } from "./context/types.js";
+import { buildProjectContextSection } from "./context/prompts.js";
+import { activateContextForPaths, filterActiveContextFiles } from "./context/loader.js";
 import type { Tool, ToolContext, SubagentConfig, SubagentRun } from "./tools/types.js";
 import { createToolSearchTool, TOOL_SEARCH_NAME } from "./tools/tool-search.js";
 import type { TaskStore } from "./tasks/store.js";
@@ -144,6 +147,8 @@ export interface ThreadConfig {
   skipCacheWrite?: boolean;
   /** Set of MCP tool names for cache-stable sorting (built-in first, then MCP). */
   mcpToolNames?: ReadonlySet<string>;
+  /** Loaded project context files (NOUMEN.md / CLAUDE.md) for system prompt injection. */
+  projectContext?: ContextFile[];
 }
 
 export class Thread {
@@ -158,6 +163,7 @@ export class Thread {
   private cwd: string;
   private model: string;
   private activatedSkills: Set<string> = new Set();
+  private activatedContextRules: Set<string> = new Set();
   private permissionContext: PermissionContext | null = null;
   private permissionHandler: PermissionHandler | null = null;
   private hooks: HookDefinition[];
@@ -1078,14 +1084,30 @@ export class Thread {
             }
           }
 
-          if (touchedFilePaths.length > 0 && allSkills.length > 0) {
-            const newlyActivated = activateSkillsForPaths(
-              allSkills,
-              touchedFilePaths,
-              this.cwd,
-              this.activatedSkills,
-            );
-            if (newlyActivated.length > 0) {
+          if (touchedFilePaths.length > 0) {
+            let needsRebuild = false;
+
+            if (allSkills.length > 0) {
+              const newlyActivated = activateSkillsForPaths(
+                allSkills,
+                touchedFilePaths,
+                this.cwd,
+                this.activatedSkills,
+              );
+              if (newlyActivated.length > 0) needsRebuild = true;
+            }
+
+            if (this.config.projectContext?.length) {
+              const newCtx = activateContextForPaths(
+                this.config.projectContext,
+                touchedFilePaths,
+                this.cwd,
+                this.activatedContextRules,
+              );
+              if (newCtx.length > 0) needsRebuild = true;
+            }
+
+            if (needsRebuild) {
               systemPrompt = await this.buildCurrentSystemPromptAsync(allSkills);
             }
           }
@@ -1402,6 +1424,23 @@ export class Thread {
       }
     }
 
+    let projectContextSection: string | undefined;
+    if (this.config.projectContext?.length) {
+      const active = filterActiveContextFiles(
+        this.config.projectContext,
+        [],
+        this.cwd,
+      );
+      const unconditional = active.filter((f) => !f.globs || f.globs.length === 0);
+      const activatedConditional = this.config.projectContext.filter(
+        (f) => f.globs && f.globs.length > 0 && this.activatedContextRules.has(f.path),
+      );
+      const combined = [...unconditional, ...activatedConditional];
+      if (combined.length > 0) {
+        projectContextSection = buildProjectContextSection(combined);
+      }
+    }
+
     const deferredTools = this.config.toolSearchEnabled
       ? this.toolRegistry.getDeferredTools().map((t) => ({
           name: t.name,
@@ -1413,6 +1452,7 @@ export class Thread {
       customPrompt: this.config.systemPrompt,
       skills: activeSkills,
       tools: this.toolRegistry.listTools(),
+      projectContext: projectContextSection,
       memorySection,
       deferredTools: deferredTools?.length ? deferredTools : undefined,
     });

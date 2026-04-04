@@ -42,6 +42,8 @@ import { Thread, type ThreadOptions } from "./thread.js";
 import { createAutoCompactConfig } from "./compact/auto-compact.js";
 import { buildUserContext } from "./prompt/context.js";
 import { DEFAULT_RETRY_CONFIG } from "./retry/types.js";
+import type { ContextFile, ProjectContextConfig } from "./context/types.js";
+import { loadProjectContext } from "./context/loader.js";
 
 export interface CodeOptions {
   aiProvider: AIProvider;
@@ -116,6 +118,8 @@ export interface CodeOptions {
     toolResultStorage?: ToolResultStorageConfig;
     /** History snip: enable middle-range removal from conversation history. */
     historySnip?: SnipConfig;
+    /** Project context loading (NOUMEN.md / CLAUDE.md). Pass true for defaults or a config object. */
+    projectContext?: ProjectContextConfig | boolean;
   };
 }
 
@@ -165,6 +169,8 @@ export class Code {
   private toolResultBudgetConfig?: ToolResultBudgetConfig;
   private reactiveCompactConfig?: ReactiveCompactConfig;
   private toolSearchEnabled: boolean;
+  private projectContextConfig?: ProjectContextConfig;
+  private resolvedProjectContext: ContextFile[] | null = null;
   private checkpointManager: FileCheckpointManager | null = null;
   private promptCachingConfig: CacheControlConfig | undefined;
   private fileStateCacheConfig: FileStateCacheConfig | undefined;
@@ -239,6 +245,13 @@ export class Code {
     this.toolResultBudgetConfig = opts.options?.toolResultBudget;
     this.reactiveCompactConfig = opts.options?.reactiveCompact;
     this.toolSearchEnabled = opts.options?.toolSearch ?? false;
+
+    if (opts.options?.projectContext === true) {
+      this.projectContextConfig = { cwd: this.cwd };
+    } else if (typeof opts.options?.projectContext === "object") {
+      this.projectContextConfig = opts.options.projectContext;
+    }
+
     this.promptCachingConfig = opts.options?.promptCaching;
     this.fileStateCacheConfig = opts.options?.fileStateCache;
     this.toolResultStorageConfig = opts.options?.toolResultStorage;
@@ -324,6 +337,7 @@ export class Code {
           historySnip: this.historySnipConfig,
           promptCachingEnabled: this.promptCachingConfig?.enabled ?? false,
           skipCacheWrite: true,
+          projectContext: this.resolvedProjectContext ?? undefined,
         },
         { cwd: parentCwd },
       );
@@ -381,6 +395,7 @@ export class Code {
         historySnip: this.historySnipConfig,
         promptCachingEnabled: this.promptCachingConfig?.enabled ?? false,
         mcpToolNames: this.mcpToolNames.size > 0 ? this.mcpToolNames : undefined,
+        projectContext: this.resolvedProjectContext ?? undefined,
       },
       {
         ...opts,
@@ -417,6 +432,14 @@ export class Code {
    */
   async init(): Promise<void> {
     const tasks: Promise<void>[] = [this.getSkills().then(() => {})];
+
+    if (this.projectContextConfig && !this.resolvedProjectContext) {
+      tasks.push(
+        loadProjectContext(this.fs, this.projectContextConfig).then((files) => {
+          this.resolvedProjectContext = files;
+        }),
+      );
+    }
 
     if (this.mcpServerConfigs && !this.mcpManager) {
       tasks.push(

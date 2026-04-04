@@ -40,6 +40,7 @@ export function buildSystemPrompt(opts: {
   skills?: SkillDefinition[];
   tools?: Tool[];
   date?: string;
+  projectContext?: string;
   memorySection?: string;
   deferredTools?: { name: string; description: string }[];
 }): string {
@@ -52,6 +53,10 @@ export function buildSystemPrompt(opts: {
     day: "numeric",
   });
   sections.push(`\nToday's date is ${date}.`);
+
+  if (opts.projectContext) {
+    sections.push("\n" + opts.projectContext);
+  }
 
   if (opts.memorySection) {
     sections.push("\n" + opts.memorySection);

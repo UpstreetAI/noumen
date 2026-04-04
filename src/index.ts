@@ -376,6 +376,11 @@ export {
 // System prompt
 export { buildSystemPrompt } from "./prompt/system.js";
 
+// Project Context (NOUMEN.md / CLAUDE.md)
+export type { ContextScope, ContextFile, ProjectContextConfig } from "./context/types.js";
+export { loadProjectContext, filterActiveContextFiles, activateContextForPaths } from "./context/loader.js";
+export { buildProjectContextSection } from "./context/prompts.js";
+
 // Permissions
 export type {
   PermissionMode,
