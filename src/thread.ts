@@ -90,7 +90,8 @@ import type { FileStateCacheConfig } from "./file-state/types.js";
 import { generateUUID } from "./utils/uuid.js";
 import { activateSkillsForPaths, getActiveSkills } from "./skills/activation.js";
 import { createSkillTool } from "./tools/skill.js";
-import { resolvePermission } from "./permissions/pipeline.js";
+import { resolvePermission, type ResolvePermissionOptions } from "./permissions/pipeline.js";
+import { DenialTracker } from "./permissions/denial-tracking.js";
 import { withRetry, CannotRetryError, FallbackTriggeredError } from "./retry/engine.js";
 import { classifyError } from "./retry/classify.js";
 
@@ -171,6 +172,7 @@ export class Thread {
   private resumeRequested = false;
   private fileStateCache: FileStateCache | null = null;
   private contentReplacementState: ContentReplacementState;
+  private denialTracker: DenialTracker | null = null;
 
   constructor(config: ThreadConfig, opts?: ThreadOptions) {
     this.config = config;
@@ -186,6 +188,9 @@ export class Thread {
         workingDirectories: [...(config.permissions.workingDirectories ?? [])],
       };
       this.permissionHandler = config.permissions.handler ?? null;
+      if (config.permissions.denialTracking) {
+        this.denialTracker = new DenialTracker(config.permissions.denialTracking);
+      }
     }
 
     const extraTools = [...(config.tools ?? [])];
@@ -837,15 +842,26 @@ export class Thread {
                   currentArgs,
                   toolCtx,
                   permCtx,
+                  this.buildPermissionOpts(),
                 );
 
                 if (decision.behavior === "deny") {
+                  this.denialTracker?.recordDenial();
                   eventQueue.push({
                     type: "permission_denied",
                     toolName: tc.function.name,
                     input: currentArgs,
                     message: decision.message,
                   });
+                  if (this.denialTracker?.shouldFallback()) {
+                    const state = this.denialTracker.getState();
+                    eventQueue.push({
+                      type: "denial_limit_exceeded",
+                      consecutiveDenials: state.consecutiveDenials,
+                      totalDenials: state.totalDenials,
+                    });
+                    preventContinuation = true;
+                  }
                   const content = `Permission denied: ${decision.message}`;
                   return { toolCall: tc, parsedArgs: currentArgs, result: { content, isError: true }, permissionDenied: true };
                 }
@@ -872,6 +888,7 @@ export class Thread {
                     const response = await permHandler(request);
 
                     if (!response.allow) {
+                      this.denialTracker?.recordDenial();
                       const feedback = response.feedback ?? "User denied permission.";
                       eventQueue.push({
                         type: "permission_denied",
@@ -879,6 +896,15 @@ export class Thread {
                         input: currentArgs,
                         message: feedback,
                       });
+                      if (this.denialTracker?.shouldFallback()) {
+                        const state = this.denialTracker.getState();
+                        eventQueue.push({
+                          type: "denial_limit_exceeded",
+                          consecutiveDenials: state.consecutiveDenials,
+                          totalDenials: state.totalDenials,
+                        });
+                        preventContinuation = true;
+                      }
                       const content = `Permission denied: ${feedback}`;
                       return { toolCall: tc, parsedArgs: currentArgs, result: { content, isError: true }, permissionDenied: true };
                     }
@@ -890,17 +916,28 @@ export class Thread {
                       permCtx.rules.push(...response.addRules);
                     }
                   } else {
+                    this.denialTracker?.recordDenial();
                     eventQueue.push({
                       type: "permission_denied",
                       toolName: tc.function.name,
                       input: currentArgs,
                       message: "No permission handler configured.",
                     });
+                    if (this.denialTracker?.shouldFallback()) {
+                      const state = this.denialTracker.getState();
+                      eventQueue.push({
+                        type: "denial_limit_exceeded",
+                        consecutiveDenials: state.consecutiveDenials,
+                        totalDenials: state.totalDenials,
+                      });
+                      preventContinuation = true;
+                    }
                     const content = "Permission denied: No permission handler configured.";
                     return { toolCall: tc, parsedArgs: currentArgs, result: { content, isError: true }, permissionDenied: true };
                   }
                 }
 
+                this.denialTracker?.recordSuccess();
                 eventQueue.push({
                   type: "permission_granted",
                   toolName: tc.function.name,
@@ -1251,11 +1288,16 @@ export class Thread {
       if (permCtx) {
         const tool = registry.get(tc.function.name);
         if (tool) {
-          const decision = await resolvePermission(tool, currentArgs, toolCtx, permCtx);
+          const decision = await resolvePermission(tool, currentArgs, toolCtx, permCtx, this.buildPermissionOpts());
 
           if (decision.behavior === "deny") {
+            this.denialTracker?.recordDenial();
             events.push({ type: "permission_denied", toolName: tc.function.name, input: currentArgs, message: decision.message });
-            return { result: { content: `Permission denied: ${decision.message}`, isError: true }, permissionDenied: true, events };
+            if (this.denialTracker?.shouldFallback()) {
+              const state = this.denialTracker.getState();
+              events.push({ type: "denial_limit_exceeded", consecutiveDenials: state.consecutiveDenials, totalDenials: state.totalDenials });
+            }
+            return { result: { content: `Permission denied: ${decision.message}`, isError: true }, permissionDenied: true, preventContinuation: this.denialTracker?.shouldFallback() || undefined, events };
           }
 
           if (decision.behavior === "ask") {
@@ -1272,18 +1314,29 @@ export class Thread {
                 isDestructive,
               });
               if (!response.allow) {
+                this.denialTracker?.recordDenial();
                 const feedback = response.feedback ?? "User denied permission.";
                 events.push({ type: "permission_denied", toolName: tc.function.name, input: currentArgs, message: feedback });
-                return { result: { content: `Permission denied: ${feedback}`, isError: true }, permissionDenied: true, events };
+                if (this.denialTracker?.shouldFallback()) {
+                  const state = this.denialTracker.getState();
+                  events.push({ type: "denial_limit_exceeded", consecutiveDenials: state.consecutiveDenials, totalDenials: state.totalDenials });
+                }
+                return { result: { content: `Permission denied: ${feedback}`, isError: true }, permissionDenied: true, preventContinuation: this.denialTracker?.shouldFallback() || undefined, events };
               }
               if (response.updatedInput) currentArgs = response.updatedInput;
               if (response.addRules) permCtx.rules.push(...response.addRules);
             } else {
+              this.denialTracker?.recordDenial();
               events.push({ type: "permission_denied", toolName: tc.function.name, input: currentArgs, message: "No permission handler configured." });
-              return { result: { content: "Permission denied: No permission handler configured.", isError: true }, permissionDenied: true, events };
+              if (this.denialTracker?.shouldFallback()) {
+                const state = this.denialTracker.getState();
+                events.push({ type: "denial_limit_exceeded", consecutiveDenials: state.consecutiveDenials, totalDenials: state.totalDenials });
+              }
+              return { result: { content: "Permission denied: No permission handler configured.", isError: true }, permissionDenied: true, preventContinuation: this.denialTracker?.shouldFallback() || undefined, events };
             }
           }
 
+          this.denialTracker?.recordSuccess();
           events.push({ type: "permission_granted", toolName: tc.function.name, input: currentArgs });
         }
       }
@@ -1320,6 +1373,18 @@ export class Thread {
       }
 
       return { result, preventContinuation: hookPreventContinuation || undefined, events };
+    };
+  }
+
+  private buildPermissionOpts(): ResolvePermissionOptions | undefined {
+    const autoMode = this.config.permissions?.autoMode;
+    if (!autoMode) return undefined;
+    const tail = this.messages.slice(-10);
+    return {
+      aiProvider: this.config.aiProvider,
+      model: this.model,
+      recentMessages: tail,
+      autoModeConfig: autoMode,
     };
   }
 

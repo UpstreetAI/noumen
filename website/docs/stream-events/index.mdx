@@ -7,18 +7,76 @@ description: Every event type emitted during an agent run, including text stream
 
 ## Event reference
 
+### Core streaming
+
 | Event | Fields | Description |
 |-------|--------|-------------|
 | `text_delta` | `text` | Incremental text token from the model |
+| `thinking_delta` | `text` | Incremental thinking/reasoning token (extended thinking) |
 | `tool_use_start` | `toolName`, `toolUseId` | Model is calling a tool |
 | `tool_use_delta` | `input` | Incremental tool call arguments (JSON fragment) |
 | `tool_result` | `toolUseId`, `toolName`, `result` | Tool execution completed |
 | `message_complete` | `message` | Full assistant message assembled |
+| `error` | `error` | An error occurred |
+
+### Usage and cost
+
+| Event | Fields | Description |
+|-------|--------|-------------|
 | `usage` | `usage`, `model` | Token usage for a single model call |
 | `turn_complete` | `usage`, `model`, `callCount` | Accumulated usage for the full agent turn |
+| `cost_update` | `summary` | Updated cost summary after a model call |
+
+### Permissions
+
+| Event | Fields | Description |
+|-------|--------|-------------|
+| `permission_request` | `toolName`, `input`, `message` | Tool call requires user approval |
+| `permission_granted` | `toolName`, `input` | Permission was granted for a tool call |
+| `permission_denied` | `toolName`, `input`, `message` | Permission was denied for a tool call |
+| `denial_limit_exceeded` | `consecutiveDenials`, `totalDenials` | Denial tracking limits hit; agent should stop retrying |
+
+### Compaction
+
+| Event | Fields | Description |
+|-------|--------|-------------|
 | `compact_start` | — | Auto-compaction started |
 | `compact_complete` | — | Auto-compaction finished |
-| `error` | `error` | An error occurred |
+| `microcompact_complete` | `tokensFreed` | Microcompaction freed tokens from tool results |
+| `tool_result_truncated` | `toolCallId`, `originalChars`, `truncatedChars` | A tool result was truncated by the budget system |
+
+### Retry
+
+| Event | Fields | Description |
+|-------|--------|-------------|
+| `retry_attempt` | `attempt`, `maxRetries`, `delayMs`, `error` | A retryable error occurred; waiting before retry |
+| `retry_exhausted` | `attempts`, `error` | All retry attempts failed |
+
+### Subagents and user input
+
+| Event | Fields | Description |
+|-------|--------|-------------|
+| `subagent_start` | `toolUseId`, `prompt` | A subagent is being spawned |
+| `subagent_end` | `toolUseId`, `result` | A subagent finished |
+| `user_input_request` | `toolUseId`, `question` | The agent is asking the user a question |
+
+### Session and recovery
+
+| Event | Fields | Description |
+|-------|--------|-------------|
+| `session_resumed` | `sessionId`, `messageCount` | A previous session was restored |
+| `checkpoint_snapshot` | `messageId` | A file checkpoint was taken before edits |
+| `recovery_filtered` | `filterName`, `removedCount` | Corrupt entries were filtered during session restore |
+| `interrupted_turn_detected` | `kind` | A previous turn was interrupted (`interrupted_tool` or `interrupted_prompt`) |
+
+### Memory and tracing
+
+| Event | Fields | Description |
+|-------|--------|-------------|
+| `memory_update` | `created`, `updated`, `deleted` | Memories were extracted from the conversation |
+| `span_start` | `name`, `spanId` | An OpenTelemetry-compatible span started |
+| `span_end` | `name`, `spanId`, `durationMs`, `error?` | A span ended |
+| `git_operation` | `operation`, `details` | A git operation was detected (`commit`, `push`, `pr_create`, `merge`, `rebase`) |
 
 ## Handling events
 

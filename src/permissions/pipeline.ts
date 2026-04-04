@@ -90,6 +90,21 @@ export async function resolvePermission(
     };
   }
 
+  // 2b. Working directory enforcement for file paths
+  if (permCtx.workingDirectories.length > 0) {
+    const filePath =
+      typeof input.file_path === "string" ? input.file_path
+      : typeof input.path === "string" ? input.path
+      : undefined;
+    if (filePath && !isPathInWorkingDirectories(filePath, permCtx.workingDirectories)) {
+      return {
+        behavior: "deny",
+        message: `Path "${filePath}" is outside configured working directories.`,
+        reason: "workingDirectory",
+      };
+    }
+  }
+
   // 3. Tool's own checkPermissions
   let toolResult: PermissionResult | undefined;
   if (tool.checkPermissions) {

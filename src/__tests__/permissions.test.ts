@@ -362,7 +362,7 @@ describe("resolvePermission", () => {
   it("allows tools matched by whole-tool allow rule", async () => {
     const result = await resolvePermission(
       writeFileTool,
-      { file_path: "/anywhere/file.ts" },
+      { file_path: "/project/file.ts" },
       ctx,
       makeContext({
         rules: [{ toolName: "WriteFile", behavior: "allow" }],
@@ -386,11 +386,11 @@ describe("resolvePermission", () => {
   it("glob allow rule works for file paths", async () => {
     const result = await resolvePermission(
       writeFileTool,
-      { file_path: "/src/components/Button.tsx" },
+      { file_path: "/project/src/components/Button.tsx" },
       ctx,
       makeContext({
         rules: [
-          { toolName: "WriteFile", behavior: "allow", ruleContent: "/src/**/*.tsx" },
+          { toolName: "WriteFile", behavior: "allow", ruleContent: "/project/src/**/*.tsx" },
         ],
       }),
     );

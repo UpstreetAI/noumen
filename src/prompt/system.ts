@@ -43,11 +43,7 @@ export function buildSystemPrompt(opts: {
   memorySection?: string;
   deferredTools?: { name: string; description: string }[];
 }): string {
-  if (opts.customPrompt) {
-    return opts.customPrompt;
-  }
-
-  const sections: string[] = [BASE_SYSTEM_PROMPT];
+  const sections: string[] = [opts.customPrompt ?? BASE_SYSTEM_PROMPT];
 
   const date = opts.date ?? new Date().toLocaleDateString("en-US", {
     weekday: "long",

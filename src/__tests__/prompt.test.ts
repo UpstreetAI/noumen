@@ -10,9 +10,14 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toContain("Monday, January 1, 2024");
   });
 
-  it("returns only custom prompt when provided", () => {
-    const prompt = buildSystemPrompt({ customPrompt: "You are a pirate." });
-    expect(prompt).toBe("You are a pirate.");
+  it("uses custom prompt as base but still appends date", () => {
+    const prompt = buildSystemPrompt({
+      customPrompt: "You are a pirate.",
+      date: "Monday, January 1, 2024",
+    });
+    expect(prompt).toContain("You are a pirate.");
+    expect(prompt).toContain("Monday, January 1, 2024");
+    expect(prompt).not.toContain("AI coding assistant");
   });
 
   it("includes skill sections", () => {

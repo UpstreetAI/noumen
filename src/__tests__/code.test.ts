@@ -174,7 +174,8 @@ describe("Code", () => {
       // consume
     }
 
-    expect(provider.calls[0].system).toBe("You are a pirate.");
+    expect(provider.calls[0].system).toContain("You are a pirate.");
+    expect(provider.calls[0].system).not.toContain("AI coding assistant");
   });
 
   it("passes model and maxTokens to thread", async () => {
