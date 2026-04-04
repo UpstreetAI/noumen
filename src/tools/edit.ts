@@ -48,6 +48,10 @@ export const editFileTool: Tool = {
     const replaceAll = (args.replace_all as boolean) ?? false;
 
     try {
+      if (ctx.checkpointManager && ctx.currentMessageId) {
+        await ctx.checkpointManager.trackEdit(filePath, ctx.currentMessageId, ctx.sessionId ?? "");
+      }
+
       const content = await ctx.fs.readFile(filePath);
 
       if (!content.includes(oldString)) {

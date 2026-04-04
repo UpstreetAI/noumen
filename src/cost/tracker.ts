@@ -1,6 +1,12 @@
 import type { ModelPricing, UsageRecord, ModelUsageSummary, CostSummary } from "./types.js";
 import { calculateCost, DEFAULT_PRICING } from "./pricing.js";
 
+export interface StoredCostState {
+  byModel: Record<string, ModelUsageSummary>;
+  totalApiMs: number;
+  wallStartMs: number;
+}
+
 export class CostTracker {
   private pricing: Record<string, ModelPricing>;
   private byModel: Record<string, ModelUsageSummary> = {};
@@ -71,6 +77,20 @@ export class CostTracker {
     this.byModel = {};
     this.totalApiMs = 0;
     this.wallStartMs = Date.now();
+  }
+
+  getState(): StoredCostState {
+    return {
+      byModel: structuredClone(this.byModel),
+      totalApiMs: this.totalApiMs,
+      wallStartMs: this.wallStartMs,
+    };
+  }
+
+  restore(state: StoredCostState): void {
+    this.byModel = structuredClone(state.byModel);
+    this.totalApiMs = state.totalApiMs;
+    this.wallStartMs = state.wallStartMs;
   }
 
   formatSummary(): string {

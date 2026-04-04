@@ -6,8 +6,10 @@ import type {
   CompactBoundaryEntry,
   SummaryEntry,
   ToolResultOverflowEntry,
+  FileCheckpointEntry,
   SessionInfo,
 } from "./types.js";
+import type { FileCheckpointSnapshot } from "../checkpoint/types.js";
 import { generateUUID } from "../utils/uuid.js";
 import type { UUID } from "../utils/uuid.js";
 import { jsonStringify, parseJSONL } from "../utils/json.js";
@@ -97,6 +99,23 @@ export class SessionStorage {
       timestamp: new Date().toISOString(),
       toolCallId,
       originalContent,
+    };
+    await this.appendEntry(sessionId, entry);
+  }
+
+  async appendCheckpointEntry(
+    sessionId: string,
+    messageId: string,
+    snapshot: FileCheckpointSnapshot,
+    isSnapshotUpdate: boolean,
+  ): Promise<void> {
+    const entry: FileCheckpointEntry = {
+      type: "file-checkpoint",
+      sessionId,
+      timestamp: new Date().toISOString(),
+      messageId,
+      snapshot,
+      isSnapshotUpdate,
     };
     await this.appendEntry(sessionId, entry);
   }

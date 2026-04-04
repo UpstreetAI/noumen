@@ -30,6 +30,10 @@ import { NoopTracer } from "./tracing/noop.js";
 import type { MemoryConfig } from "./memory/types.js";
 import { buildMemorySystemPromptSection } from "./memory/prompts.js";
 import { extractMemories } from "./memory/extraction.js";
+import type { FileCheckpointManager } from "./checkpoint/manager.js";
+import { sortToolDefinitionsForCache } from "./providers/cache.js";
+import { saveCacheSafeParams, createCacheSafeParams } from "./providers/cache-safe-params.js";
+import { restoreSession } from "./session/resume.js";
 import {
   runPreToolUseHooks,
   runPostToolUseHooks,
@@ -111,6 +115,13 @@ export interface ThreadConfig {
   tracer?: Tracer;
   memory?: MemoryConfig;
   toolSearchEnabled?: boolean;
+  checkpointManager?: FileCheckpointManager;
+  /** Enable deterministic tool ordering and CacheSafeParams tracking for prompt caching. */
+  promptCachingEnabled?: boolean;
+  /** When true, signal skipCacheWrite to the provider (for subagent forks). */
+  skipCacheWrite?: boolean;
+  /** Set of MCP tool names for cache-stable sorting (built-in first, then MCP). */
+  mcpToolNames?: ReadonlySet<string>;
 }
 
 export class Thread {
@@ -136,6 +147,7 @@ export class Thread {
   private budgetState: BudgetState;
   private hasAttemptedReactiveCompact = false;
   private microcompactTokensFreed = 0;
+  private resumeRequested = false;
 
   constructor(config: ThreadConfig, opts?: ThreadOptions) {
     this.config = config;
@@ -183,6 +195,7 @@ export class Thread {
 
     if (opts?.resume) {
       this.loaded = false;
+      this.resumeRequested = true;
     }
   }
 
@@ -205,13 +218,42 @@ export class Thread {
 
     try {
       if (!this.loaded) {
-        this.messages = await this.storage.loadMessages(this.sessionId);
+        if (this.resumeRequested) {
+          const payload = await restoreSession(this.storage, this.sessionId);
+          this.messages = payload.messages;
+
+          if (this.config.checkpointManager && payload.checkpointSnapshots.length > 0) {
+            this.config.checkpointManager.restoreStateFromEntries(payload.checkpointSnapshots);
+          }
+
+          if (this.config.costTracker && payload.costState) {
+            this.config.costTracker.restore(payload.costState);
+          }
+
+          this.resumeRequested = false;
+          yield { type: "session_resumed", sessionId: this.sessionId, messageCount: this.messages.length };
+        } else {
+          this.messages = await this.storage.loadMessages(this.sessionId);
+        }
         this.loaded = true;
       }
 
       const userMessage: ChatMessage = { role: "user", content: prompt };
       this.messages.push(userMessage);
       await this.storage.appendMessage(this.sessionId, userMessage);
+
+      const turnMessageId = generateUUID();
+
+      if (this.config.checkpointManager) {
+        await this.config.checkpointManager.makeSnapshot(turnMessageId, this.sessionId);
+        await this.storage.appendCheckpointEntry(
+          this.sessionId,
+          turnMessageId,
+          this.config.checkpointManager.getState().snapshots.at(-1)!,
+          false,
+        );
+        yield { type: "checkpoint_snapshot", messageId: turnMessageId };
+      }
 
       const allSkills = this.config.skills ?? [];
       let systemPrompt = await this.buildCurrentSystemPromptAsync(allSkills);
@@ -229,6 +271,8 @@ export class Thread {
         userInputHandler: this.config.userInputHandler,
         taskStore: this.config.taskStore,
         lspManager: this.config.lspManager,
+        checkpointManager: this.config.checkpointManager,
+        currentMessageId: turnMessageId,
         setPermissionMode: this.permissionContext
           ? (mode) => {
               if (this.permissionContext) {
@@ -323,13 +367,18 @@ export class Thread {
           );
         }
 
+        const sortedToolDefs = this.config.promptCachingEnabled
+          ? sortToolDefinitionsForCache(toolDefs, this.config.mcpToolNames)
+          : toolDefs;
+
         const chatParams = {
           model: this.model,
           messages: this.messages,
-          tools: toolDefs,
+          tools: sortedToolDefs,
           system: systemPrompt,
           max_tokens: currentMaxTokens,
           thinking: this.config.thinking,
+          skipCacheWrite: this.config.skipCacheWrite,
         };
 
         let stream: AsyncIterable<import("./providers/types.js").ChatStreamChunk>;
@@ -544,6 +593,17 @@ export class Thread {
 
           providerSpan.setAttribute("tokens.input", lastUsage.prompt_tokens);
           providerSpan.setAttribute("tokens.output", lastUsage.completion_tokens);
+        }
+
+        if (this.config.promptCachingEnabled) {
+          saveCacheSafeParams(
+            createCacheSafeParams({
+              systemPrompt,
+              model: this.model,
+              tools: sortedToolDefs,
+              thinking: this.config.thinking,
+            }),
+          );
         }
 
         providerSpan.setStatus(SpanStatusCode.OK);
@@ -1097,7 +1157,19 @@ export class Thread {
 
   async getMessages(): Promise<ChatMessage[]> {
     if (!this.loaded) {
-      this.messages = await this.storage.loadMessages(this.sessionId);
+      if (this.resumeRequested) {
+        const payload = await restoreSession(this.storage, this.sessionId);
+        this.messages = payload.messages;
+        if (this.config.checkpointManager && payload.checkpointSnapshots.length > 0) {
+          this.config.checkpointManager.restoreStateFromEntries(payload.checkpointSnapshots);
+        }
+        if (this.config.costTracker && payload.costState) {
+          this.config.costTracker.restore(payload.costState);
+        }
+        this.resumeRequested = false;
+      } else {
+        this.messages = await this.storage.loadMessages(this.sessionId);
+      }
       this.loaded = true;
     }
     return [...this.messages];

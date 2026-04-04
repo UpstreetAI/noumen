@@ -4,6 +4,7 @@ import type { PermissionResult } from "../permissions/types.js";
 import type { PermissionMode } from "../permissions/types.js";
 import type { TaskStore } from "../tasks/store.js";
 import type { LspServerManager } from "../lsp/manager.js";
+import type { FileCheckpointManager } from "../checkpoint/manager.js";
 
 export interface ToolResult {
   content: string;
@@ -56,6 +57,10 @@ export interface ToolContext {
   setCwd?: (cwd: string) => void;
   /** LSP server manager for the LSP tool. */
   lspManager?: LspServerManager;
+  /** File checkpoint manager for pre-edit backup tracking. */
+  checkpointManager?: FileCheckpointManager;
+  /** Current message ID for checkpoint tracking (set per user turn). */
+  currentMessageId?: string;
 }
 
 export interface ToolParameterProperty {

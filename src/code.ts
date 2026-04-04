@@ -3,6 +3,9 @@ import type { VirtualFs } from "./virtual/fs.js";
 import type { VirtualComputer } from "./virtual/computer.js";
 import type { SkillDefinition } from "./skills/types.js";
 import type { Tool, SubagentConfig, SubagentRun } from "./tools/types.js";
+import type { CheckpointConfig } from "./checkpoint/types.js";
+import { FileCheckpointManager } from "./checkpoint/manager.js";
+import type { CacheControlConfig } from "./providers/cache.js";
 import { agentTool } from "./tools/agent.js";
 import { createWebSearchTool, type WebSearchConfig } from "./tools/web-search.js";
 import { createToolSearchTool } from "./tools/tool-search.js";
@@ -90,6 +93,10 @@ export interface CodeOptions {
     memory?: MemoryConfig;
     /** Enable ToolSearch: deferred tools are hidden until the model discovers them. */
     toolSearch?: boolean;
+    /** File checkpointing: snapshot files before edits for rollback. */
+    checkpoint?: CheckpointConfig;
+    /** Prompt caching: enable deterministic tool ordering and cache_control injection. */
+    promptCaching?: CacheControlConfig;
   };
 }
 
@@ -111,6 +118,7 @@ export class Code {
   private resolvedSkills: SkillDefinition[] | null = null;
   private mcpManager: McpClientManager | null = null;
   private mcpTools: Tool[] = [];
+  private mcpToolNames: Set<string> = new Set();
   private permissions?: PermissionConfig;
   private hooks: HookDefinition[];
   private enableSubagents: boolean;
@@ -132,6 +140,8 @@ export class Code {
   private toolResultBudgetConfig?: ToolResultBudgetConfig;
   private reactiveCompactConfig?: ReactiveCompactConfig;
   private toolSearchEnabled: boolean;
+  private checkpointManager: FileCheckpointManager | null = null;
+  private promptCachingConfig: CacheControlConfig | undefined;
 
   constructor(opts: CodeOptions) {
     this.aiProvider = opts.aiProvider;
@@ -192,6 +202,14 @@ export class Code {
     this.toolResultBudgetConfig = opts.options?.toolResultBudget;
     this.reactiveCompactConfig = opts.options?.reactiveCompact;
     this.toolSearchEnabled = opts.options?.toolSearch ?? false;
+    this.promptCachingConfig = opts.options?.promptCaching;
+
+    if (opts.options?.checkpoint?.enabled) {
+      this.checkpointManager = new FileCheckpointManager(
+        this.fs,
+        opts.options.checkpoint,
+      );
+    }
   }
 
   private async getSkills(): Promise<SkillDefinition[]> {
@@ -260,6 +278,9 @@ export class Code {
           costTracker: this.costTracker ?? undefined,
           tracer: this.tracer,
           memory: this.memoryConfig,
+          checkpointManager: this.checkpointManager ?? undefined,
+          promptCachingEnabled: this.promptCachingConfig?.enabled ?? false,
+          skipCacheWrite: true,
         },
         { cwd: parentCwd },
       );
@@ -311,6 +332,9 @@ export class Code {
         tracer: this.tracer,
         memory: this.memoryConfig,
         toolSearchEnabled: this.toolSearchEnabled,
+        checkpointManager: this.checkpointManager ?? undefined,
+        promptCachingEnabled: this.promptCachingConfig?.enabled ?? false,
+        mcpToolNames: this.mcpToolNames.size > 0 ? this.mcpToolNames : undefined,
       },
       {
         ...opts,
@@ -328,6 +352,19 @@ export class Code {
   }
 
   /**
+   * Create a thread that resumes an existing session. Automatically restores
+   * messages (respecting compact boundaries), file checkpoint state, and
+   * cost tracking state from the persisted JSONL transcript.
+   */
+  resumeThread(sessionId: string, opts?: Omit<ThreadOptions, "sessionId" | "resume">): Thread {
+    return this.createThread({
+      ...opts,
+      sessionId,
+      resume: true,
+    });
+  }
+
+  /**
    * Pre-resolve skills from paths and connect to MCP servers.
    * Call this once after construction if using skillsPaths or mcpServers,
    * so that createThread() has skills and MCP tools available synchronously.
@@ -339,6 +376,7 @@ export class Code {
       tasks.push(
         this.mcpManager.connect().then(async () => {
           this.mcpTools = await this.mcpManager!.getTools();
+          this.mcpToolNames = new Set(this.mcpTools.map((t) => t.name));
         }),
       );
     }

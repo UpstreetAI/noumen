@@ -36,6 +36,10 @@ export const writeFileTool: Tool = {
     const content = args.content as string;
 
     try {
+      if (ctx.checkpointManager && ctx.currentMessageId) {
+        await ctx.checkpointManager.trackEdit(filePath, ctx.currentMessageId, ctx.sessionId ?? "");
+      }
+
       const existed = await ctx.fs.exists(filePath);
       await ctx.fs.writeFile(filePath, content);
 

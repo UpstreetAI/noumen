@@ -93,6 +93,12 @@ export interface ChatParams {
   thinking?: ThinkingConfig;
   /** Constrain the model to produce structured output matching this schema. */
   outputFormat?: OutputFormat;
+  /**
+   * When true, the provider should place the cache breakpoint on the
+   * second-to-last message instead of the last. Used by subagent forks
+   * to avoid writing fork-only tails into the shared prompt cache.
+   */
+  skipCacheWrite?: boolean;
 }
 
 export interface AIProvider {

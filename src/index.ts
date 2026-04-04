@@ -390,3 +390,38 @@ export {
   extractMemories,
   type ExtractMemoriesResult,
 } from "./memory/extraction.js";
+
+// File Checkpointing
+export type {
+  FileCheckpointBackup,
+  FileCheckpointSnapshot,
+  FileCheckpointState,
+  CheckpointConfig,
+  DiffStats,
+} from "./checkpoint/types.js";
+export { createCheckpointState } from "./checkpoint/types.js";
+export { FileCheckpointManager } from "./checkpoint/manager.js";
+
+// Prompt Caching
+export type {
+  CacheScope,
+  CacheControlConfig,
+} from "./providers/cache.js";
+export {
+  sortToolDefinitionsForCache,
+  getMessageCacheBreakpointIndex,
+} from "./providers/cache.js";
+export type { CacheSafeParams } from "./providers/cache-safe-params.js";
+export {
+  saveCacheSafeParams,
+  getLastCacheSafeParams,
+  createCacheSafeParams,
+} from "./providers/cache-safe-params.js";
+
+// Session Resume
+export type { ResumePayload } from "./session/resume.js";
+export { restoreSession } from "./session/resume.js";
+export type { StoredCostState } from "./cost/tracker.js";
+
+// New session types
+export type { FileCheckpointEntry } from "./session/types.js";

@@ -2,6 +2,7 @@ import type { UUID } from "../utils/uuid.js";
 import type { ChatCompletionUsage } from "../providers/types.js";
 import type { CostSummary } from "../cost/types.js";
 import type { MemoryEntry } from "../memory/types.js";
+import type { FileCheckpointSnapshot } from "../checkpoint/types.js";
 
 // --- Chat message types (OpenAI-compatible format) ---
 
@@ -62,7 +63,8 @@ export type EntryType =
   | "compact-boundary"
   | "summary"
   | "custom-title"
-  | "metadata";
+  | "metadata"
+  | "file-checkpoint";
 
 export interface MessageEntry {
   type: "message";
@@ -112,13 +114,23 @@ export interface ToolResultOverflowEntry {
   originalContent: string;
 }
 
+export interface FileCheckpointEntry {
+  type: "file-checkpoint";
+  sessionId: string;
+  timestamp: string;
+  messageId: string;
+  snapshot: FileCheckpointSnapshot;
+  isSnapshotUpdate: boolean;
+}
+
 export type Entry =
   | MessageEntry
   | CompactBoundaryEntry
   | SummaryEntry
   | CustomTitleEntry
   | MetadataEntry
-  | ToolResultOverflowEntry;
+  | ToolResultOverflowEntry
+  | FileCheckpointEntry;
 
 export interface SessionInfo {
   sessionId: string;
@@ -215,7 +227,9 @@ export type StreamEvent =
       created: MemoryEntry[];
       updated: MemoryEntry[];
       deleted: string[];
-    };
+    }
+  | { type: "session_resumed"; sessionId: string; messageCount: number }
+  | { type: "checkpoint_snapshot"; messageId: string };
 
 export interface RunOptions {
   signal?: AbortSignal;

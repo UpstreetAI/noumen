@@ -5,11 +5,15 @@ import type {
   ChatStreamChunk,
 } from "./types.js";
 import type { ChatMessage } from "../session/types.js";
+import type { CacheControlConfig } from "./cache.js";
+import { getMessageCacheBreakpointIndex } from "./cache.js";
 
 export interface AnthropicProviderOptions {
   apiKey: string;
   baseURL?: string;
   model?: string;
+  /** When enabled, injects cache_control markers on system prompt, tools, and messages. */
+  cacheControl?: CacheControlConfig;
 }
 
 interface AnthropicToolUseBlock {
@@ -19,9 +23,16 @@ interface AnthropicToolUseBlock {
   input: Record<string, unknown>;
 }
 
+type CacheControlBlock = {
+  type: "ephemeral";
+  ttl?: "1h";
+  scope?: "global" | "org";
+};
+
 export class AnthropicProvider implements AIProvider {
   private client: Anthropic;
   private defaultModel: string;
+  private cacheConfig: CacheControlConfig | undefined;
 
   constructor(opts: AnthropicProviderOptions) {
     this.client = new Anthropic({
@@ -29,19 +40,28 @@ export class AnthropicProvider implements AIProvider {
       baseURL: opts.baseURL,
     });
     this.defaultModel = opts.model ?? "claude-sonnet-4-20250514";
+    this.cacheConfig = opts.cacheControl;
+  }
+
+  private buildCacheControl(): CacheControlBlock {
+    const cc: CacheControlBlock = { type: "ephemeral" };
+    if (this.cacheConfig?.ttl) cc.ttl = this.cacheConfig.ttl;
+    if (this.cacheConfig?.scope) cc.scope = this.cacheConfig.scope;
+    return cc;
+  }
+
+  private get cachingEnabled(): boolean {
+    return this.cacheConfig?.enabled === true;
   }
 
   async *chat(params: ChatParams): AsyncIterable<ChatStreamChunk> {
     const { system, messages: inputMessages } = this.convertMessages(
       params.system,
       params.messages,
+      params.skipCacheWrite,
     );
 
-    const tools = params.tools?.map((t) => ({
-      name: t.function.name,
-      description: t.function.description,
-      input_schema: t.function.parameters as Anthropic.Messages.Tool["input_schema"],
-    }));
+    const tools = this.buildTools(params);
 
     const thinkingEnabled =
       params.thinking?.type === "enabled" &&
@@ -192,6 +212,25 @@ export class AnthropicProvider implements AIProvider {
     }
   }
 
+  private buildTools(
+    params: ChatParams,
+  ): Anthropic.Messages.Tool[] | undefined {
+    if (!params.tools) return undefined;
+
+    const tools = params.tools.map((t) => ({
+      name: t.function.name,
+      description: t.function.description,
+      input_schema: t.function.parameters as Anthropic.Messages.Tool["input_schema"],
+    }));
+
+    if (this.cachingEnabled && tools.length > 0) {
+      const lastTool = tools[tools.length - 1] as Record<string, unknown>;
+      lastTool.cache_control = this.buildCacheControl();
+    }
+
+    return tools;
+  }
+
   private makeChunk(
     id: string,
     model: string,
@@ -210,22 +249,61 @@ export class AnthropicProvider implements AIProvider {
     };
   }
 
+  /**
+   * Build the system prompt for the API call, optionally with cache_control.
+   */
+  private buildSystemBlocks(
+    systemPrompt: string | undefined,
+  ): Anthropic.Messages.TextBlockParam[] | string | undefined {
+    if (!systemPrompt) return undefined;
+
+    if (!this.cachingEnabled) return systemPrompt;
+
+    const block = {
+      type: "text" as const,
+      text: systemPrompt,
+      cache_control: this.buildCacheControl(),
+    };
+    return [block as unknown as Anthropic.Messages.TextBlockParam];
+  }
+
   private convertMessages(
     systemPrompt: string | undefined,
     messages: ChatMessage[],
+    skipCacheWrite?: boolean,
   ): {
-    system: string | undefined;
+    system: Anthropic.Messages.TextBlockParam[] | string | undefined;
     messages: Anthropic.Messages.MessageParam[];
   } {
     const result: Anthropic.Messages.MessageParam[] = [];
 
-    for (const msg of messages) {
+    const cacheBreakpointIdx = this.cachingEnabled
+      ? getMessageCacheBreakpointIndex(messages, skipCacheWrite)
+      : -1;
+
+    for (let mi = 0; mi < messages.length; mi++) {
+      const msg = messages[mi];
+      const addCache = mi === cacheBreakpointIdx;
+
       if (msg.role === "system") {
         continue;
       }
 
       if (msg.role === "user") {
-        result.push({ role: "user", content: msg.content });
+        if (addCache && this.cachingEnabled) {
+          result.push({
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: msg.content,
+                cache_control: this.buildCacheControl(),
+              } as Anthropic.Messages.TextBlockParam,
+            ],
+          });
+        } else {
+          result.push({ role: "user", content: msg.content });
+        }
       } else if (msg.role === "assistant") {
         const content: Anthropic.Messages.ContentBlockParam[] = [];
         if (msg.content) {
@@ -241,21 +319,30 @@ export class AnthropicProvider implements AIProvider {
             });
           }
         }
+
+        if (addCache && this.cachingEnabled && content.length > 0) {
+          const lastBlock = content[content.length - 1] as unknown as Record<string, unknown>;
+          lastBlock.cache_control = this.buildCacheControl();
+        }
+
         result.push({ role: "assistant", content });
       } else if (msg.role === "tool") {
+        const toolResultBlock = {
+          type: "tool_result" as const,
+          tool_use_id: msg.tool_call_id,
+          content: msg.content,
+          ...(addCache && this.cachingEnabled
+            ? { cache_control: this.buildCacheControl() }
+            : {}),
+        };
+
         result.push({
           role: "user",
-          content: [
-            {
-              type: "tool_result",
-              tool_use_id: msg.tool_call_id,
-              content: msg.content,
-            },
-          ],
+          content: [toolResultBlock as unknown as Anthropic.Messages.ToolResultBlockParam],
         });
       }
     }
 
-    return { system: systemPrompt, messages: result };
+    return { system: this.buildSystemBlocks(systemPrompt), messages: result };
   }
 }
