@@ -103,6 +103,28 @@ When `toolSearch` is enabled, tools marked as deferred (MCP tools by default, pl
 
 When `streamingToolExecution` is enabled, the agent begins executing concurrency-safe tools as soon as their arguments finish streaming from the model, rather than waiting for the model's entire response to complete. This can reduce latency when the model requests multiple independent tool calls in a single turn. It's off by default because it changes execution ordering: tools may start running while the model is still generating, which can be surprising if you rely on observing the full model response before side-effects occur.
 
+### File state cache (read-before-edit)
+
+The file state cache tracks which files the model has read and enforces that it must read a file before editing it. When enabled, `EditFile` and `WriteFile` will reject edits to files the model hasn't seen via `ReadFile`, preventing hallucinated edits on unseen content.
+
+```typescript
+options: {
+  fileStateCache: {
+    enabled: true,
+    maxEntries: 100,                  // max cached file entries (default)
+    maxBytes: 25 * 1024 * 1024,      // 25 MB total cache size (default)
+  },
+}
+```
+
+The cache is an LRU store that records file contents and modification times at the point of each read. This is opt-in because it introduces a hard constraint on tool execution order — the model must explicitly read every file it wants to edit, which can cause edit attempts to fail if the model skips the read step. Without this option, edits proceed unconditionally.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | `boolean` | — | Enable read-before-edit enforcement |
+| `maxEntries` | `number` | `100` | Maximum number of file entries in the cache |
+| `maxBytes` | `number` | `26_214_400` (25 MB) | Maximum total cached content size in bytes |
+
 ## How tools work
 
 During an agent run, the model can request tool calls. The Thread's agent loop:

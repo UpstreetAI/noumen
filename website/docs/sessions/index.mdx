@@ -87,6 +87,41 @@ When auto-compaction triggers, the thread emits `compact_start` and `compact_com
 3. The summary replaces the old messages in the thread's memory
 4. On resume, only messages after the last boundary are loaded
 
+## File checkpointing
+
+File checkpointing snapshots every file the agent edits, so you can roll back to any earlier point in the conversation. Before each user turn, the system creates a snapshot of all tracked files. When the agent writes or edits a file for the first time, it's added to the tracking set and its pre-edit contents are backed up.
+
+```typescript
+const code = new Agent({
+  provider,
+  sandbox,
+  options: {
+    checkpoint: {
+      enabled: true,
+      maxSnapshots: 100,                    // max retained snapshots (default)
+      backupDir: ".noumen/checkpoints",     // where backups are stored (default)
+    },
+  },
+});
+```
+
+This is opt-in because it copies every edited file to disk before mutation, which increases write I/O and storage usage proportional to the number and size of files the agent edits. For large files or high-frequency edits this overhead can be significant.
+
+### CheckpointConfig
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | `boolean` | — | Enable file checkpointing |
+| `maxSnapshots` | `number` | `100` | Maximum snapshots to retain before evicting the oldest |
+| `backupDir` | `string` | `".noumen/checkpoints"` | Base directory for backup files |
+
+### How it works
+
+1. At the start of each user turn, a snapshot is created for all currently tracked files
+2. When a file is first written or edited, it's added to the tracking set and its current contents are backed up
+3. Backups are versioned per file — only changed files produce new backup copies
+4. To roll back, call `checkpointManager.rewind(messageId, sessionId)` to restore all tracked files to a previous snapshot
+
 ## JSONL format
 
 Each line in the session file is a JSON object with a `type` field:

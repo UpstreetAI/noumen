@@ -86,3 +86,31 @@ for await (const event of thread.run("...")) {
   }
 }
 ```
+
+## Prompt caching
+
+Prompt caching reduces cost and latency by enabling providers to cache and reuse the prefix of each request. When enabled, noumen sorts tool definitions into a deterministic order and injects `cache_control` breakpoints into messages so that the provider can serve the shared prefix from cache on subsequent requests.
+
+```typescript
+const code = new Agent({
+  provider,
+  sandbox,
+  options: {
+    promptCaching: {
+      enabled: true,
+      ttl: "1h",       // cache TTL (optional)
+      scope: "global",  // "global" or "org" (optional)
+    },
+  },
+});
+```
+
+This is opt-in because it changes the order of tool definitions sent to the provider (sorted alphabetically with built-in tools first, MCP tools second) and adds `cache_control` markers to messages. These changes are invisible to the model but can affect behavior if you're comparing raw API payloads or relying on a specific tool ordering. Prompt caching is only effective with providers that support it (Anthropic, some OpenAI models).
+
+### CacheControlConfig
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | `boolean` | — | Enable prompt caching |
+| `ttl` | `"1h"` | — | Cache time-to-live hint for the provider |
+| `scope` | `"global" \| "org"` | — | Cache sharing scope |

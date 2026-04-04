@@ -5,6 +5,10 @@ description: Automatically load project instructions from NOUMEN.md and CLAUDE.m
 
 Project context files give your agent persistent, per-project instructions that are loaded into the system prompt automatically. This is the same concept as `CLAUDE.md` — and noumen supports `CLAUDE.md` natively — but also recognizes `NOUMEN.md` as its own convention. Both formats work, and both can coexist in the same project.
 
+## Why opt-in?
+
+Project context loading scans the filesystem at startup — walking from the working directory up to the filesystem root, plus user home and managed directories — to discover instruction files. This adds initialization latency and injects content into the system prompt that increases token usage on every request. If your project doesn't have `NOUMEN.md` or `CLAUDE.md` files, this work is wasted. Keeping it opt-in means you only pay the scan and prompt overhead when you've actually set up project instructions.
+
 ## Quick start
 
 1. Create a `NOUMEN.md` (or `CLAUDE.md`) in your project root:

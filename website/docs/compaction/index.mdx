@@ -1,9 +1,9 @@
 ---
 title: Compaction
-description: Manage context window usage with auto-compact, microcompact, tool-result budgets, and reactive compaction strategies.
+description: Manage context window usage with auto-compact, microcompact, tool-result budgets, disk-backed storage, history snip, and reactive compaction strategies.
 ---
 
-Long agent sessions accumulate messages that can exceed the model's context window. noumen provides multiple compaction strategies that work together to keep conversations within limits while preserving important context.
+Long agent sessions accumulate messages that can exceed the model's context window. noumen provides multiple compaction strategies that work together to keep conversations within limits while preserving important context. All of these are opt-in because they alter what the model sees in its conversation history — you should enable the ones that match your session length and context budget.
 
 ## Manual compaction
 
@@ -88,12 +88,60 @@ interface CompactOptions {
 }
 ```
 
+## Tool result storage
+
+Tool result storage offloads oversized tool outputs to disk instead of keeping them in the conversation history. When a single result exceeds a character threshold, the full content is written to the virtual filesystem and replaced in-memory with a compact stub containing a preview and a path to the persisted file. This prevents a single large `Grep` or `Bash` output from consuming the entire context window, while still preserving the full data on disk for session resume.
+
+```typescript
+options: {
+  toolResultStorage: {
+    enabled: true,
+    defaultThreshold: 50_000,   // spill results larger than 50k chars (default)
+    perToolThresholds: {
+      ReadFile: Infinity,       // never spill ReadFile results
+    },
+    previewChars: 2_000,        // chars to keep in the replacement stub (default)
+    perMessageBudget: 200_000,  // aggregate budget per assistant turn (default)
+    storageDir: ".noumen/tool-results", // where persisted results are stored (default)
+  },
+}
+```
+
+This is opt-in because it writes files to the sandbox filesystem and replaces what the model sees — results that were previously kept in full are now truncated previews. The model can still reason about the preview, but may miss details from the truncated portion.
+
+### ToolResultStorageConfig
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | `boolean` | — | Enable disk-backed storage |
+| `storageDir` | `string` | `".noumen/tool-results"` | Directory for persisted result files |
+| `defaultThreshold` | `number` | `50_000` | Character threshold before spilling a single result |
+| `perToolThresholds` | `Record<string, number>` | — | Per-tool overrides (`Infinity` to never spill) |
+| `previewChars` | `number` | `2_000` | Characters to keep as preview in the replacement stub |
+| `perMessageBudget` | `number` | `200_000` | Aggregate character budget for all tool results in a single assistant turn |
+
+## History snip
+
+History snip removes specific message ranges from the middle of the conversation — unlike prefix compaction which summarizes and removes the oldest messages. Snipped messages stay in the JSONL transcript on disk but are filtered out when the conversation is loaded, and parent pointers are relinked across gaps so the message chain stays intact.
+
+```typescript
+options: {
+  historySnip: {
+    enabled: true,
+  },
+}
+```
+
+This is opt-in because removing messages from the middle of a conversation is a lossy operation — the model loses context about intermediate steps. It's useful for very long sessions where middle turns become irrelevant but the beginning (system context) and recent turns (current task) should be preserved.
+
 ## How strategies compose
 
 The strategies run at different points in the agent loop:
 
 1. **Tool result budget** — applied immediately when tool results arrive
-2. **Microcompact** — runs before each provider call to clear stale results
-3. **Auto-compact** — runs before each provider call if token threshold is exceeded
-4. **Reactive compact** — runs after a context overflow error from the provider
-5. **Manual compact** — triggered by the consumer via `thread.compact()`
+2. **Tool result storage** — spills oversized results to disk before the next provider call
+3. **Microcompact** — runs before each provider call to clear stale results
+4. **Auto-compact** — runs before each provider call if token threshold is exceeded
+5. **History snip** — removes specific middle-range messages when triggered
+6. **Reactive compact** — runs after a context overflow error from the provider
+7. **Manual compact** — triggered by the consumer via `thread.compact()`
