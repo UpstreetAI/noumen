@@ -14,9 +14,9 @@ const FEATURES = [
   },
   {
     icon: "💻",
-    title: "Four sandbox backends",
+    title: "Five sandbox backends",
     description:
-      "Local Node.js, sprites.dev containers, Docker, or E2B cloud. Swap one line to move from zero isolation to a fully sandboxed remote environment.",
+      "LocalSandbox (OS-level via sandbox-runtime), UnsandboxedLocal for raw host access, sprites.dev, Docker, or E2B cloud. Swap one line to change the isolation boundary.",
   },
   {
     icon: "🔌",

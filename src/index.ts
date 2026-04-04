@@ -48,14 +48,17 @@ export type { OllamaProviderOptions } from "./providers/ollama.js";
 // Sandbox (bundled VirtualFs + VirtualComputer)
 export {
   LocalSandbox,
+  UnsandboxedLocal,
   SpritesSandbox,
   DockerSandbox,
   E2BSandbox,
   type Sandbox,
   type LocalSandboxOptions,
+  type UnsandboxedLocalOptions,
   type SpritesSandboxOptions,
   type DockerSandboxOptions,
   type E2BSandboxOptions,
+  type SandboxConfig,
 } from "./virtual/sandbox.js";
 
 // Virtual infrastructure (sandboxing primitives)
@@ -77,6 +80,10 @@ export {
   LocalComputer,
   type LocalComputerOptions,
 } from "./virtual/local-computer.js";
+export {
+  SandboxedLocalComputer,
+  type SandboxedLocalComputerOptions,
+} from "./virtual/sandboxed-local-computer.js";
 export { SpritesFs, type SpritesFsOptions } from "./virtual/sprites-fs.js";
 export {
   SpritesComputer,

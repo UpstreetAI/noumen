@@ -54,6 +54,8 @@ describe("Agent.diagnose()", () => {
     expect(result.provider.ok).toBe(true);
     expect(result.sandbox.fs.ok).toBe(true);
     expect(result.sandbox.computer.ok).toBe(true);
+    expect(result.sandboxRuntime).toBeDefined();
+    expect(result.sandboxRuntime.platform).toBe(process.platform);
     expect(result.mcp).toEqual({});
     expect(result.lsp).toEqual({});
   });

@@ -2,7 +2,7 @@ import type { AIProvider, OutputFormat, ChatCompletionUsage } from "./providers/
 import type { ProviderName } from "./providers/resolve.js";
 import type { VirtualFs } from "./virtual/fs.js";
 import type { VirtualComputer } from "./virtual/computer.js";
-import { LocalSandbox, type Sandbox } from "./virtual/sandbox.js";
+import { UnsandboxedLocal, type Sandbox } from "./virtual/sandbox.js";
 import type { StreamEvent, RunOptions, ToolResult, ContentPart } from "./session/types.js";
 import type { SkillDefinition } from "./skills/types.js";
 import type { Tool, SubagentConfig, SubagentRun } from "./tools/types.js";
@@ -58,6 +58,7 @@ export interface DiagnoseResult {
   overall: boolean;
   provider: DiagnoseCheckResult & { model?: string };
   sandbox: { fs: DiagnoseCheckResult; computer: DiagnoseCheckResult };
+  sandboxRuntime: DiagnoseCheckResult & { platform?: string };
   mcp: Record<string, DiagnoseCheckResult & { status?: string; toolCount?: number }>;
   lsp: Record<string, DiagnoseCheckResult & { state?: string }>;
   timestamp: string;
@@ -73,18 +74,21 @@ export interface AgentOptions {
   provider: AIProvider | ProviderName;
 
   /**
-   * Working directory. When set without an explicit `sandbox`, a
-   * `LocalSandbox({ cwd })` is created automatically.
+   * Working directory. When set without an explicit `sandbox`, an
+   * `UnsandboxedLocal({ cwd })` is created automatically.
    */
   cwd?: string;
 
   /**
    * Bundled sandbox providing both filesystem and shell execution.
-   * Use `LocalSandbox()` for unsandboxed local development,
-   * `SpritesSandbox()` for isolated remote containers, or pass any
-   * `{ fs: VirtualFs; computer: VirtualComputer }` for custom sandboxes.
+   * Use `LocalSandbox()` for OS-level sandboxing (requires
+   * `@anthropic-ai/sandbox-runtime`), `UnsandboxedLocal()` for raw host
+   * access, `SpritesSandbox()` for isolated remote containers, or pass
+   * any `{ fs: VirtualFs; computer: VirtualComputer }` for custom sandboxes.
    *
-   * Defaults to `LocalSandbox({ cwd })` when omitted.
+   * Defaults to `UnsandboxedLocal({ cwd })` when omitted — the library
+   * default is non-sandboxed for backward compatibility. The CLI defaults
+   * to `LocalSandbox()` when sandbox-runtime is available.
    */
   sandbox?: Sandbox;
 
@@ -227,7 +231,7 @@ export class Agent {
     }
 
     const effectiveCwd = opts.cwd ?? opts.options?.cwd ?? process.cwd();
-    const resolvedSandbox = opts.sandbox ?? LocalSandbox({ cwd: effectiveCwd });
+    const resolvedSandbox = opts.sandbox ?? UnsandboxedLocal({ cwd: effectiveCwd });
 
     this.fs = resolvedSandbox.fs;
     this.computer = resolvedSandbox.computer;
@@ -688,6 +692,34 @@ export class Agent {
       computerCheck = { ok: false, latencyMs: 0, error: fail(err) };
     }
 
+    // --- Sandbox Runtime (OS-level sandboxing) ------------------------------
+    let sandboxRuntimeCheck: DiagnoseResult["sandboxRuntime"];
+    try {
+      const srt = await import("@anthropic-ai/sandbox-runtime");
+      const supported = srt.SandboxManager.isSupportedPlatform();
+      const deps = srt.SandboxManager.checkDependencies();
+      if (supported && deps.satisfied) {
+        sandboxRuntimeCheck = { ok: true, latencyMs: 0, platform: process.platform };
+      } else {
+        const reasons: string[] = [];
+        if (!supported) reasons.push(`platform ${process.platform} not supported`);
+        if (!deps.satisfied && deps.missing) reasons.push(`missing: ${deps.missing.join(", ")}`);
+        sandboxRuntimeCheck = {
+          ok: false,
+          latencyMs: 0,
+          warning: reasons.join("; "),
+          platform: process.platform,
+        };
+      }
+    } catch {
+      sandboxRuntimeCheck = {
+        ok: false,
+        latencyMs: 0,
+        warning: "Not installed. Run: npm install @anthropic-ai/sandbox-runtime",
+        platform: process.platform,
+      };
+    }
+
     // --- MCP servers -------------------------------------------------------
     const mcpResults: DiagnoseResult["mcp"] = {};
     if (this.mcpManager) {
@@ -730,6 +762,7 @@ export class Agent {
       overall,
       provider: providerCheck,
       sandbox: { fs: fsCheck, computer: computerCheck },
+      sandboxRuntime: sandboxRuntimeCheck,
       mcp: mcpResults,
       lsp: lspResults,
       timestamp: new Date().toISOString(),

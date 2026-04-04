@@ -1,6 +1,6 @@
 import { Agent } from "./agent.js";
 import type { AIProvider } from "./providers/types.js";
-import { LocalSandbox, type Sandbox } from "./virtual/sandbox.js";
+import { UnsandboxedLocal, type Sandbox } from "./virtual/sandbox.js";
 import type { HookDefinition } from "./hooks/types.js";
 import type { McpServerConfig } from "./mcp/types.js";
 
@@ -11,7 +11,7 @@ export interface PresetOptions {
   cwd?: string;
   /** Model name override. Each preset has a sensible default. */
   model?: string;
-  /** Custom sandbox. Defaults to `LocalSandbox({ cwd })`. */
+  /** Custom sandbox. Defaults to `UnsandboxedLocal({ cwd })`. */
   sandbox?: Sandbox;
   /** Extra hooks to attach. */
   hooks?: HookDefinition[];
@@ -29,7 +29,7 @@ export function codingAgent(opts: PresetOptions): Agent {
   const cwd = opts.cwd ?? process.cwd();
   return new Agent({
     provider: opts.provider,
-    sandbox: opts.sandbox ?? LocalSandbox({ cwd }),
+    sandbox: opts.sandbox ?? UnsandboxedLocal({ cwd }),
     options: {
       cwd,
       model: opts.model,
@@ -56,7 +56,7 @@ export function planningAgent(opts: PresetOptions): Agent {
   const cwd = opts.cwd ?? process.cwd();
   return new Agent({
     provider: opts.provider,
-    sandbox: opts.sandbox ?? LocalSandbox({ cwd }),
+    sandbox: opts.sandbox ?? UnsandboxedLocal({ cwd }),
     options: {
       cwd,
       model: opts.model,
@@ -83,7 +83,7 @@ export function reviewAgent(opts: PresetOptions): Agent {
   const cwd = opts.cwd ?? process.cwd();
   return new Agent({
     provider: opts.provider,
-    sandbox: opts.sandbox ?? LocalSandbox({ cwd }),
+    sandbox: opts.sandbox ?? UnsandboxedLocal({ cwd }),
     options: {
       cwd,
       model: opts.model,

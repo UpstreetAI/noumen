@@ -57,6 +57,12 @@ const ROWS: AdapterRow[] = [
         code: 'LocalSandbox({ cwd: "/my/project" })',
       },
       {
+        id: "unsandboxed",
+        name: "Unsandboxed",
+        importName: "UnsandboxedLocal",
+        code: 'UnsandboxedLocal({ cwd: "/my/project" })',
+      },
+      {
         id: "sprites",
         name: "Sprites",
         importName: "SpritesSandbox",

@@ -8,7 +8,7 @@ import { startRepl } from "./repl.js";
 import { renderEvent, createRenderState, promptPermission } from "./render.js";
 import { runInit } from "./init.js";
 import * as os from "node:os";
-import { Agent, LocalSandbox, type DiagnoseResult, type DiagnoseCheckResult } from "../index.js";
+import { Agent, LocalSandbox, UnsandboxedLocal, type Sandbox, type DiagnoseResult, type DiagnoseCheckResult } from "../index.js";
 import type { ThinkingConfig } from "../thinking/types.js";
 import type { PermissionMode } from "../permissions/types.js";
 
@@ -39,6 +39,46 @@ function parseThinking(level: string | undefined): ThinkingConfig | undefined {
   return undefined;
 }
 
+/**
+ * Try to create a sandboxed LocalSandbox. Falls back to UnsandboxedLocal
+ * with a warning when sandbox-runtime is not installed.
+ */
+function createCliSandbox(config: MergedConfig): Sandbox {
+  if (config.noSandbox) {
+    return UnsandboxedLocal({ cwd: config.cwd });
+  }
+
+  try {
+    require.resolve("@anthropic-ai/sandbox-runtime");
+  } catch {
+    process.stderr.write(
+      chalk.yellow("  ⚠ @anthropic-ai/sandbox-runtime not installed — running without OS sandbox.\n") +
+        chalk.dim("    Install it for local sandboxing: npm install @anthropic-ai/sandbox-runtime\n\n"),
+    );
+    return UnsandboxedLocal({ cwd: config.cwd });
+  }
+
+  const sandboxOpts: import("../index.js").LocalSandboxOptions = {
+    cwd: config.cwd,
+  };
+
+  const allowWrite = config.sandboxAllowWrite
+    ? (config.sandboxAllowWrite as string).split(",").map((s: string) => s.trim())
+    : undefined;
+  const allowDomains = config.sandboxAllowDomain
+    ? (config.sandboxAllowDomain as string).split(",").map((s: string) => s.trim())
+    : undefined;
+
+  if (allowWrite || allowDomains) {
+    sandboxOpts.sandbox = {
+      filesystem: allowWrite ? { allowWrite: [config.cwd, ...allowWrite] } : undefined,
+      network: allowDomains ? { allowedDomains: allowDomains } : undefined,
+    };
+  }
+
+  return LocalSandbox(sandboxOpts);
+}
+
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) {
@@ -63,6 +103,9 @@ async function main(): Promise<void> {
     .option("--quiet", "only output final text")
     .option("--verbose", "show tool calls and thinking")
     .option("--headless", "NDJSON stdin/stdout protocol for programmatic control")
+    .option("--no-sandbox", "disable OS-level sandboxing (use UnsandboxedLocal)")
+    .option("--sandbox-allow-write <paths>", "comma-separated paths to allow writing in sandbox")
+    .option("--sandbox-allow-domain <domains>", "comma-separated domains to allow in sandbox")
     .option("-c, --prompt <text>", "one-shot prompt (non-interactive)")
     .argument("[prompt...]", "inline prompt")
     .allowExcessArguments(true)
@@ -218,7 +261,7 @@ async function runAgent(config: MergedConfig): Promise<void> {
 
   const agent = new Agent({
     provider: provider,
-    sandbox: LocalSandbox({ cwd: config.cwd }),
+    sandbox: createCliSandbox(config),
     options: {
       cwd: config.cwd,
       model: config.model,
@@ -317,7 +360,7 @@ async function listSessions(): Promise<void> {
 
   const agent = new Agent({
     provider: provider,
-    sandbox: LocalSandbox({ cwd }),
+    sandbox: UnsandboxedLocal({ cwd }),
     options: { cwd, sessionDir: merged.sessionDir ?? ".noumen/sessions" },
   });
 
@@ -358,7 +401,7 @@ async function resumeSession(sessionId: string): Promise<void> {
 
   const agent = new Agent({
     provider: provider,
-    sandbox: LocalSandbox({ cwd }),
+    sandbox: createCliSandbox(merged),
     options: {
       cwd,
       model: merged.model,
@@ -448,7 +491,7 @@ async function runDoctor(): Promise<void> {
 
   const agent = new Agent({
     provider: provider,
-    sandbox: LocalSandbox({ cwd }),
+    sandbox: createCliSandbox(merged),
     options: {
       cwd,
       model: merged.model,
@@ -481,6 +524,11 @@ function printDiagnoseResult(r: DiagnoseResult): void {
   process.stderr.write(formatCheckLine(`Provider${modelLabel}`, r.provider));
   process.stderr.write(formatCheckLine("Sandbox: filesystem", r.sandbox.fs));
   process.stderr.write(formatCheckLine("Sandbox: shell", r.sandbox.computer));
+  process.stderr.write(formatCheckLine(
+    "Sandbox: OS-level (sandbox-runtime)",
+    r.sandboxRuntime,
+    r.sandboxRuntime.platform,
+  ));
 
   for (const [name, check] of Object.entries(r.mcp)) {
     const parts: string[] = [];

@@ -92,6 +92,9 @@ Options:
   --permission <mode>      Permission mode (default, plan, acceptEdits, auto, bypassPermissions, dontAsk)
   --thinking <level>       off | low | medium | high
   --max-turns <n>          Max agent turns
+  --no-sandbox                       Disable OS-level sandboxing (use UnsandboxedLocal)
+  --sandbox-allow-write <paths>      Comma-separated paths allowed for writes in addition to cwd (LocalSandbox)
+  --sandbox-allow-domain <domains>   Comma-separated domains allowed for network access in the sandbox
   --json                   Emit JSONL stream events to stdout
   --quiet                  Only output final text
   --verbose                Show tool calls and thinking

@@ -84,6 +84,9 @@ export interface MergedConfig extends CliConfig {
   verbose?: boolean;
   headless?: boolean;
   prompt?: string;
+  noSandbox?: boolean;
+  sandboxAllowWrite?: string;
+  sandboxAllowDomain?: string;
 }
 
 /**
@@ -110,5 +113,8 @@ export function mergeConfig(
     verbose: flags.verbose as boolean | undefined,
     headless: flags.headless as boolean | undefined,
     prompt: flags.prompt as string | undefined,
+    noSandbox: flags.sandbox === false ? true : undefined,
+    sandboxAllowWrite: flags.sandboxAllowWrite as string | undefined,
+    sandboxAllowDomain: flags.sandboxAllowDomain as string | undefined,
   };
 }

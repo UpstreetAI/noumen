@@ -12,11 +12,15 @@ interface Sandbox {
 }
 ```
 
-noumen ships four sandbox factories. You can also implement your own.
+noumen ships five sandbox factories. You can also implement your own.
 
-## LocalSandbox — no isolation
+## LocalSandbox — OS-level sandboxing
 
-Backed by `node:fs/promises` and `node:child_process`. Use for local development and trusted environments:
+Uses `@anthropic-ai/sandbox-runtime` to wrap every shell command with OS-level restrictions. On macOS this uses Seatbelt (`sandbox-exec`); on Linux it uses bubblewrap (`bwrap`) + socat.
+
+```bash
+pnpm add @anthropic-ai/sandbox-runtime
+```
 
 ```typescript
 import { LocalSandbox } from "noumen";
@@ -24,8 +28,58 @@ import { LocalSandbox } from "noumen";
 const sandbox = LocalSandbox({ cwd: "/my/project" });
 ```
 
+Filesystem operations (`VirtualFs`) use the host `node:fs` — the sandbox boundary is enforced on shell commands (`VirtualComputer`), which is where the agent executes arbitrary code.
+
+### Customizing restrictions
+
+```typescript
+const sandbox = LocalSandbox({
+  cwd: "/my/project",
+  sandbox: {
+    filesystem: {
+      allowWrite: ["/my/project", "/tmp"],
+      denyRead: ["/etc/shadow", "~/.ssh"],
+    },
+    network: {
+      allowedDomains: ["api.openai.com", "registry.npmjs.org"],
+    },
+  },
+});
+```
+
+**Defaults:** writes allowed only in `cwd`, reads allowed everywhere, network unrestricted.
+
+### Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `cwd` | `string` | `process.cwd()` | Working directory for file operations and commands |
+| `defaultTimeout` | `number` | `30000` | Command timeout in milliseconds |
+| `sandbox.filesystem.allowWrite` | `string[]` | `[cwd]` | Paths the agent may write to |
+| `sandbox.filesystem.denyWrite` | `string[]` | `[]` | Paths to deny within allowed write regions |
+| `sandbox.filesystem.denyRead` | `string[]` | `[]` | Paths to deny reading |
+| `sandbox.filesystem.allowRead` | `string[]` | `[]` | Paths to re-allow within denied read regions |
+| `sandbox.network.allowedDomains` | `string[]` | `[]` | Domains the agent may reach |
+| `sandbox.network.deniedDomains` | `string[]` | `[]` | Domains to block |
+
+<Callout type="info" title="Platform requirements">
+  **macOS**: No extra dependencies — Seatbelt is built in.
+  **Linux**: Requires `bubblewrap` and `socat` (`apt install bubblewrap socat`).
+  **Windows**: Not supported natively — use WSL2.
+</Callout>
+
+## UnsandboxedLocal — no isolation
+
+Backed by `node:fs/promises` and `node:child_process` with no OS-level restrictions. The agent can access anything the host process can.
+
+```typescript
+import { UnsandboxedLocal } from "noumen";
+
+const sandbox = UnsandboxedLocal({ cwd: "/my/project" });
+```
+
 <Callout type="warn" title="No isolation">
-  `LocalSandbox` provides no sandboxing. The agent can access anything the host process can. Use it for development or environments where you trust the agent.
+  `UnsandboxedLocal` provides no sandboxing. Use it only for development or environments where you fully trust the agent. For production use, prefer `LocalSandbox`.
 </Callout>
 
 ### Options

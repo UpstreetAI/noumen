@@ -375,14 +375,39 @@ The CLI auto-detects a running Ollama server when no cloud API keys are set, so 
 
 A `Sandbox` bundles a `VirtualFs` (filesystem) and `VirtualComputer` (shell execution) into one object. Every file read/write and shell command the agent executes goes through these interfaces — swap the sandbox to control what the agent can access.
 
-### Local (Node.js) — no isolation
+### Local — OS-level sandboxing
 
-Backed by `fs/promises` and `child_process`. Use for local development and trusted environments:
+Backed by `@anthropic-ai/sandbox-runtime`. Uses macOS Seatbelt or Linux bubblewrap to restrict filesystem and network access at the OS level — no containers needed:
+
+```bash
+pnpm add @anthropic-ai/sandbox-runtime
+```
 
 ```typescript
 import { LocalSandbox } from "noumen";
 
 const sandbox = LocalSandbox({ cwd: "/my/project" });
+
+// Customize restrictions:
+const restricted = LocalSandbox({
+  cwd: "/my/project",
+  sandbox: {
+    filesystem: { denyRead: ["/etc/shadow"] },
+    network: { allowedDomains: ["api.openai.com"] },
+  },
+});
+```
+
+Defaults: writes allowed only in `cwd`, reads allowed everywhere, network unrestricted.
+
+### UnsandboxedLocal — no isolation
+
+Backed by `fs/promises` and `child_process` with no OS-level restrictions. Use for development or trusted environments:
+
+```typescript
+import { UnsandboxedLocal } from "noumen";
+
+const sandbox = UnsandboxedLocal({ cwd: "/my/project" });
 ```
 
 ### sprites.dev — full sandbox

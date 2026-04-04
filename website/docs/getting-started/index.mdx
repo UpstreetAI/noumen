@@ -126,7 +126,7 @@ Every noumen agent needs two things: an **AI provider** and a **sandbox**.
   <Step>
     ### Choose a sandbox
 
-    A sandbox bundles a filesystem and a shell into one object. All tool I/O routes through it. For local development, use the unsandboxed Node.js sandbox:
+    A sandbox bundles a filesystem and a shell into one object. All tool I/O routes through it. `LocalSandbox` uses OS-level sandboxing via `@anthropic-ai/sandbox-runtime`. For raw host access with no OS sandbox boundary, use `UnsandboxedLocal` instead.
 
     ```typescript
     import { LocalSandbox } from "noumen";
@@ -134,7 +134,7 @@ Every noumen agent needs two things: an **AI provider** and a **sandbox**.
     const sandbox = LocalSandbox({ cwd: "/path/to/your/project" });
     ```
 
-    For production or untrusted agents, swap in a sandboxed implementation like `SpritesSandbox` (remote containers), `DockerSandbox`, or `E2BSandbox`. See [Virtual Infrastructure](/docs/virtual).
+    For remote isolation or different environments, swap in `SpritesSandbox` (remote containers), `DockerSandbox`, or `E2BSandbox`. See [Virtual Infrastructure](/docs/virtual).
   </Step>
 
   <Step>

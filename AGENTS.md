@@ -110,7 +110,7 @@ These numeric claims appear in multiple places. Grep for them when changing the 
 
 - **Provider count** — currently 7 (OpenAI, Anthropic, Gemini, OpenRouter, Bedrock, Vertex, Ollama)
 - **Core tool count** — currently 9 (ReadFile, WriteFile, EditFile, Bash, Glob, Grep, WebFetch, NotebookEdit, AskUser)
-- **Sandbox backend count** — currently 4 (Local, Sprites, Docker, E2B)
+- **Sandbox backend count** — currently 5 (LocalSandbox, UnsandboxedLocal, Sprites, Docker, E2B)
 - **Hook event count** — currently 18 (PreToolUse, PostToolUse, PostToolUseFailure, TurnStart, TurnEnd, SessionStart, SessionEnd, SubagentStart, SubagentStop, PreCompact, PostCompact, PermissionRequest, PermissionDenied, FileWrite, ModelSwitch, RetryAttempt, MemoryUpdate, Error)
 - **Permission mode count** — currently 6 (default, plan, acceptEdits, auto, bypassPermissions, dontAsk)
 
