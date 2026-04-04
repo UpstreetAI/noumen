@@ -1,6 +1,7 @@
 import type { UUID } from "../utils/uuid.js";
 import type { ChatCompletionUsage } from "../providers/types.js";
 import type { CostSummary } from "../cost/types.js";
+import type { MemoryEntry } from "../memory/types.js";
 
 // --- Chat message types (OpenAI-compatible format) ---
 
@@ -184,6 +185,20 @@ export type StreamEvent =
       type: "denial_limit_exceeded";
       consecutiveDenials: number;
       totalDenials: number;
+    }
+  | { type: "span_start"; name: string; spanId: string }
+  | {
+      type: "span_end";
+      name: string;
+      spanId: string;
+      durationMs: number;
+      error?: string;
+    }
+  | {
+      type: "memory_update";
+      created: MemoryEntry[];
+      updated: MemoryEntry[];
+      deleted: string[];
     };
 
 export interface RunOptions {

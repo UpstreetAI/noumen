@@ -316,3 +316,36 @@ export {
   runPostToolUseHooks,
   runNotificationHooks,
 } from "./hooks/runner.js";
+
+// Tracing / Observability
+export {
+  SpanStatusCode,
+  type Span,
+  type SpanAttributeValue,
+  type SpanOptions,
+  type Tracer,
+  type TracingConfig,
+} from "./tracing/types.js";
+export { NoopSpan, NoopTracer } from "./tracing/noop.js";
+export { OTelTracer } from "./tracing/otel.js";
+
+// Memory / Persistent Context
+export type {
+  MemoryType,
+  MemoryEntry,
+  MemoryProvider,
+  MemoryConfig,
+} from "./memory/types.js";
+export {
+  FileMemoryProvider,
+  truncateIndex,
+  type IndexTruncation,
+} from "./memory/file-provider.js";
+export {
+  buildMemorySystemPromptSection,
+  buildExtractionPrompt,
+} from "./memory/prompts.js";
+export {
+  extractMemories,
+  type ExtractMemoriesResult,
+} from "./memory/extraction.js";

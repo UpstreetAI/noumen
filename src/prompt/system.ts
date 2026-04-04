@@ -40,6 +40,7 @@ export function buildSystemPrompt(opts: {
   skills?: SkillDefinition[];
   tools?: Tool[];
   date?: string;
+  memorySection?: string;
 }): string {
   if (opts.customPrompt) {
     return opts.customPrompt;
@@ -54,6 +55,10 @@ export function buildSystemPrompt(opts: {
     day: "numeric",
   });
   sections.push(`\nToday's date is ${date}.`);
+
+  if (opts.memorySection) {
+    sections.push("\n" + opts.memorySection);
+  }
 
   if (opts.skills && opts.skills.length > 0) {
     const hasSkillTool = opts.tools?.some((t) => t.name === "Skill");

@@ -21,6 +21,8 @@ import type { HookDefinition } from "./hooks/types.js";
 import type { ThinkingConfig } from "./thinking/types.js";
 import type { RetryConfig } from "./retry/types.js";
 import type { ModelPricing } from "./cost/types.js";
+import type { TracingConfig, Tracer } from "./tracing/types.js";
+import type { MemoryConfig, MemoryProvider } from "./memory/types.js";
 import { CostTracker } from "./cost/tracker.js";
 import { McpClientManager } from "./mcp/client.js";
 import { SessionStorage } from "./session/storage.js";
@@ -77,6 +79,8 @@ export interface CodeOptions {
       enabled: boolean;
       pricing?: Record<string, ModelPricing>;
     };
+    tracing?: TracingConfig;
+    memory?: MemoryConfig;
   };
 }
 
@@ -112,6 +116,9 @@ export class Code {
   private thinkingConfig?: ThinkingConfig;
   private retryConfig?: RetryConfig;
   private costTracker: CostTracker | null = null;
+  private tracer?: Tracer;
+  private memoryProvider?: MemoryProvider;
+  private memoryConfig?: MemoryConfig;
 
   constructor(opts: CodeOptions) {
     this.aiProvider = opts.aiProvider;
@@ -159,6 +166,13 @@ export class Code {
 
     if (opts.options?.mcpServers && Object.keys(opts.options.mcpServers).length > 0) {
       this.mcpManager = new McpClientManager(opts.options.mcpServers);
+    }
+
+    this.tracer = opts.options?.tracing?.tracer;
+
+    if (opts.options?.memory) {
+      this.memoryConfig = opts.options.memory;
+      this.memoryProvider = opts.options.memory.provider;
     }
   }
 
@@ -226,6 +240,8 @@ export class Code {
           thinking: this.thinkingConfig,
           retry: this.retryConfig,
           costTracker: this.costTracker ?? undefined,
+          tracer: this.tracer,
+          memory: this.memoryConfig,
         },
         { cwd: parentCwd },
       );
@@ -270,6 +286,8 @@ export class Code {
         thinking: this.thinkingConfig,
         retry: this.retryConfig,
         costTracker: this.costTracker ?? undefined,
+        tracer: this.tracer,
+        memory: this.memoryConfig,
       },
       {
         ...opts,

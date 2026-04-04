@@ -23,6 +23,12 @@ import type { HookDefinition } from "./hooks/types.js";
 import type { ThinkingConfig } from "./thinking/types.js";
 import type { RetryConfig } from "./retry/types.js";
 import type { CostTracker } from "./cost/tracker.js";
+import type { Tracer, Span } from "./tracing/types.js";
+import { SpanStatusCode } from "./tracing/types.js";
+import { NoopTracer } from "./tracing/noop.js";
+import type { MemoryConfig } from "./memory/types.js";
+import { buildMemorySystemPromptSection } from "./memory/prompts.js";
+import { extractMemories } from "./memory/extraction.js";
 import {
   runPreToolUseHooks,
   runPostToolUseHooks,
@@ -79,6 +85,8 @@ export interface ThreadConfig {
   thinking?: ThinkingConfig;
   retry?: RetryConfig;
   costTracker?: CostTracker;
+  tracer?: Tracer;
+  memory?: MemoryConfig;
 }
 
 export class Thread {
@@ -99,6 +107,7 @@ export class Thread {
   private lastUsage: ChatCompletionUsage | undefined;
   private anchorMessageIndex: number | undefined;
   private prePlanMode: import("./permissions/types.js").PermissionMode | null = null;
+  private tracer: Tracer;
 
   constructor(config: ThreadConfig, opts?: ThreadOptions) {
     this.config = config;
@@ -128,6 +137,7 @@ export class Thread {
 
     this.toolRegistry = new ToolRegistry(extraTools.length > 0 ? extraTools : undefined);
     this.hooks = config.hooks ?? [];
+    this.tracer = config.tracer ?? new NoopTracer();
 
     if (opts?.resume) {
       this.loaded = false;
@@ -141,6 +151,16 @@ export class Thread {
     this.abortController = new AbortController();
     const signal = opts?.signal ?? this.abortController.signal;
 
+    const interactionSpan = this.tracer.startSpan("noumen.interaction", {
+      attributes: {
+        "session.id": this.sessionId,
+        "model": this.model,
+        "prompt.length": prompt.length,
+      },
+    });
+    const interactionStart = Date.now();
+    yield { type: "span_start", name: "noumen.interaction", spanId: this.sessionId };
+
     try {
       if (!this.loaded) {
         this.messages = await this.storage.loadMessages(this.sessionId);
@@ -152,7 +172,7 @@ export class Thread {
       await this.storage.appendMessage(this.sessionId, userMessage);
 
       const allSkills = this.config.skills ?? [];
-      let systemPrompt = this.buildCurrentSystemPrompt(allSkills);
+      let systemPrompt = await this.buildCurrentSystemPromptAsync(allSkills);
 
       const toolDefs = this.toolRegistry.toToolDefinitions();
       const toolCtx: ToolContext = {
@@ -229,6 +249,18 @@ export class Thread {
         };
 
         let stream: AsyncIterable<import("./providers/types.js").ChatStreamChunk>;
+
+        const providerSpanId = generateUUID();
+        const providerSpan = this.tracer.startSpan("noumen.provider.chat", {
+          parent: interactionSpan,
+          attributes: {
+            "model": this.model,
+            "messages.count": this.messages.length,
+            "tools.count": toolDefs.length,
+          },
+        });
+        yield { type: "span_start", name: "noumen.provider.chat", spanId: providerSpanId };
+        const providerStart = Date.now();
 
         if (retryConfig) {
           const retryGen = withRetry(
@@ -363,7 +395,12 @@ export class Thread {
           }
         }
 
-        if (signal.aborted) break;
+        if (signal.aborted) {
+          providerSpan.setStatus(SpanStatusCode.OK);
+          providerSpan.end();
+          yield { type: "span_end", name: "noumen.provider.chat", spanId: providerSpanId, durationMs: Date.now() - providerStart };
+          break;
+        }
 
         callCount++;
         if (lastUsage) {
@@ -382,7 +419,14 @@ export class Thread {
             );
             yield { type: "cost_update", summary };
           }
+
+          providerSpan.setAttribute("tokens.input", lastUsage.prompt_tokens);
+          providerSpan.setAttribute("tokens.output", lastUsage.completion_tokens);
         }
+
+        providerSpan.setStatus(SpanStatusCode.OK);
+        providerSpan.end();
+        yield { type: "span_end", name: "noumen.provider.chat", spanId: providerSpanId, durationMs: Date.now() - providerStart };
 
         const textContent = accumulatedContent.join("");
         const toolCalls: ToolCallContent[] = Array.from(
@@ -567,11 +611,17 @@ export class Thread {
               }
             }
 
+            const toolSpan = this.tracer.startSpan("noumen.tool.execute", {
+              parent: interactionSpan,
+              attributes: { "tool.name": tc.function.name, "tool.id": tc.id },
+            });
             let result = await registry.execute(
               tc.function.name,
               currentArgs,
               toolCtx,
             );
+            toolSpan.setStatus(result.isError ? SpanStatusCode.ERROR : SpanStatusCode.OK, result.isError ? result.content : undefined);
+            toolSpan.end();
 
             // --- PostToolUse hooks ---
             if (hooks.length > 0) {
@@ -647,7 +697,7 @@ export class Thread {
               this.activatedSkills,
             );
             if (newlyActivated.length > 0) {
-              systemPrompt = this.buildCurrentSystemPrompt(allSkills);
+              systemPrompt = await this.buildCurrentSystemPromptAsync(allSkills);
             }
           }
 
@@ -671,6 +721,32 @@ export class Thread {
         break;
       }
 
+      // --- Memory extraction ---
+      const memCfg = this.config.memory;
+      if (memCfg && memCfg.autoExtract && memCfg.provider) {
+        try {
+          const extractResult = await extractMemories(
+            this.config.aiProvider,
+            this.model,
+            this.messages,
+            memCfg.provider,
+          );
+          const hasChanges = extractResult.created.length > 0
+            || extractResult.updated.length > 0
+            || extractResult.deleted.length > 0;
+          if (hasChanges) {
+            yield {
+              type: "memory_update",
+              created: extractResult.created,
+              updated: extractResult.updated,
+              deleted: extractResult.deleted,
+            };
+          }
+        } catch {
+          // Memory extraction is best-effort; don't fail the turn.
+        }
+      }
+
       // --- Compaction with hooks ---
       const autoCompactConfig =
         this.config.autoCompact ?? createAutoCompactConfig();
@@ -679,6 +755,14 @@ export class Thread {
           event: "PreCompact",
           sessionId: this.sessionId,
         });
+
+        const compactSpanId = generateUUID();
+        const compactSpan = this.tracer.startSpan("noumen.compact", {
+          parent: interactionSpan,
+          attributes: { "messages.before": this.messages.length },
+        });
+        const compactStart = Date.now();
+        yield { type: "span_start", name: "noumen.compact", spanId: compactSpanId };
 
         yield { type: "compact_start" };
         try {
@@ -695,6 +779,12 @@ export class Thread {
           );
           this.lastUsage = undefined;
           this.anchorMessageIndex = undefined;
+
+          compactSpan.setAttribute("messages.after", this.messages.length);
+          compactSpan.setStatus(SpanStatusCode.OK);
+          compactSpan.end();
+          yield { type: "span_end", name: "noumen.compact", spanId: compactSpanId, durationMs: Date.now() - compactStart };
+
           yield { type: "compact_complete" };
 
           await runNotificationHooks(hooks, "PostCompact", {
@@ -706,6 +796,10 @@ export class Thread {
             ? err
             : new Error(`Compaction failed: ${String(err)}`);
 
+          compactSpan.setStatus(SpanStatusCode.ERROR, error.message);
+          compactSpan.end();
+          yield { type: "span_end", name: "noumen.compact", spanId: compactSpanId, durationMs: Date.now() - compactStart, error: error.message };
+
           await runNotificationHooks(hooks, "Error", {
             event: "Error",
             sessionId: this.sessionId,
@@ -715,9 +809,17 @@ export class Thread {
           yield { type: "error", error };
         }
       }
+
+      interactionSpan.setStatus(SpanStatusCode.OK);
+      interactionSpan.end();
+      yield { type: "span_end", name: "noumen.interaction", spanId: this.sessionId, durationMs: Date.now() - interactionStart };
     } catch (err) {
       if (!signal.aborted) {
         const error = err instanceof Error ? err : new Error(String(err));
+
+        interactionSpan.setStatus(SpanStatusCode.ERROR, error.message);
+        interactionSpan.end();
+        yield { type: "span_end", name: "noumen.interaction", spanId: this.sessionId, durationMs: Date.now() - interactionStart, error: error.message };
 
         await runNotificationHooks(this.hooks, "Error", {
           event: "Error",
@@ -726,6 +828,10 @@ export class Thread {
         });
 
         yield { type: "error", error };
+      } else {
+        interactionSpan.setStatus(SpanStatusCode.OK);
+        interactionSpan.end();
+        yield { type: "span_end", name: "noumen.interaction", spanId: this.sessionId, durationMs: Date.now() - interactionStart };
       }
     }
   }
@@ -793,7 +899,12 @@ export class Thread {
         if (hookOutput.updatedInput) currentArgs = hookOutput.updatedInput;
       }
 
+      const toolSpan = this.tracer.startSpan("noumen.tool.execute", {
+        attributes: { "tool.name": tc.function.name, "tool.id": tc.id },
+      });
       let result = await registry.execute(tc.function.name, currentArgs, toolCtx);
+      toolSpan.setStatus(result.isError ? SpanStatusCode.ERROR : SpanStatusCode.OK, result.isError ? result.content : undefined);
+      toolSpan.end();
 
       if (hooks.length > 0) {
         const postOutput = await runPostToolUseHooks(hooks, {
@@ -808,12 +919,25 @@ export class Thread {
     };
   }
 
-  private buildCurrentSystemPrompt(allSkills: SkillDefinition[]): string {
+  private async buildCurrentSystemPromptAsync(allSkills: SkillDefinition[]): Promise<string> {
     const activeSkills = getActiveSkills(allSkills, this.activatedSkills);
+    let memorySection: string | undefined;
+
+    const memCfg = this.config.memory;
+    if (memCfg?.provider && memCfg.injectIntoSystemPrompt !== false) {
+      try {
+        const indexContent = await memCfg.provider.loadIndex();
+        memorySection = buildMemorySystemPromptSection(indexContent, "(memory)");
+      } catch {
+        // If memory loading fails, proceed without it.
+      }
+    }
+
     return buildSystemPrompt({
       customPrompt: this.config.systemPrompt,
       skills: activeSkills,
       tools: this.toolRegistry.listTools(),
+      memorySection,
     });
   }
 
