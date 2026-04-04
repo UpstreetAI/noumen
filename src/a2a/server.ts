@@ -7,7 +7,7 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import type { Code } from "../code.js";
+import type { Agent } from "../agent.js";
 import type { AgentCard } from "./types.js";
 import { A2A_METHODS, type TaskSendParams, type TaskStreamEvent } from "./types.js";
 import { TaskManager } from "./task-manager.js";
@@ -37,7 +37,7 @@ export class A2AServer {
   private agentCard: AgentCard;
   private options: A2AServerOptions;
 
-  constructor(code: Code, options: A2AServerOptions) {
+  constructor(code: Agent, options: A2AServerOptions) {
     this.taskManager = new TaskManager(code);
     this.agentCard = buildAgentCard(options);
     this.options = options;

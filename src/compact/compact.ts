@@ -27,7 +27,7 @@ export interface CompactOptions {
 }
 
 export async function compactConversation(
-  aiProvider: AIProvider,
+  provider: AIProvider,
   model: string,
   messages: ChatMessage[],
   storage: SessionStorage,
@@ -67,7 +67,7 @@ export async function compactConversation(
   };
 
   let summaryText = "";
-  for await (const chunk of aiProvider.chat(params)) {
+  for await (const chunk of provider.chat(params)) {
     if (opts?.signal?.aborted) {
       throw new DOMException("Compaction aborted", "AbortError");
     }

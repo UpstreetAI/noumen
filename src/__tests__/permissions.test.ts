@@ -533,7 +533,7 @@ describe("Thread permission gating", () => {
   beforeEach(() => {
     provider = new MockAIProvider();
     baseConfig = {
-      aiProvider: provider,
+      provider: provider,
       fs,
       computer,
       sessionDir: "/sessions",

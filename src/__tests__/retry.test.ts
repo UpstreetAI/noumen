@@ -314,7 +314,7 @@ describe("Retry in Thread", () => {
     fs = new MockFs();
     computer = new MockComputer();
     baseConfig = {
-      aiProvider: {} as any, // replaced per-test
+      provider: {} as any, // replaced per-test
       fs,
       computer,
       sessionDir: "/sessions",
@@ -338,7 +338,7 @@ describe("Retry in Thread", () => {
     const thread = new Thread(
       {
         ...baseConfig,
-        aiProvider: failingProvider,
+        provider: failingProvider,
         retry: { maxRetries: 3, baseDelayMs: 1 },
       },
       { sessionId: "retry-1" },

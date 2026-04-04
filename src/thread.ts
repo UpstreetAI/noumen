@@ -110,14 +110,14 @@ export interface ThreadOptions {
   resume?: boolean;
   cwd?: string;
   model?: string;
-  /** Override the permission handler for this thread (takes precedence over CodeOptions). */
+  /** Override the permission handler for this thread (takes precedence over AgentOptions). */
   permissionHandler?: PermissionHandler;
-  /** Override the user input handler for this thread (takes precedence over CodeOptions). */
+  /** Override the user input handler for this thread (takes precedence over AgentOptions). */
   userInputHandler?: (question: string) => Promise<string>;
 }
 
 export interface ThreadConfig {
-  aiProvider: AIProvider;
+  provider: AIProvider;
   fs: VirtualFs;
   computer: VirtualComputer;
   sessionDir: string;
@@ -494,7 +494,7 @@ export class Thread {
           yield { type: "compact_start" };
           try {
             this.messages = await compactConversation(
-              this.config.aiProvider,
+              this.config.provider,
               this.model,
               this.messages,
               this.storage,
@@ -592,7 +592,7 @@ export class Thread {
               if (ctx.model !== chatParams.model) {
                 params.model = ctx.model;
               }
-              return this.config.aiProvider.chat(params);
+              return this.config.provider.chat(params);
             },
             {
               ...retryConfig,
@@ -626,7 +626,7 @@ export class Thread {
           stream = retryResult.value;
           if (retryResult.value === undefined) break;
         } else {
-          stream = this.config.aiProvider.chat(chatParams);
+          stream = this.config.provider.chat(chatParams);
         }
         } catch (providerErr) {
           // Reactive compact: recover from context overflow by compacting
@@ -651,7 +651,7 @@ export class Thread {
             });
             yield { type: "compact_start" };
             const recovered = await tryReactiveCompact(
-              this.config.aiProvider,
+              this.config.provider,
               this.model,
               this.messages,
               this.storage,
@@ -1383,7 +1383,7 @@ export class Thread {
       if (memCfg && memCfg.autoExtract && memCfg.provider) {
         try {
           const extractResult = await extractMemories(
-            this.config.aiProvider,
+            this.config.provider,
             this.model,
             this.messages,
             memCfg.provider,
@@ -1645,7 +1645,7 @@ export class Thread {
     if (!autoMode) return undefined;
     const tail = this.messages.slice(-10);
     return {
-      aiProvider: this.config.aiProvider,
+      provider: this.config.provider,
       model: this.model,
       recentMessages: tail,
       autoModeConfig: autoMode,
@@ -1737,7 +1737,7 @@ export class Thread {
     }
 
     this.messages = await compactConversation(
-      this.config.aiProvider,
+      this.config.provider,
       this.model,
       this.messages,
       this.storage,
@@ -1794,7 +1794,7 @@ export class Thread {
 
   setProvider(provider: AIProvider, model?: string): void {
     const prev = this.model;
-    this.config.aiProvider = provider;
+    this.config.provider = provider;
     if (model) this.model = model;
     if (model && prev !== model && this.hooks.length > 0) {
       runNotificationHooks(this.hooks, "ModelSwitch", {

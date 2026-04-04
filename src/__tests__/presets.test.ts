@@ -1,16 +1,16 @@
 import { describe, it, expect } from "vitest";
 import { MockAIProvider, textResponse, MockFs, MockComputer } from "./helpers.js";
 import { codingAgent, planningAgent, reviewAgent } from "../presets.js";
-import { Code, type DiagnoseResult } from "../code.js";
+import { Agent, type DiagnoseResult } from "../agent.js";
 
 function mockProvider() {
   return new MockAIProvider([textResponse("ok")]);
 }
 
 describe("codingAgent preset", () => {
-  it("returns a Code instance", () => {
+  it("returns an Agent instance", () => {
     const code = codingAgent({ provider: mockProvider(), cwd: "/tmp" });
-    expect(code).toBeInstanceOf(Code);
+    expect(code).toBeInstanceOf(Agent);
   });
 
   it("accepts optional hooks and systemPrompt", () => {
@@ -20,29 +20,29 @@ describe("codingAgent preset", () => {
       hooks: [{ event: "TurnStart", handler: async () => {} }],
       systemPrompt: "You are a coder.",
     });
-    expect(code).toBeInstanceOf(Code);
+    expect(code).toBeInstanceOf(Agent);
   });
 });
 
 describe("planningAgent preset", () => {
-  it("returns a Code instance", () => {
+  it("returns an Agent instance", () => {
     const code = planningAgent({ provider: mockProvider(), cwd: "/tmp" });
-    expect(code).toBeInstanceOf(Code);
+    expect(code).toBeInstanceOf(Agent);
   });
 });
 
 describe("reviewAgent preset", () => {
-  it("returns a Code instance", () => {
+  it("returns an Agent instance", () => {
     const code = reviewAgent({ provider: mockProvider(), cwd: "/tmp" });
-    expect(code).toBeInstanceOf(Code);
+    expect(code).toBeInstanceOf(Agent);
   });
 });
 
-describe("Code.diagnose()", () => {
+describe("Agent.diagnose()", () => {
   it("returns a structured result with all expected fields", async () => {
     const provider = new MockAIProvider([textResponse("ok")]);
-    const code = new Code({
-      aiProvider: provider,
+    const code = new Agent({
+      provider: provider,
       sandbox: { fs: new MockFs(), computer: new MockComputer() },
       options: { cwd: "/tmp" },
     });
@@ -60,8 +60,8 @@ describe("Code.diagnose()", () => {
 
   it("records latency on successful checks", async () => {
     const provider = new MockAIProvider([textResponse("ok")]);
-    const code = new Code({
-      aiProvider: provider,
+    const code = new Agent({
+      provider: provider,
       sandbox: { fs: new MockFs(), computer: new MockComputer() },
       options: { cwd: "/tmp" },
     });
@@ -77,8 +77,8 @@ describe("Code.diagnose()", () => {
     const failingProvider: any = {
       async *chat() { throw new Error("API key invalid"); },
     };
-    const code = new Code({
-      aiProvider: failingProvider,
+    const code = new Agent({
+      provider: failingProvider,
       sandbox: { fs: new MockFs(), computer: new MockComputer() },
       options: { cwd: "/tmp" },
     });
@@ -94,8 +94,8 @@ describe("Code.diagnose()", () => {
     const brokenFs: any = {
       async exists() { throw new Error("fs unavailable"); },
     };
-    const code = new Code({
-      aiProvider: mockProvider(),
+    const code = new Agent({
+      provider: mockProvider(),
       sandbox: { fs: brokenFs, computer: new MockComputer() },
       options: { cwd: "/tmp" },
     });
@@ -109,8 +109,8 @@ describe("Code.diagnose()", () => {
     const brokenComputer = new MockComputer(() => {
       throw new Error("shell unavailable");
     });
-    const code = new Code({
-      aiProvider: mockProvider(),
+    const code = new Agent({
+      provider: mockProvider(),
       sandbox: { fs: new MockFs(), computer: brokenComputer },
       options: { cwd: "/tmp" },
     });
@@ -124,8 +124,8 @@ describe("Code.diagnose()", () => {
     const failComputer = new MockComputer(() => ({
       exitCode: 1, stdout: "", stderr: "error",
     }));
-    const code = new Code({
-      aiProvider: mockProvider(),
+    const code = new Agent({
+      provider: mockProvider(),
       sandbox: { fs: new MockFs(), computer: failComputer },
       options: { cwd: "/tmp" },
     });
@@ -142,8 +142,8 @@ describe("Code.diagnose()", () => {
         yield { id: "x", model: "m", choices: [] };
       },
     };
-    const code = new Code({
-      aiProvider: slowProvider,
+    const code = new Agent({
+      provider: slowProvider,
       sandbox: { fs: new MockFs(), computer: new MockComputer() },
       options: { cwd: "/tmp" },
     });
@@ -153,8 +153,8 @@ describe("Code.diagnose()", () => {
   });
 
   it("includes model in provider result", async () => {
-    const code = new Code({
-      aiProvider: mockProvider(),
+    const code = new Agent({
+      provider: mockProvider(),
       sandbox: { fs: new MockFs(), computer: new MockComputer() },
       options: { cwd: "/tmp", model: "gpt-4o" },
     });
@@ -163,8 +163,8 @@ describe("Code.diagnose()", () => {
   });
 
   it("includes timestamp as ISO string", async () => {
-    const code = new Code({
-      aiProvider: mockProvider(),
+    const code = new Agent({
+      provider: mockProvider(),
       sandbox: { fs: new MockFs(), computer: new MockComputer() },
       options: { cwd: "/tmp" },
     });

@@ -48,7 +48,7 @@ export const agentTool: Tool = {
   ): Promise<ToolResult> {
     if (!ctx.spawnSubagent) {
       return {
-        content: "Subagents are not enabled. Set enableSubagents: true in CodeOptions.",
+        content: "Subagents are not enabled. Set enableSubagents: true in AgentOptions.",
         isError: true,
       };
     }

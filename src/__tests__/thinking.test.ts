@@ -42,7 +42,7 @@ describe("Thinking support", () => {
     computer = new MockComputer();
     provider = new MockAIProvider();
     baseConfig = {
-      aiProvider: provider,
+      provider: provider,
       fs,
       computer,
       sessionDir: "/sessions",

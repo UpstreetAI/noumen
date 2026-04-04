@@ -1,6 +1,6 @@
 import * as readline from "node:readline/promises";
 import chalk from "chalk";
-import type { Code } from "../code.js";
+import type { Agent } from "../agent.js";
 import type { Thread } from "../thread.js";
 import type { MergedConfig } from "./config.js";
 import { renderEvent, createRenderState, promptPermission, isVisibleEvent } from "./render.js";
@@ -8,7 +8,7 @@ import { DEFAULT_MODELS, createProvider, SUPPORTED_PROVIDERS } from "./provider-
 import { startSpinner } from "./spinner.js";
 
 export async function startRepl(
-  code: Code,
+  code: Agent,
   config: MergedConfig,
 ): Promise<void> {
   const rl = readline.createInterface({
@@ -121,7 +121,7 @@ type SlashResult = "continue" | "quit" | "new";
 async function handleSlashCommand(
   input: string,
   thread: Thread,
-  code: Code,
+  code: Agent,
   config: MergedConfig,
   _rl: readline.Interface,
 ): Promise<SlashResult> {

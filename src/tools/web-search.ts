@@ -108,7 +108,7 @@ export const webSearchToolPlaceholder: Tool = {
     return {
       content:
         "WebSearch is not configured. Provide a search implementation " +
-        "via CodeOptions.options.webSearch or createWebSearchTool().",
+        "via AgentOptions.options.webSearch or createWebSearchTool().",
       isError: true,
     };
   },

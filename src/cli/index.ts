@@ -8,7 +8,7 @@ import { startRepl } from "./repl.js";
 import { renderEvent, createRenderState, promptPermission } from "./render.js";
 import { runInit } from "./init.js";
 import * as os from "node:os";
-import { Code, LocalSandbox, type DiagnoseResult, type DiagnoseCheckResult } from "../index.js";
+import { Agent, LocalSandbox, type DiagnoseResult, type DiagnoseCheckResult } from "../index.js";
 import type { ThinkingConfig } from "../thinking/types.js";
 import type { PermissionMode } from "../permissions/types.js";
 
@@ -217,8 +217,8 @@ async function runAgent(config: MergedConfig): Promise<void> {
   const thinking = parseThinking(config.thinking);
   const permissionMode = (config.permissions ?? "default") as PermissionMode;
 
-  const code = new Code({
-    aiProvider: provider,
+  const agent = new Agent({
+    provider: provider,
     sandbox: LocalSandbox({ cwd: config.cwd }),
     options: {
       cwd: config.cwd,
@@ -246,14 +246,14 @@ async function runAgent(config: MergedConfig): Promise<void> {
 
   if (config.headless) {
     const { runHeadless } = await import("./headless.js");
-    await runHeadless(code, config);
+    await runHeadless(agent, config);
     return;
   }
 
-  await code.init();
+  await agent.init();
 
   if (config.prompt) {
-    await runOneShot(code, config);
+    await runOneShot(agent, config);
   } else {
     if (!process.stdin.isTTY) {
       process.stderr.write(
@@ -261,16 +261,16 @@ async function runAgent(config: MergedConfig): Promise<void> {
       );
       process.exit(1);
     }
-    await startRepl(code, config);
+    await startRepl(agent, config);
   }
 
-  await code.close();
+  await agent.close();
 }
 
-async function runOneShot(code: Code, config: MergedConfig): Promise<void> {
+async function runOneShot(agent: Agent, config: MergedConfig): Promise<void> {
   const { startSpinner } = await import("./spinner.js");
   const { isVisibleEvent } = await import("./render.js");
-  const thread = code.createThread();
+  const thread = agent.createThread();
   const state = createRenderState();
   const runOpts = config.maxTurns ? { maxTurns: config.maxTurns } : undefined;
 
@@ -317,13 +317,13 @@ async function listSessions(): Promise<void> {
     baseURL: merged.baseURL,
   });
 
-  const code = new Code({
-    aiProvider: provider,
+  const agent = new Agent({
+    provider: provider,
     sandbox: LocalSandbox({ cwd }),
     options: { cwd, sessionDir: merged.sessionDir ?? ".noumen/sessions" },
   });
 
-  const sessions = await code.listSessions();
+  const sessions = await agent.listSessions();
   if (sessions.length === 0) {
     process.stdout.write(chalk.dim("No saved sessions.\n"));
     return;
@@ -359,8 +359,8 @@ async function resumeSession(sessionId: string): Promise<void> {
   const thinking = parseThinking(merged.thinking);
   const permissionMode = (merged.permissions ?? "default") as PermissionMode;
 
-  const code = new Code({
-    aiProvider: provider,
+  const agent = new Agent({
+    provider: provider,
     sandbox: LocalSandbox({ cwd }),
     options: {
       cwd,
@@ -380,10 +380,10 @@ async function resumeSession(sessionId: string): Promise<void> {
     },
   });
 
-  await code.init();
+  await agent.init();
 
   // Match full session ID from partial prefix
-  const sessions = await code.listSessions();
+  const sessions = await agent.listSessions();
   const match = sessions.find(
     (s) => s.sessionId === sessionId || s.sessionId.startsWith(sessionId),
   );
@@ -400,7 +400,7 @@ async function resumeSession(sessionId: string): Promise<void> {
   const { createInterface } = await import("node:readline/promises");
   const rl = createInterface({ input: process.stdin, output: process.stderr, terminal: true });
 
-  const thread = code.resumeThread(match.sessionId);
+  const thread = agent.resumeThread(match.sessionId);
 
   // Enter REPL with the resumed thread
   const { renderEvent: render, createRenderState: makeState } = await import("./render.js");
@@ -428,7 +428,7 @@ async function resumeSession(sessionId: string): Promise<void> {
     }
   } finally {
     rl.close();
-    await code.close();
+    await agent.close();
   }
 }
 
@@ -450,8 +450,8 @@ async function runDoctor(): Promise<void> {
     baseURL: merged.baseURL,
   });
 
-  const code = new Code({
-    aiProvider: provider,
+  const agent = new Agent({
+    provider: provider,
     sandbox: LocalSandbox({ cwd }),
     options: {
       cwd,
@@ -462,12 +462,12 @@ async function runDoctor(): Promise<void> {
     },
   });
 
-  await code.init();
+  await agent.init();
 
   process.stderr.write(chalk.bold("\nnoumen doctor\n\n"));
-  const result = await code.diagnose();
+  const result = await agent.diagnose();
   printDiagnoseResult(result);
-  await code.close();
+  await agent.close();
   process.exit(result.overall ? 0 : 1);
 }
 

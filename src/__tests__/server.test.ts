@@ -1,19 +1,19 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { MockFs, MockComputer, MockAIProvider, textResponse, toolCallResponse } from "./helpers.js";
-import { Code } from "../code.js";
+import { Agent } from "../agent.js";
 import { createServer, type NoumenServer } from "../server/index.js";
 import WebSocket from "ws";
 
 let fs: MockFs;
 let computer: MockComputer;
 let provider: MockAIProvider;
-let code: Code;
+let code: Agent;
 let server: NoumenServer;
 let baseUrl: string;
 
 function makeCode(opts?: { permissionMode?: string }) {
-  return new Code({
-    aiProvider: provider,
+  return new Agent({
+    provider: provider,
     sandbox: { fs, computer },
     options: {
       permissions: opts?.permissionMode
@@ -24,7 +24,7 @@ function makeCode(opts?: { permissionMode?: string }) {
 }
 
 async function startServer(
-  c: Code,
+  c: Agent,
   opts?: { auth?: any; maxSessions?: number; idleTimeoutMs?: number },
 ): Promise<{ server: NoumenServer; baseUrl: string }> {
   const s = createServer(c, {
@@ -274,8 +274,8 @@ describe("NoumenServer", () => {
       provider.addResponse(toolCallResponse("tc-1", "Bash", { command: "rm -rf /" }));
       provider.addResponse(textResponse("Done."));
 
-      code = new Code({
-        aiProvider: provider,
+      code = new Agent({
+        provider: provider,
         sandbox: { fs, computer },
         options: {
           permissions: {
@@ -528,8 +528,8 @@ describe("NoumenServer", () => {
       provider.addResponse(toolCallResponse("tc-1", "Bash", { command: "ls" }));
       provider.addResponse(textResponse("Done."));
 
-      code = new Code({
-        aiProvider: provider,
+      code = new Agent({
+        provider: provider,
         sandbox: { fs, computer },
         options: {
           permissions: { mode: "default", handler: undefined },
@@ -565,7 +565,7 @@ describe("NoumenServer", () => {
 
   describe("WebSocket transport", () => {
     async function startWsServer(
-      c: Code,
+      c: Agent,
       opts?: { auth?: any; maxSessions?: number },
     ): Promise<{ server: NoumenServer; wsUrl: string; baseUrl: string }> {
       const s = createServer(c, { port: 0, ws: true, ...opts });

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { MockFs, MockComputer, MockAIProvider, textResponse, toolCallResponse } from "./helpers.js";
-import { Code } from "../code.js";
+import { Agent } from "../agent.js";
 import { createServer, type NoumenServer } from "../server/index.js";
 import { NoumenClient } from "../client/index.js";
 import type { StreamEvent } from "../session/types.js";
@@ -14,13 +14,13 @@ if (typeof globalThis.WebSocket === "undefined") {
 let fs: MockFs;
 let computer: MockComputer;
 let provider: MockAIProvider;
-let code: Code;
+let code: Agent;
 let server: NoumenServer;
 let baseUrl: string;
 
 async function setup(opts?: { auth?: any }) {
-  code = new Code({
-    aiProvider: provider,
+  code = new Agent({
+    provider: provider,
     sandbox: { fs, computer },
   });
 

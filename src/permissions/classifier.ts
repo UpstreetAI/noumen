@@ -33,7 +33,7 @@ export async function classifyPermission(
   toolName: string,
   args: Record<string, unknown>,
   recentMessages: ChatMessage[],
-  aiProvider: AIProvider,
+  provider: AIProvider,
   opts?: {
     classifierPrompt?: string;
     classifierModel?: string;
@@ -77,7 +77,7 @@ export async function classifyPermission(
 
   try {
     let text = "";
-    for await (const chunk of aiProvider.chat(params)) {
+    for await (const chunk of provider.chat(params)) {
       if (opts?.signal?.aborted) break;
       for (const choice of chunk.choices) {
         if (choice.delta.content) {

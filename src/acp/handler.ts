@@ -1,8 +1,8 @@
 /**
- * ACP protocol handler: maps ACP JSON-RPC methods to Code/Thread APIs.
+ * ACP protocol handler: maps ACP JSON-RPC methods to Agent/Thread APIs.
  */
 
-import type { Code } from "../code.js";
+import type { Agent } from "../agent.js";
 import type { Thread } from "../thread.js";
 import type { StreamEvent } from "../session/types.js";
 import type { PermissionRequest, PermissionResponse } from "../permissions/types.js";
@@ -46,7 +46,7 @@ interface SessionState {
 }
 
 export class AcpHandler {
-  private code: Code;
+  private code: Agent;
   private transport: AcpTransport;
   private options: AcpHandlerOptions;
   private sessions = new Map<string, SessionState>();
@@ -59,7 +59,7 @@ export class AcpHandler {
   private nextRequestId = 1;
 
   constructor(
-    code: Code,
+    code: Agent,
     transport: AcpTransport,
     options?: AcpHandlerOptions,
   ) {

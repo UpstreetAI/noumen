@@ -17,7 +17,7 @@ import { createAutoCompactConfig } from "../compact/auto-compact.js";
 
 function baseConfig(overrides?: Partial<ThreadConfig>): ThreadConfig {
   return {
-    aiProvider: new MockAIProvider([textResponse("done")]),
+    provider: new MockAIProvider([textResponse("done")]),
     fs: new MockFs(),
     computer: new MockComputer(),
     sessionDir: ".test-sessions",
@@ -135,7 +135,7 @@ describe("SessionEnd hook", () => {
       toolCallResponse("tc1", "ReadFile", { file_path: "/x" }),
       textResponse("done"),
     ]);
-    const thread = new Thread(baseConfig({ aiProvider: provider, hooks }));
+    const thread = new Thread(baseConfig({ provider: provider, hooks }));
     const events: StreamEvent[] = [];
     for await (const e of thread.run("go", { maxTurns: 1 })) {
       events.push(e);
@@ -216,7 +216,7 @@ describe("FileWrite hook", () => {
       textResponse("done"),
     ]);
     const thread = new Thread(baseConfig({
-      aiProvider: provider,
+      provider: provider,
       hooks,
       permissions: { mode: "bypassPermissions" },
     }));

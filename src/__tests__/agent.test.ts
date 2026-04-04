@@ -6,7 +6,7 @@ import {
   textResponse,
   toolCallResponse,
 } from "./helpers.js";
-import { Code, type CodeOptions } from "../code.js";
+import { Agent, type AgentOptions } from "../agent.js";
 import { agentTool } from "../tools/agent.js";
 import type { StreamEvent } from "../session/types.js";
 import type { ToolContext } from "../tools/types.js";
@@ -38,13 +38,12 @@ describe("AgentTool", () => {
   });
 });
 
-describe("Subagent via Code", () => {
+describe("Subagent via Agent", () => {
   it("enables Agent tool when enableSubagents is true", () => {
     const provider = new MockAIProvider();
-    const code = new Code({
-      aiProvider: provider,
-      virtualFs: fs,
-      virtualComputer: computer,
+    const code = new Agent({
+      provider: provider,
+      sandbox: { fs, computer },
       options: { enableSubagents: true },
     });
     const thread = code.createThread({ sessionId: "s1" });
@@ -56,10 +55,9 @@ describe("Subagent via Code", () => {
     const provider = new MockAIProvider();
     provider.addResponse(textResponse("hello"));
 
-    const code = new Code({
-      aiProvider: provider,
-      virtualFs: fs,
-      virtualComputer: computer,
+    const code = new Agent({
+      provider: provider,
+      sandbox: { fs, computer },
       options: { enableSubagents: false },
     });
     const thread = code.createThread({ sessionId: "s1" });
@@ -84,10 +82,9 @@ describe("Subagent via Code", () => {
     // Parent call 2: model returns final text after receiving subagent result
     parentProvider.addResponse(textResponse("Based on the subagent: it contains important data."));
 
-    const code = new Code({
-      aiProvider: parentProvider,
-      virtualFs: fs,
-      virtualComputer: computer,
+    const code = new Agent({
+      provider: parentProvider,
+      sandbox: { fs, computer },
       options: {
         enableSubagents: true,
         autoCompact: false,
@@ -127,10 +124,9 @@ describe("Subagent via Code", () => {
     // Parent final response
     provider.addResponse(textResponse("Done."));
 
-    const code = new Code({
-      aiProvider: provider,
-      virtualFs: fs,
-      virtualComputer: computer,
+    const code = new Agent({
+      provider: provider,
+      sandbox: { fs, computer },
       options: {
         enableSubagents: true,
         autoCompact: false,

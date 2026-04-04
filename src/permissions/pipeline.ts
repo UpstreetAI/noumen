@@ -23,7 +23,7 @@ import { classifyPermission } from "./classifier.js";
  *  6. Fallback: passthrough → ask
  */
 export interface ResolvePermissionOptions {
-  aiProvider?: AIProvider;
+  provider?: AIProvider;
   model?: string;
   recentMessages?: ChatMessage[];
   autoModeConfig?: AutoModeConfig;
@@ -203,7 +203,7 @@ export async function resolvePermission(
 
   // Auto mode: use classifier to decide
   if (permCtx.mode === "auto" && opts?.autoModeConfig) {
-    if (!opts.aiProvider) {
+    if (!opts.provider) {
       return {
         behavior: "ask",
         message: `Auto-mode requires an AI provider for classification. Falling back to ask.`,
@@ -215,7 +215,7 @@ export async function resolvePermission(
       toolName,
       input,
       opts.recentMessages ?? [],
-      opts.aiProvider,
+      opts.provider,
       {
         classifierPrompt: opts.autoModeConfig.classifierPrompt,
         classifierModel: opts.autoModeConfig.classifierModel,

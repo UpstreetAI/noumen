@@ -47,7 +47,7 @@ describe("TurnStart hook", () => {
     provider.addResponse(textResponse("done"));
 
     const config: ThreadConfig = {
-      aiProvider: provider,
+      provider: provider,
       fs,
       computer,
       sessionDir: "/sessions",
@@ -71,7 +71,7 @@ describe("TurnStart hook", () => {
     provider.addResponse(textResponse("hello"));
 
     const config: ThreadConfig = {
-      aiProvider: provider,
+      provider: provider,
       fs,
       computer,
       sessionDir: "/sessions",
@@ -111,7 +111,7 @@ describe("TurnEnd hook", () => {
     provider.addResponse(textResponse("done"));
 
     const config: ThreadConfig = {
-      aiProvider: provider,
+      provider: provider,
       fs,
       computer,
       sessionDir: "/sessions",
@@ -177,7 +177,7 @@ describe("SubagentStart/SubagentStop hooks", () => {
     let childSessionId: string | undefined;
 
     const config: ThreadConfig = {
-      aiProvider: parentProvider,
+      provider: parentProvider,
       fs,
       computer,
       sessionDir: "/sessions",
@@ -186,7 +186,7 @@ describe("SubagentStart/SubagentStop hooks", () => {
       spawnSubagent: (subConfig) => {
         const childThread = new Thread(
           {
-            aiProvider: childProvider,
+            provider: childProvider,
             fs,
             computer,
             sessionDir: "/sessions",
@@ -238,7 +238,7 @@ describe("preventContinuation in streaming path", () => {
     );
 
     const config: ThreadConfig = {
-      aiProvider: provider,
+      provider: provider,
       fs,
       computer,
       sessionDir: "/sessions",
@@ -267,7 +267,7 @@ describe("preventContinuation in streaming path", () => {
     );
 
     const config: ThreadConfig = {
-      aiProvider: provider,
+      provider: provider,
       fs,
       computer,
       sessionDir: "/sessions",

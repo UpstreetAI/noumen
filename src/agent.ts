@@ -1,7 +1,8 @@
 import type { AIProvider, OutputFormat } from "./providers/types.js";
+import type { ProviderName } from "./providers/resolve.js";
 import type { VirtualFs } from "./virtual/fs.js";
 import type { VirtualComputer } from "./virtual/computer.js";
-import type { Sandbox } from "./virtual/sandbox.js";
+import { LocalSandbox, type Sandbox } from "./virtual/sandbox.js";
 import type { SkillDefinition } from "./skills/types.js";
 import type { Tool, SubagentConfig, SubagentRun } from "./tools/types.js";
 import type { CheckpointConfig } from "./checkpoint/types.js";
@@ -61,28 +62,30 @@ export interface DiagnoseResult {
   timestamp: string;
 }
 
-export interface CodeOptions {
-  aiProvider: AIProvider;
+export interface AgentOptions {
+  /**
+   * AI provider — either an `AIProvider` instance or a provider name string.
+   * When a string is passed (e.g. `"openai"`), the provider is resolved
+   * lazily using env-var auto-detection on the first call to `run()`,
+   * `createThread()`, or `init()`.
+   */
+  provider: AIProvider | ProviderName;
+
+  /**
+   * Working directory. When set without an explicit `sandbox`, a
+   * `LocalSandbox({ cwd })` is created automatically.
+   */
+  cwd?: string;
 
   /**
    * Bundled sandbox providing both filesystem and shell execution.
    * Use `LocalSandbox()` for unsandboxed local development,
    * `SpritesSandbox()` for isolated remote containers, or pass any
    * `{ fs: VirtualFs; computer: VirtualComputer }` for custom sandboxes.
+   *
+   * Defaults to `LocalSandbox({ cwd })` when omitted.
    */
   sandbox?: Sandbox;
-
-  /**
-   * @deprecated Use `sandbox` instead. Filesystem sandbox — all file I/O
-   * from tools routes through this interface.
-   */
-  virtualFs?: VirtualFs;
-
-  /**
-   * @deprecated Use `sandbox` instead. Shell execution sandbox — all command
-   * execution from tools routes through this interface.
-   */
-  virtualComputer?: VirtualComputer;
 
   options?: {
     sessionDir?: string;
@@ -143,8 +146,9 @@ export interface CodeOptions {
   };
 }
 
-export class Code {
-  private aiProvider: AIProvider;
+export class Agent {
+  private providerInput: AIProvider | ProviderName;
+  private resolvedProvider: AIProvider | null = null;
   private fs: VirtualFs;
   private computer: VirtualComputer;
   private sessionDir: string;
@@ -199,18 +203,17 @@ export class Code {
   private outputFormat: OutputFormat | undefined;
   private structuredOutputMode: "alongside_tools" | "final_response" | undefined;
 
-  constructor(opts: CodeOptions) {
-    this.aiProvider = opts.aiProvider;
-
-    const fs = opts.sandbox?.fs ?? opts.virtualFs;
-    const computer = opts.sandbox?.computer ?? opts.virtualComputer;
-    if (!fs || !computer) {
-      throw new Error(
-        "Provide either `sandbox` or both `virtualFs` and `virtualComputer`.",
-      );
+  constructor(opts: AgentOptions) {
+    this.providerInput = opts.provider;
+    if (typeof opts.provider !== "string") {
+      this.resolvedProvider = opts.provider;
     }
-    this.fs = fs;
-    this.computer = computer;
+
+    const effectiveCwd = opts.cwd ?? opts.options?.cwd ?? process.cwd();
+    const resolvedSandbox = opts.sandbox ?? LocalSandbox({ cwd: effectiveCwd });
+
+    this.fs = resolvedSandbox.fs;
+    this.computer = resolvedSandbox.computer;
     this.sessionDir = opts.options?.sessionDir ?? ".noumen/sessions";
     this.skills = opts.options?.skills ?? [];
     this.skillsPaths = opts.options?.skillsPaths ?? [];
@@ -220,7 +223,7 @@ export class Code {
     this.maxTokens = opts.options?.maxTokens;
     this.autoCompactEnabled = opts.options?.autoCompact ?? true;
     this.autoCompactThreshold = opts.options?.autoCompactThreshold;
-    this.cwd = opts.options?.cwd ?? "/";
+    this.cwd = effectiveCwd;
     this.storage = new SessionStorage(this.fs, this.sessionDir);
     this.permissions = opts.options?.permissions;
     this.hooks = opts.options?.hooks ?? [];
@@ -289,6 +292,24 @@ export class Code {
     }
   }
 
+  private async ensureProvider(): Promise<AIProvider> {
+    if (this.resolvedProvider) return this.resolvedProvider;
+    const { resolveProvider } = await import("./providers/resolve.js");
+    this.resolvedProvider = await resolveProvider(this.providerInput, {
+      model: this.model,
+    });
+    return this.resolvedProvider;
+  }
+
+  private getProvider(): AIProvider {
+    if (!this.resolvedProvider) {
+      throw new Error(
+        "Provider not yet resolved. Call init() first when using a string provider.",
+      );
+    }
+    return this.resolvedProvider;
+  }
+
   private async getSkills(): Promise<SkillDefinition[]> {
     if (this.resolvedSkills) return this.resolvedSkills;
 
@@ -334,7 +355,7 @@ export class Code {
 
       const childThread = new Thread(
         {
-          aiProvider: this.aiProvider,
+          provider: this.getProvider(),
           fs: this.fs,
           computer: this.computer,
           sessionDir: this.sessionDir,
@@ -385,7 +406,7 @@ export class Code {
 
     return new Thread(
       {
-        aiProvider: this.aiProvider,
+        provider: this.getProvider(),
         fs: this.fs,
         computer: this.computer,
         sessionDir: this.sessionDir,
@@ -454,12 +475,15 @@ export class Code {
   }
 
   /**
-   * Pre-resolve skills, connect to MCP servers, and start LSP servers.
-   * Call this once after construction if using skillsPaths, mcpServers,
-   * or lsp, so that createThread() has everything available synchronously.
+   * Pre-resolve the provider (if string), skills, MCP servers, and LSP servers.
+   * Call this once after construction if using a string provider, skillsPaths,
+   * mcpServers, or lsp, so that createThread() has everything available synchronously.
    */
   async init(): Promise<void> {
-    const tasks: Promise<void>[] = [this.getSkills().then(() => {})];
+    const tasks: Promise<void>[] = [
+      this.ensureProvider().then(() => {}),
+      this.getSkills().then(() => {}),
+    ];
 
     if (this.projectContextConfig && !this.resolvedProjectContext) {
       tasks.push(
@@ -534,7 +558,7 @@ export class Code {
     let providerCheck: DiagnoseResult["provider"];
     try {
       const { latencyMs } = await timedCheck(async () => {
-        const stream = this.aiProvider.chat({
+        const stream = this.getProvider().chat({
           model: this.model ?? "gpt-4o-mini",
           messages: [{ role: "user", content: "Say ok" }],
           tools: [],
@@ -620,7 +644,7 @@ export class Code {
   }
 
   /**
-   * Disconnect all MCP clients. Call when done with this Code instance.
+   * Disconnect all MCP clients. Call when done with this Agent instance.
    */
   async close(): Promise<void> {
     const tasks: Promise<void>[] = [];

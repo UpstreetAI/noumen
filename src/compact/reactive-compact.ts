@@ -25,7 +25,7 @@ export interface ReactiveCompactResult {
  * or truncate (less than 2 messages).
  */
 export async function tryReactiveCompact(
-  aiProvider: AIProvider,
+  provider: AIProvider,
   model: string,
   messages: ChatMessage[],
   storage: SessionStorage,
@@ -35,7 +35,7 @@ export async function tryReactiveCompact(
 
   try {
     const compacted = await compactConversation(
-      aiProvider,
+      provider,
       model,
       messages,
       storage,

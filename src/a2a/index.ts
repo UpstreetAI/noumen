@@ -34,14 +34,14 @@ export {
   A2A_METHODS,
 } from "./types.js";
 
-import type { Code } from "../code.js";
+import type { Agent } from "../agent.js";
 import { A2AServer, type A2AServerOptions } from "./server.js";
 
 /**
- * Create an A2A server that exposes a Code instance via the Agent2Agent protocol.
+ * Create an A2A server that exposes an Agent instance via the Agent2Agent protocol.
  */
 export function createA2AServer(
-  code: Code,
+  code: Agent,
   options: A2AServerOptions,
 ): A2AServer {
   return new A2AServer(code, options);

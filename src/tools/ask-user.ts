@@ -31,7 +31,7 @@ export const askUserTool: Tool = {
       return {
         content:
           "Cannot ask user: no userInputHandler configured. " +
-          "Set userInputHandler in CodeOptions or ThreadConfig.",
+          "Set userInputHandler in AgentOptions or ThreadConfig.",
         isError: true,
       };
     }

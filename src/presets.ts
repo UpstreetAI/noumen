@@ -1,4 +1,4 @@
-import { Code, type CodeOptions } from "./code.js";
+import { Agent } from "./agent.js";
 import type { AIProvider } from "./providers/types.js";
 import { LocalSandbox, type Sandbox } from "./virtual/sandbox.js";
 import type { HookDefinition } from "./hooks/types.js";
@@ -25,10 +25,10 @@ export interface PresetOptions {
  * Full-featured coding agent with subagents, tasks, plan mode, auto-compact,
  * retry, cost tracking, and project context enabled out of the box.
  */
-export function codingAgent(opts: PresetOptions): Code {
+export function codingAgent(opts: PresetOptions): Agent {
   const cwd = opts.cwd ?? process.cwd();
-  return new Code({
-    aiProvider: opts.provider,
+  return new Agent({
+    provider: opts.provider,
     sandbox: opts.sandbox ?? LocalSandbox({ cwd }),
     options: {
       cwd,
@@ -52,10 +52,10 @@ export function codingAgent(opts: PresetOptions): Code {
  * Read-only planning agent — can explore the codebase but cannot make changes.
  * Useful for architecture analysis, code review prep, or scoping work.
  */
-export function planningAgent(opts: PresetOptions): Code {
+export function planningAgent(opts: PresetOptions): Agent {
   const cwd = opts.cwd ?? process.cwd();
-  return new Code({
-    aiProvider: opts.provider,
+  return new Agent({
+    provider: opts.provider,
     sandbox: opts.sandbox ?? LocalSandbox({ cwd }),
     options: {
       cwd,
@@ -79,10 +79,10 @@ export function planningAgent(opts: PresetOptions): Code {
  * Code review agent — read-only with web search enabled for looking up
  * documentation, best practices, and security advisories.
  */
-export function reviewAgent(opts: PresetOptions): Code {
+export function reviewAgent(opts: PresetOptions): Agent {
   const cwd = opts.cwd ?? process.cwd();
-  return new Code({
-    aiProvider: opts.provider,
+  return new Agent({
+    provider: opts.provider,
     sandbox: opts.sandbox ?? LocalSandbox({ cwd }),
     options: {
       cwd,

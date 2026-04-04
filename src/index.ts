@@ -1,5 +1,10 @@
 // Main API
-export { Code, type CodeOptions, type DiagnoseCheckResult, type DiagnoseResult } from "./code.js";
+export {
+  Agent,
+  type AgentOptions,
+  type DiagnoseCheckResult,
+  type DiagnoseResult,
+} from "./agent.js";
 
 // Presets
 export { codingAgent, planningAgent, reviewAgent, type PresetOptions } from "./presets.js";

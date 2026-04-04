@@ -22,7 +22,7 @@ beforeEach(() => {
   computer = new MockComputer();
   provider = new MockAIProvider();
   config = {
-    aiProvider: provider,
+    provider: provider,
     fs,
     computer,
     sessionDir: "/sessions",

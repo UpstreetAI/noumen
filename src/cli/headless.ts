@@ -1,6 +1,6 @@
 import * as readline from "node:readline";
 import { randomUUID } from "node:crypto";
-import type { Code } from "../code.js";
+import type { Agent } from "../agent.js";
 import type { Thread } from "../thread.js";
 import type { StreamEvent } from "../session/types.js";
 import type { PermissionResponse } from "../permissions/types.js";
@@ -51,7 +51,7 @@ function serializeEvent(event: StreamEvent): Record<string, unknown> {
  *   { type: "session_done", sessionId }
  *   All StreamEvent types with an added `sessionId` field
  */
-export async function runHeadless(code: Code, _config: MergedConfig): Promise<void> {
+export async function runHeadless(code: Agent, _config: MergedConfig): Promise<void> {
   await code.init();
 
   const sessions = new Map<string, SessionEntry>();

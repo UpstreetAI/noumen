@@ -164,7 +164,7 @@ describe("Thread with streamingToolExecution", () => {
     provider.addResponse(textResponse("Read it."));
 
     const config: ThreadConfig = {
-      aiProvider: provider,
+      provider: provider,
       fs,
       computer,
       sessionDir: "/sessions",
@@ -195,7 +195,7 @@ describe("Thread with streamingToolExecution", () => {
     provider.addResponse(textResponse("Read both."));
 
     const config: ThreadConfig = {
-      aiProvider: provider,
+      provider: provider,
       fs,
       computer,
       sessionDir: "/sessions",
@@ -224,7 +224,7 @@ describe("Thread with streamingToolExecution", () => {
     provider.addResponse(textResponse("Done."));
 
     const config: ThreadConfig = {
-      aiProvider: provider,
+      provider: provider,
       fs,
       computer,
       sessionDir: "/sessions",

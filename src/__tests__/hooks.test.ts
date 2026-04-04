@@ -173,7 +173,7 @@ describe("Thread hooks integration", () => {
     provider.addResponse(textResponse("Ok, skipping."));
 
     const config: ThreadConfig = {
-      aiProvider: provider,
+      provider: provider,
       fs,
       computer,
       sessionDir: "/sessions",
@@ -205,7 +205,7 @@ describe("Thread hooks integration", () => {
     provider.addResponse(textResponse("Got it."));
 
     const config: ThreadConfig = {
-      aiProvider: provider,
+      provider: provider,
       fs,
       computer,
       sessionDir: "/sessions",
@@ -237,7 +237,7 @@ describe("Thread hooks integration", () => {
     provider.addResponse(textResponse("Done."));
 
     const config: ThreadConfig = {
-      aiProvider: provider,
+      provider: provider,
       fs,
       computer,
       sessionDir: "/sessions",
@@ -267,7 +267,7 @@ describe("Thread hooks integration", () => {
     // No second response needed since loop should stop
 
     const config: ThreadConfig = {
-      aiProvider: provider,
+      provider: provider,
       fs,
       computer,
       sessionDir: "/sessions",

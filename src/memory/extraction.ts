@@ -56,7 +56,7 @@ function summarizeRecentMessages(messages: ChatMessage[], maxMessages = 20): str
  * `MemoryProvider` and returns a summary of changes.
  */
 export async function extractMemories(
-  aiProvider: AIProvider,
+  llmProvider: AIProvider,
   model: string,
   messages: ChatMessage[],
   provider: MemoryProvider,
@@ -70,7 +70,7 @@ export async function extractMemories(
   ];
 
   let responseText = "";
-  for await (const chunk of aiProvider.chat({
+  for await (const chunk of llmProvider.chat({
     model,
     messages: extractionMessages,
     system: "You are a memory extraction assistant. Respond only with valid JSON.",

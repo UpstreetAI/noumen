@@ -2,7 +2,7 @@
  * A2A Task Manager: maps A2A task lifecycle to noumen sessions/threads.
  */
 
-import type { Code } from "../code.js";
+import type { Agent } from "../agent.js";
 import type { Thread } from "../thread.js";
 import type { StreamEvent } from "../session/types.js";
 import { contentToString } from "../utils/content.js";
@@ -27,9 +27,9 @@ interface ManagedTask {
 
 export class TaskManager {
   private tasks = new Map<string, ManagedTask>();
-  private code: Code;
+  private code: Agent;
 
-  constructor(code: Code) {
+  constructor(code: Agent) {
     this.code = code;
   }
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { MockFs, MockComputer, MockAIProvider, textResponse } from "./helpers.js";
-import { Code } from "../code.js";
+import { Agent } from "../agent.js";
 import { Thread } from "../thread.js";
 
 let fs: MockFs;
@@ -13,12 +13,11 @@ beforeEach(() => {
   provider = new MockAIProvider();
 });
 
-describe("Code", () => {
+describe("Agent", () => {
   it("createThread returns a Thread instance", () => {
-    const code = new Code({
-      aiProvider: provider,
-      virtualFs: fs,
-      virtualComputer: computer,
+    const code = new Agent({
+      provider: provider,
+      sandbox: { fs, computer },
     });
 
     const thread = code.createThread();
@@ -26,53 +25,20 @@ describe("Code", () => {
     expect(thread.sessionId).toBeTruthy();
   });
 
-  it("accepts sandbox property", () => {
-    const code = new Code({
-      aiProvider: provider,
-      sandbox: { fs, computer },
+  it("defaults sandbox to LocalSandbox when only cwd is provided", () => {
+    const code = new Agent({
+      provider: provider,
+      cwd: "/tmp/test",
     });
 
     const thread = code.createThread();
     expect(thread).toBeInstanceOf(Thread);
   });
 
-  it("sandbox takes precedence over virtualFs/virtualComputer", async () => {
-    const sandboxFs = new MockFs();
-    const code = new Code({
-      aiProvider: provider,
-      sandbox: { fs: sandboxFs, computer },
-      virtualFs: fs,
-      virtualComputer: computer,
-    });
-
-    provider.addResponse(textResponse("ok"));
-    const thread = code.createThread({ sessionId: "s1" });
-    for await (const _ of thread.run("hi")) {
-      // consume
-    }
-
-    // Session files land on sandboxFs (from sandbox), not on fs (from virtualFs)
-    expect(sandboxFs.files.size).toBeGreaterThan(0);
-    expect(fs.files.size).toBe(0);
-  });
-
-  it("throws when neither sandbox nor virtualFs/virtualComputer provided", () => {
-    expect(
-      () => new Code({ aiProvider: provider } as any),
-    ).toThrow("Provide either `sandbox` or both `virtualFs` and `virtualComputer`.");
-  });
-
-  it("throws when only virtualFs is provided without virtualComputer", () => {
-    expect(
-      () => new Code({ aiProvider: provider, virtualFs: fs } as any),
-    ).toThrow("Provide either `sandbox` or both `virtualFs` and `virtualComputer`.");
-  });
-
   it("createThread uses provided sessionId", () => {
-    const code = new Code({
-      aiProvider: provider,
-      virtualFs: fs,
-      virtualComputer: computer,
+    const code = new Agent({
+      provider: provider,
+      sandbox: { fs, computer },
     });
 
     const thread = code.createThread({ sessionId: "my-session" });
@@ -80,10 +46,9 @@ describe("Code", () => {
   });
 
   it("listSessions returns empty when no sessions exist", async () => {
-    const code = new Code({
-      aiProvider: provider,
-      virtualFs: fs,
-      virtualComputer: computer,
+    const code = new Agent({
+      provider: provider,
+      sandbox: { fs, computer },
     });
 
     const sessions = await code.listSessions();
@@ -91,10 +56,9 @@ describe("Code", () => {
   });
 
   it("listSessions returns sessions after threads have run", async () => {
-    const code = new Code({
-      aiProvider: provider,
-      virtualFs: fs,
-      virtualComputer: computer,
+    const code = new Agent({
+      provider: provider,
+      sandbox: { fs, computer },
     });
 
     provider.addResponse(textResponse("reply"));
@@ -111,10 +75,9 @@ describe("Code", () => {
   });
 
   it("passes skills to thread", async () => {
-    const code = new Code({
-      aiProvider: provider,
-      virtualFs: fs,
-      virtualComputer: computer,
+    const code = new Agent({
+      provider: provider,
+      sandbox: { fs, computer },
       options: {
         skills: [{ name: "TestSkill", content: "Always test." }],
       },
@@ -137,10 +100,9 @@ describe("Code", () => {
     fs.files.set("/skills/coding.md", "# Coding Standards\nUse TypeScript.");
     fs.dirs.add("/skills");
 
-    const code = new Code({
-      aiProvider: provider,
-      virtualFs: fs,
-      virtualComputer: computer,
+    const code = new Agent({
+      provider: provider,
+      sandbox: { fs, computer },
       options: {
         skillsPaths: ["/skills"],
       },
@@ -159,10 +121,9 @@ describe("Code", () => {
   });
 
   it("uses custom system prompt", async () => {
-    const code = new Code({
-      aiProvider: provider,
-      virtualFs: fs,
-      virtualComputer: computer,
+    const code = new Agent({
+      provider: provider,
+      sandbox: { fs, computer },
       options: {
         systemPrompt: "You are a pirate.",
       },
@@ -179,10 +140,9 @@ describe("Code", () => {
   });
 
   it("passes model and maxTokens to thread", async () => {
-    const code = new Code({
-      aiProvider: provider,
-      virtualFs: fs,
-      virtualComputer: computer,
+    const code = new Agent({
+      provider: provider,
+      sandbox: { fs, computer },
       options: {
         model: "gpt-4o-mini",
         maxTokens: 2048,

@@ -200,7 +200,7 @@ describe("Cost tracking in Thread", () => {
     computer = new MockComputer();
     provider = new MockAIProvider();
     baseConfig = {
-      aiProvider: provider,
+      provider: provider,
       fs,
       computer,
       sessionDir: "/sessions",

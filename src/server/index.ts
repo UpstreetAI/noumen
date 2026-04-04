@@ -1,6 +1,6 @@
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
-import type { Code } from "../code.js";
+import type { Agent } from "../agent.js";
 import type { StreamEvent } from "../session/types.js";
 import type { PermissionResponse } from "../permissions/types.js";
 
@@ -118,14 +118,14 @@ type WsServer = {
 // ---------------------------------------------------------------------------
 
 export class NoumenServer {
-  private code: Code;
+  private code: Agent;
   private options: ServerOptions;
   private httpServer: ReturnType<typeof createHttpServer> | null = null;
   private wss: WsServer | null = null;
   private sessions = new Map<string, SessionState>();
   private idleTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(code: Code, options: ServerOptions) {
+  constructor(code: Agent, options: ServerOptions) {
     this.code = code;
     this.options = options;
   }
@@ -772,7 +772,7 @@ export class NoumenServer {
 // Factory
 // ---------------------------------------------------------------------------
 
-export function createServer(code: Code, options: ServerOptions): NoumenServer {
+export function createServer(code: Agent, options: ServerOptions): NoumenServer {
   return new NoumenServer(code, options);
 }
 
@@ -791,7 +791,7 @@ export function createServer(code: Code, options: ServerOptions): NoumenServer {
  * WebSocket is not supported in middleware mode — use `createServer()` for WS.
  */
 export function createRequestHandler(
-  code: Code,
+  code: Agent,
   options?: RequestHandlerOptions,
 ): (req: IncomingMessage, res: ServerResponse) => void {
   const serverOpts: ServerOptions = {

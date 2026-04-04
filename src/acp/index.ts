@@ -10,7 +10,7 @@
  *
  *   // Or use AcpClientSandbox to let the client provide fs/terminal
  *   const sandbox = new AcpClientSandbox(transport, handler.sendClientRequest);
- *   const code = new Code({ aiProvider, sandbox });
+ *   const agent = new Agent({ provider, sandbox });
  */
 
 export { AcpHandler, type AcpHandlerOptions } from "./handler.js";
@@ -26,15 +26,15 @@ export {
   ACP_METHODS,
 } from "./types.js";
 
-import type { Code } from "../code.js";
+import type { Agent } from "../agent.js";
 import type { AcpTransport } from "./types.js";
 import { AcpHandler, type AcpHandlerOptions } from "./handler.js";
 
 /**
- * Create an ACP server that bridges an ACP transport to a Code instance.
+ * Create an ACP server that bridges an ACP transport to an Agent instance.
  */
 export function createAcpServer(
-  code: Code,
+  code: Agent,
   transport: AcpTransport,
   options?: AcpHandlerOptions,
 ): AcpHandler {
