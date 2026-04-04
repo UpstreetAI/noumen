@@ -3,12 +3,12 @@
  */
 
 const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
-  // Anthropic
-  "claude-sonnet-4-20250514": 200_000,
-  "claude-opus-4-20250514": 200_000,
-  "claude-haiku-3-5-20241022": 200_000,
-  "claude-3-5-sonnet-20241022": 200_000,
-  "claude-3-5-haiku-20241022": 200_000,
+  // Anthropic (evergreen prefixes — also match dated variants via startsWith)
+  "claude-sonnet-4": 200_000,
+  "claude-opus-4": 200_000,
+  "claude-haiku-3-5": 200_000,
+  "claude-3-5-sonnet": 200_000,
+  "claude-3-5-haiku": 200_000,
   // OpenAI
   "gpt-4o": 128_000,
   "gpt-4o-mini": 128_000,
@@ -29,11 +29,11 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
 };
 
 const MODEL_MAX_OUTPUT_TOKENS: Record<string, number> = {
-  "claude-sonnet-4-20250514": 16_384,
-  "claude-opus-4-20250514": 16_384,
-  "claude-haiku-3-5-20241022": 8_192,
-  "claude-3-5-sonnet-20241022": 8_192,
-  "claude-3-5-haiku-20241022": 8_192,
+  "claude-sonnet-4": 16_384,
+  "claude-opus-4": 16_384,
+  "claude-haiku-3-5": 8_192,
+  "claude-3-5-sonnet": 8_192,
+  "claude-3-5-haiku": 8_192,
   "gpt-4o": 16_384,
   "gpt-4o-mini": 16_384,
   "gpt-4-turbo": 4_096,

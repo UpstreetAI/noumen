@@ -36,7 +36,7 @@ describe("Cost pricing", () => {
       completion_tokens: 500,
       total_tokens: 1500,
     };
-    const cost = calculateCost("claude-sonnet-4-20250514", usage);
+    const cost = calculateCost("claude-sonnet-4", usage);
     // claude-sonnet-4 pricing: $5/1M input, $25/1M output
     expect(cost).toBeCloseTo((1000 / 1e6) * 5 + (500 / 1e6) * 25, 6);
   });
@@ -60,7 +60,7 @@ describe("Cost pricing", () => {
       cache_read_tokens: 5000,
       cache_creation_tokens: 2000,
     };
-    const cost = calculateCost("claude-sonnet-4-20250514", usage);
+    const cost = calculateCost("claude-sonnet-4", usage);
     // $5/1M input + $25/1M output + $0.5/1M cache read + $6.25/1M cache write
     const expected =
       (1000 / 1e6) * 5 +
@@ -133,7 +133,7 @@ describe("CostTracker", () => {
       completion_tokens: 500,
       total_tokens: 1500,
     });
-    tracker.addUsage("claude-sonnet-4-20250514", {
+    tracker.addUsage("claude-sonnet-4", {
       prompt_tokens: 2000,
       completion_tokens: 1000,
       total_tokens: 3000,
@@ -142,7 +142,7 @@ describe("CostTracker", () => {
     const s = tracker.getSummary();
     expect(Object.keys(s.byModel)).toHaveLength(2);
     expect(s.byModel["gpt-4o"].inputTokens).toBe(1000);
-    expect(s.byModel["claude-sonnet-4-20250514"].inputTokens).toBe(2000);
+    expect(s.byModel["claude-sonnet-4"].inputTokens).toBe(2000);
   });
 
   it("tracks API duration", () => {

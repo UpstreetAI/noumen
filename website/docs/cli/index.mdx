@@ -38,7 +38,7 @@ Place `.noumen/config.json` at your project root (or any ancestor directory). Th
 ```json
 {
   "provider": "anthropic",
-  "model": "claude-sonnet-4-20250514",
+  "model": "claude-sonnet-4",
   "permissions": "acceptEdits",
   "mcpServers": {
     "filesystem": {
@@ -182,7 +182,7 @@ RESULT=$(npx noumen --quiet -c "What does server.ts do?")
 Use `--headless` for programmatic subprocess control. The agent communicates via bidirectional NDJSON over stdin/stdout:
 
 ```bash
-npx noumen --headless -p anthropic -m claude-sonnet-4-20250514
+npx noumen --headless -p anthropic -m claude-sonnet-4
 ```
 
 The process emits `{"type":"ready"}` when initialized. Send commands as JSON lines on stdin:
@@ -226,7 +226,7 @@ Example output:
 ```
 noumen doctor
 
-  ✓ Provider (claude-sonnet-4-20250514)  (342ms)
+  ✓ Provider (claude-sonnet-4)  (342ms)
   ✓ Sandbox: filesystem  (2ms)
   ✓ Sandbox: shell  (45ms)
   ✓ MCP: filesystem  (120ms) connected, 5 tools

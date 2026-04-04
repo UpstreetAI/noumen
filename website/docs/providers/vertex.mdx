@@ -15,7 +15,7 @@ import { VertexAnthropicProvider } from "noumen/vertex";
 const provider = new VertexAnthropicProvider({
   projectId: "my-gcp-project",
   region: "us-east5",                     // default
-  model: "claude-sonnet-4@20250514",      // default
+  model: "claude-sonnet-4",               // default
 });
 ```
 
@@ -25,7 +25,7 @@ const provider = new VertexAnthropicProvider({
 |--------|------|---------|-------------|
 | `projectId` | `string` | — | GCP project ID. If omitted, inferred from application default credentials. |
 | `region` | `string` | `"us-east5"` | GCP region |
-| `model` | `string` | `"claude-sonnet-4@20250514"` | Default model in Vertex format |
+| `model` | `string` | `"claude-sonnet-4"` | Default model in Vertex format |
 | `googleAuth` | `GoogleAuth` | — | Custom `GoogleAuth` instance. If omitted, the provider creates one using application default credentials. |
 | `cacheControl` | `CacheControlConfig` | — | Enable prompt caching |
 | `client` | `AnthropicVertex` | — | Pre-constructed client instance. When provided, all other connection options are ignored. |
@@ -62,6 +62,6 @@ The Vertex provider uses the shared Anthropic streaming layer. It maps Vertex's 
 
 Use Vertex model IDs. Common choices:
 
-- `claude-sonnet-4@20250514` -- balanced speed and capability
-- `claude-opus-4@20250514` -- highest capability
-- `claude-haiku-3@20250307` -- fastest, most affordable
+- `claude-sonnet-4` -- balanced speed and capability
+- `claude-opus-4` -- highest capability
+- `claude-haiku-3` -- fastest, most affordable

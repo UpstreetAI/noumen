@@ -14,7 +14,7 @@ import { AnthropicProvider } from "noumen/anthropic";
 
 const provider = new AnthropicProvider({
   apiKey: "sk-ant-...",
-  model: "claude-sonnet-4-20250514", // default
+  model: "claude-sonnet-4", // default
 });
 ```
 
@@ -23,7 +23,7 @@ const provider = new AnthropicProvider({
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `apiKey` | `string` | required | Anthropic API key |
-| `model` | `string` | `"claude-sonnet-4-20250514"` | Default model |
+| `model` | `string` | `"claude-sonnet-4"` | Default model |
 | `baseURL` | `string` | — | Override the API base URL |
 | `cacheControl` | `CacheControlConfig` | — | Enable prompt caching. Pass `{ enabled: true }` to inject `cache_control` markers. |
 
@@ -46,6 +46,6 @@ Anthropic uses a different message format than OpenAI. The provider handles this
 
 ## Models
 
-- `claude-sonnet-4-20250514` -- balanced speed and capability
-- `claude-opus-4-20250514` -- highest capability
-- `claude-haiku-3-20250307` -- fastest, most affordable
+- `claude-sonnet-4` -- balanced speed and capability
+- `claude-opus-4` -- highest capability
+- `claude-haiku-3` -- fastest, most affordable

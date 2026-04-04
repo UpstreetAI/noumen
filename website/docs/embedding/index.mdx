@@ -89,7 +89,7 @@ const result = await code.diagnose();
 console.log(result);
 // {
 //   overall: true,
-//   provider: { ok: true, latencyMs: 342, model: "claude-sonnet-4-20250514" },
+//   provider: { ok: true, latencyMs: 342, model: "claude-sonnet-4" },
 //   sandbox: {
 //     fs: { ok: true, latencyMs: 2 },
 //     computer: { ok: true, latencyMs: 45 },
@@ -344,7 +344,7 @@ export function activate(context: vscode.ExtensionContext) {
 For subprocess integration from any language, run the agent in headless mode with bidirectional NDJSON over stdin/stdout:
 
 ```bash
-noumen --headless -p anthropic -m claude-sonnet-4-20250514
+noumen --headless -p anthropic -m claude-sonnet-4
 ```
 
 Send commands as JSON lines on stdin, receive events as JSON lines on stdout. See the [Server API Reference](/docs/server-api#headless-cli-protocol) for the full protocol and examples in Node.js and Python.

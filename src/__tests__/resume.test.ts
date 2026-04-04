@@ -120,7 +120,7 @@ describe("CostTracker getState/restore", () => {
       total_tokens: 1500,
       cache_read_tokens: 200,
     }, 300);
-    tracker.addUsage("claude-sonnet-4-20250514", {
+    tracker.addUsage("claude-sonnet-4", {
       prompt_tokens: 2000,
       completion_tokens: 1000,
       total_tokens: 3000,

@@ -14,7 +14,7 @@ import { BedrockAnthropicProvider } from "noumen/bedrock";
 
 const provider = new BedrockAnthropicProvider({
   region: "us-east-1",                                     // default
-  model: "us.anthropic.claude-sonnet-4-20250514-v1:0",     // default
+  model: "us.anthropic.claude-sonnet-4-v1:0",               // default
 });
 ```
 
@@ -23,7 +23,7 @@ const provider = new BedrockAnthropicProvider({
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `region` | `string` | `"us-east-1"` | AWS region |
-| `model` | `string` | `"us.anthropic.claude-sonnet-4-20250514-v1:0"` | Default model in Bedrock format |
+| `model` | `string` | `"us.anthropic.claude-sonnet-4-v1:0"` | Default model in Bedrock format |
 | `credentials` | `object` | — | Explicit AWS credentials (`accessKeyId`, `secretAccessKey`, optional `sessionToken`). Falls back to the default credential chain when omitted. |
 | `baseURL` | `string` | — | Custom base URL for a Bedrock-compatible endpoint |
 | `cacheControl` | `CacheControlConfig` | — | Enable prompt caching |
@@ -64,6 +64,6 @@ The Bedrock provider uses the shared Anthropic streaming layer. It maps Bedrock'
 
 Use Bedrock model IDs. Common choices:
 
-- `us.anthropic.claude-sonnet-4-20250514-v1:0` -- balanced speed and capability
-- `us.anthropic.claude-opus-4-20250514-v1:0` -- highest capability
-- `us.anthropic.claude-haiku-3-20250307-v1:0` -- fastest, most affordable
+- `us.anthropic.claude-sonnet-4-v1:0` -- balanced speed and capability
+- `us.anthropic.claude-opus-4-v1:0` -- highest capability
+- `us.anthropic.claude-haiku-3-v1:0` -- fastest, most affordable

@@ -113,7 +113,7 @@ This creates `.noumen/config.json` with your provider and model choice. The CLI 
 ```json
 {
   "provider": "anthropic",
-  "model": "claude-sonnet-4-20250514",
+  "model": "claude-sonnet-4",
   "permissions": "acceptEdits"
 }
 ```
@@ -204,7 +204,7 @@ npx noumen --headless -p anthropic <<< '{"type":"prompt","text":"Fix the bug"}'
 const result = await code.diagnose();
 // {
 //   overall: true,
-//   provider: { ok: true, latencyMs: 342, model: "claude-sonnet-4-20250514" },
+//   provider: { ok: true, latencyMs: 342, model: "claude-sonnet-4" },
 //   sandbox: {
 //     fs: { ok: true, latencyMs: 2 },
 //     computer: { ok: true, latencyMs: 45 },
@@ -242,7 +242,7 @@ import { AnthropicProvider } from "noumen/anthropic";
 
 const provider = new AnthropicProvider({
   apiKey: "sk-ant-...",
-  model: "claude-sonnet-4-20250514", // default
+  model: "claude-sonnet-4", // default
 });
 ```
 
@@ -283,7 +283,7 @@ import { BedrockAnthropicProvider } from "noumen/bedrock";
 
 const provider = new BedrockAnthropicProvider({
   region: "us-west-2",                                     // default: us-east-1
-  model: "us.anthropic.claude-sonnet-4-20250514-v1:0",     // default
+  model: "us.anthropic.claude-sonnet-4-v1:0",               // default
   credentials: {                                            // optional, falls back to default chain
     accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
@@ -309,7 +309,7 @@ import { VertexAnthropicProvider } from "noumen/vertex";
 const provider = new VertexAnthropicProvider({
   projectId: "my-gcp-project",
   region: "us-east5",                     // default
-  model: "claude-sonnet-4@20250514",      // default
+  model: "claude-sonnet-4",               // default
   cacheControl: { enabled: true },        // optional prompt caching
 });
 ```

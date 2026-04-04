@@ -12,13 +12,13 @@ import type { ChatMessage } from "../session/types.js";
 describe("enhanced auto-compact", () => {
   describe("createAutoCompactConfig with model", () => {
     it("uses model-derived threshold when model is provided", () => {
-      const config = createAutoCompactConfig({ model: "claude-sonnet-4-20250514" });
-      // claude-sonnet-4-20250514 → 200k window, effective = 200k - 20k = 180k, threshold = 180k - 13k = 167k
+      const config = createAutoCompactConfig({ model: "claude-sonnet-4" });
+      // claude-sonnet-4 → 200k window, effective = 200k - 20k = 180k, threshold = 180k - 13k = 167k
       expect(config.threshold).toBe(167_000);
     });
 
     it("uses explicit threshold over model-derived", () => {
-      const config = createAutoCompactConfig({ model: "claude-sonnet-4-20250514", threshold: 50_000 });
+      const config = createAutoCompactConfig({ model: "claude-sonnet-4", threshold: 50_000 });
       expect(config.threshold).toBe(50_000);
     });
 

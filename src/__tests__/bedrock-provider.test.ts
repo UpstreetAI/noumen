@@ -52,7 +52,7 @@ describe("BedrockAnthropicProvider", () => {
 
     const chunks: ChatStreamChunk[] = [];
     for await (const chunk of provider.chat({
-      model: "us.anthropic.claude-sonnet-4-20250514-v1:0",
+      model: "us.anthropic.claude-sonnet-4-v1:0",
       messages: [{ role: "user", content: "hi" }],
     })) {
       chunks.push(chunk);
@@ -79,14 +79,14 @@ describe("BedrockAnthropicProvider", () => {
 
     const chunks: ChatStreamChunk[] = [];
     for await (const chunk of provider.chat({
-      model: "us.anthropic.claude-sonnet-4-20250514-v1:0",
+      model: "us.anthropic.claude-sonnet-4-v1:0",
       messages: [{ role: "user", content: "hi" }],
     })) {
       chunks.push(chunk);
     }
 
     const last = chunks[chunks.length - 1];
-    expect(last.model).toBe("us.anthropic.claude-sonnet-4-20250514-v1:0");
+    expect(last.model).toBe("us.anthropic.claude-sonnet-4-v1:0");
   });
 
   it("streams tool calls correctly", async () => {
@@ -107,7 +107,7 @@ describe("BedrockAnthropicProvider", () => {
 
     const chunks: ChatStreamChunk[] = [];
     for await (const chunk of provider.chat({
-      model: "us.anthropic.claude-sonnet-4-20250514-v1:0",
+      model: "us.anthropic.claude-sonnet-4-v1:0",
       messages: [{ role: "user", content: "read test.ts" }],
       tools: [
         {

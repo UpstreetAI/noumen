@@ -127,7 +127,7 @@ describe("AnthropicProvider", () => {
 
     const chunks: ChatStreamChunk[] = [];
     for await (const chunk of provider.chat({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4",
       messages: [{ role: "user", content: "hi" }],
     })) {
       chunks.push(chunk);
@@ -173,7 +173,7 @@ describe("AnthropicProvider", () => {
 
     const chunks: ChatStreamChunk[] = [];
     for await (const chunk of provider.chat({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4",
       messages: [{ role: "user", content: "hi" }],
     })) {
       chunks.push(chunk);
@@ -223,7 +223,7 @@ describe("AnthropicProvider", () => {
 
     const chunks: ChatStreamChunk[] = [];
     for await (const chunk of provider.chat({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4",
       messages: [{ role: "user", content: "read a.ts" }],
     })) {
       chunks.push(chunk);

@@ -25,7 +25,7 @@ const TIER_GEMINI_FLASH_LITE: ModelPricing = { inputTokens: 0.0375, outputTokens
 
 /**
  * Default pricing table for common models. Keys are matched as substrings
- * against the model ID so versioned model strings (e.g. `claude-sonnet-4-20250514`)
+ * against the model ID so versioned model strings (e.g. `claude-sonnet-4`)
  * resolve correctly.
  */
 export const DEFAULT_PRICING: Record<string, ModelPricing> = {

@@ -56,7 +56,7 @@ describe("VertexAnthropicProvider", () => {
 
     const chunks: ChatStreamChunk[] = [];
     for await (const chunk of provider.chat({
-      model: "claude-sonnet-4@20250514",
+      model: "claude-sonnet-4",
       messages: [{ role: "user", content: "hi" }],
     })) {
       chunks.push(chunk);
@@ -83,14 +83,14 @@ describe("VertexAnthropicProvider", () => {
 
     const chunks: ChatStreamChunk[] = [];
     for await (const chunk of provider.chat({
-      model: "claude-sonnet-4@20250514",
+      model: "claude-sonnet-4",
       messages: [{ role: "user", content: "hi" }],
     })) {
       chunks.push(chunk);
     }
 
     const last = chunks[chunks.length - 1];
-    expect(last.model).toBe("claude-sonnet-4@20250514");
+    expect(last.model).toBe("claude-sonnet-4");
   });
 
   it("handles cache usage tokens", async () => {
@@ -119,7 +119,7 @@ describe("VertexAnthropicProvider", () => {
 
     const chunks: ChatStreamChunk[] = [];
     for await (const chunk of provider.chat({
-      model: "claude-sonnet-4@20250514",
+      model: "claude-sonnet-4",
       messages: [{ role: "user", content: "hi" }],
     })) {
       chunks.push(chunk);
@@ -150,7 +150,7 @@ describe("VertexAnthropicProvider", () => {
 
     const chunks: ChatStreamChunk[] = [];
     for await (const chunk of provider.chat({
-      model: "claude-sonnet-4@20250514",
+      model: "claude-sonnet-4",
       messages: [{ role: "user", content: "list files" }],
       tools: [
         {
