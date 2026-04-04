@@ -2,6 +2,11 @@ import type { Tool, ToolContext, ToolResult } from "./types.js";
 import type { ToolDefinition } from "../providers/types.js";
 import { formatZodValidationError } from "../utils/zod.js";
 import { isDeferredTool } from "./tool-search.js";
+
+function resolveToolPrompt(tool: Tool): string {
+  if (tool.prompt === undefined) return tool.description;
+  return typeof tool.prompt === "function" ? tool.prompt() : tool.prompt;
+}
 import { readFileTool } from "./read.js";
 import { writeFileTool } from "./write.js";
 import { editFileTool } from "./edit.js";
@@ -98,7 +103,7 @@ export class ToolRegistry {
       type: "function" as const,
       function: {
         name: tool.name,
-        description: tool.description,
+        description: resolveToolPrompt(tool),
         parameters: tool.parameters,
       },
     }));
@@ -118,7 +123,7 @@ export class ToolRegistry {
         type: "function" as const,
         function: {
           name: tool.name,
-          description: tool.description,
+          description: resolveToolPrompt(tool),
           parameters: tool.parameters,
         },
       }));

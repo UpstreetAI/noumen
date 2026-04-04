@@ -35,6 +35,7 @@ import type { FileCheckpointManager } from "./checkpoint/manager.js";
 import { sortToolDefinitionsForCache } from "./providers/cache.js";
 import { saveCacheSafeParams, createCacheSafeParams } from "./providers/cache-safe-params.js";
 import { restoreSession } from "./session/resume.js";
+import { generateMissingToolResults } from "./session/recovery.js";
 import {
   runPreToolUseHooks,
   runPostToolUseHooks,
@@ -267,6 +268,30 @@ export class Thread {
               this.messages,
               this.contentReplacementState,
             );
+          }
+
+          // Emit recovery diagnostics
+          for (const [filterName, count] of Object.entries(payload.recoveryRemovals)) {
+            if (count > 0) {
+              yield { type: "recovery_filtered", filterName, removedCount: count };
+            }
+          }
+
+          if (payload.interruption.kind !== "none") {
+            yield {
+              type: "interrupted_turn_detected",
+              kind: payload.interruption.kind,
+            };
+          }
+
+          // Inject continuation prompt for interrupted tool turns
+          if (payload.interruption.kind === "interrupted_tool") {
+            const continuationMsg: ChatMessage = {
+              role: "user",
+              content: "Continue from where you left off.",
+            };
+            this.messages.push(continuationMsg);
+            await this.storage.appendMessage(this.sessionId, continuationMsg);
           }
 
           this.resumeRequested = false;
@@ -506,6 +531,20 @@ export class Thread {
             yield { type: "compact_complete" };
           }
 
+          // Generate synthetic tool results for any pending tool_calls before re-throwing
+          const lastMsg = this.messages[this.messages.length - 1];
+          if (lastMsg && lastMsg.role === "assistant" && (lastMsg as AssistantMessage).tool_calls) {
+            const syntheticResults = generateMissingToolResults(
+              lastMsg as AssistantMessage,
+              this.messages,
+              `Provider error: ${providerErr instanceof Error ? providerErr.message : String(providerErr)}`,
+            );
+            for (const sr of syntheticResults) {
+              this.messages.push(sr);
+              await this.storage.appendMessage(this.sessionId, sr);
+            }
+          }
+
           throw providerErr;
         }
 
@@ -610,6 +649,26 @@ export class Thread {
           providerSpan.setStatus(SpanStatusCode.OK);
           providerSpan.end();
           yield { type: "span_end", name: "noumen.provider.chat", spanId: providerSpanId, durationMs: Date.now() - providerStart };
+
+          // Generate synthetic results for any tool_calls accumulated before abort
+          const partialToolCalls: ToolCallContent[] = Array.from(accumulatedToolCalls.values()).map((tc) => ({
+            id: tc.id, type: "function" as const, function: { name: tc.name, arguments: tc.arguments },
+          }));
+          if (partialToolCalls.length > 0) {
+            const partialAssistant: AssistantMessage = {
+              role: "assistant",
+              content: accumulatedContent.join("") || null,
+              tool_calls: partialToolCalls,
+            };
+            this.messages.push(partialAssistant);
+            await this.storage.appendMessage(this.sessionId, partialAssistant);
+
+            const syntheticResults = generateMissingToolResults(partialAssistant, [], "Interrupted by abort");
+            for (const sr of syntheticResults) {
+              this.messages.push(sr);
+              await this.storage.appendMessage(this.sessionId, sr);
+            }
+          }
           break;
         }
 
@@ -703,6 +762,20 @@ export class Thread {
                   toolName: execResult.toolCall.function.name,
                   result: execResult.result,
                 };
+
+                // Emit git operation events from bash tool results
+                const gitOps = execResult.result.metadata?.gitOperations as
+                  | Array<{ type: string; details: string }>
+                  | undefined;
+                if (gitOps) {
+                  for (const op of gitOps) {
+                    yield {
+                      type: "git_operation" as const,
+                      operation: op.type as "commit" | "push" | "pr_create" | "merge" | "rebase",
+                      details: op.details,
+                    };
+                  }
+                }
               }
 
               if (execResult.preventContinuation) {
@@ -916,6 +989,20 @@ export class Thread {
                 toolName: tc.function.name,
                 result,
               };
+
+              // Emit git operation events from bash tool results
+              const gitOps = result.metadata?.gitOperations as
+                | Array<{ type: string; details: string }>
+                | undefined;
+              if (gitOps) {
+                for (const op of gitOps) {
+                  yield {
+                    type: "git_operation" as const,
+                    operation: op.type as "commit" | "push" | "pr_create" | "merge" | "rebase",
+                    details: op.details,
+                  };
+                }
+              }
             }
 
             // Spill oversized results to disk before appending to messages

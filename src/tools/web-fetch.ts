@@ -1,4 +1,5 @@
 import type { Tool, ToolResult, ToolContext } from "./types.js";
+import { WEB_FETCH_PROMPT } from "./prompts/web-fetch.js";
 
 const MAX_CONTENT_LENGTH = 5 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 30_000;
@@ -10,6 +11,7 @@ export const webFetchTool: Tool = {
     "Fetch a URL and return its contents as markdown. Useful for reading " +
     "web pages, documentation, API responses, and other online content. " +
     "Provide an optional prompt to extract specific information.",
+  prompt: WEB_FETCH_PROMPT,
   isReadOnly: true,
   isConcurrencySafe: true,
   parameters: {

@@ -1,4 +1,5 @@
 import type { Tool, ToolResult, ToolContext } from "./types.js";
+import { NOTEBOOK_PROMPT } from "./prompts/notebook.js";
 
 interface NotebookCell {
   cell_type: string;
@@ -20,6 +21,7 @@ export const notebookEditTool: Tool = {
   description:
     "Edit a Jupyter notebook (.ipynb) file. Can replace, insert, or delete " +
     "cells. The notebook is pure JSON — no kernel execution.",
+  prompt: NOTEBOOK_PROMPT,
   isReadOnly: false,
   isConcurrencySafe: false,
   parameters: {

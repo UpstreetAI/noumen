@@ -1,4 +1,5 @@
 import type { Tool, ToolResult, ToolContext } from "./types.js";
+import { getWebSearchPrompt } from "./prompts/web-search.js";
 
 export interface WebSearchResult {
   title: string;
@@ -31,6 +32,7 @@ export function createWebSearchTool(config: WebSearchConfig): Tool {
       "Search the web for real-time information. Returns titles, URLs, and " +
       "snippets from search results. Use when you need up-to-date information " +
       "not available in the local codebase.",
+    prompt: getWebSearchPrompt,
     isReadOnly: true,
     isConcurrencySafe: true,
     parameters: {

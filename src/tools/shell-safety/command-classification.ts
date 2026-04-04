@@ -237,7 +237,7 @@ function splitCompoundCommand(command: string): string[] {
  * Extract the base command name from a command string (first token after
  * env vars and redirects).
  */
-function extractCommandName(command: string): string {
+export function extractCommandName(command: string): string {
   let cmd = command.trim();
   // Strip leading env-var assignments: FOO=bar BAZ=qux command ...
   while (/^[A-Za-z_][A-Za-z0-9_]*=\S*\s/.test(cmd)) {
@@ -274,6 +274,12 @@ function classifyGitCommand(command: string): CommandClassification {
     return { isReadOnly: true, isDestructive: false, reason: "git --help is read-only" };
   }
 
+  // Guard: git -c, --exec-path=, --config-env= enable arbitrary code execution
+  // (e.g. git -c core.fsmonitor=malicious.sh status) regardless of subcommand
+  if (/\bgit\s+(-c\s|--exec-path=|--config-env=)/.test(command)) {
+    return { isReadOnly: false, isDestructive: true, reason: "git config injection vector (-c/--exec-path/--config-env)" };
+  }
+
   // Extract the git subcommand
   const match = command.match(/\bgit\s+(?:--[a-z-]+=?\S*\s+)*([a-z][a-z-]*)/);
   if (!match) {
@@ -292,9 +298,11 @@ function classifyGitCommand(command: string): CommandClassification {
       if (tokens.length > 0) {
         return { isReadOnly: false, isDestructive: false, reason: "git branch create" };
       }
-      // No positional args = listing branches (read-only)
     }
     if (subcommand === "tag" && !command.includes("-l") && !command.includes("--list")) {
+      if (command.includes("-d") || command.includes("-D") || command.includes("--delete")) {
+        return { isReadOnly: false, isDestructive: true, reason: "git tag delete" };
+      }
       const afterTag = command.slice(command.indexOf("tag") + 3).trim();
       const tokens = afterTag.split(/\s+/).filter((t) => !t.startsWith("-"));
       if (tokens.length > 0) {
@@ -303,7 +311,24 @@ function classifyGitCommand(command: string): CommandClassification {
     }
     if (subcommand === "stash") {
       if (command.includes("pop") || command.includes("apply") || command.includes("drop") || command.includes("clear")) {
-        return { isReadOnly: false, isDestructive: false, reason: "git stash mutating operation" };
+        const isDestructive = command.includes("drop") || command.includes("clear");
+        return { isReadOnly: false, isDestructive, reason: "git stash mutating operation" };
+      }
+    }
+    if (subcommand === "config") {
+      if (/(?:^|\s)(--set|--add|--unset|--unset-all|--replace-all|--rename-section|--remove-section)(?:\s|$)/.test(command)) {
+        return { isReadOnly: false, isDestructive: false, reason: "git config write operation" };
+      }
+      // config with a value argument (e.g. git config user.name "Foo")
+      const afterConfig = command.slice(command.indexOf("config") + 6).trim();
+      const configTokens = afterConfig.split(/\s+/).filter((t) => t && !t.startsWith("-"));
+      if (configTokens.length >= 2) {
+        return { isReadOnly: false, isDestructive: false, reason: "git config set key value" };
+      }
+    }
+    if (subcommand === "remote") {
+      if (/\b(add|remove|rename|set-url|set-branches|prune)\b/.test(command)) {
+        return { isReadOnly: false, isDestructive: false, reason: "git remote mutating operation" };
       }
     }
 
@@ -311,7 +336,6 @@ function classifyGitCommand(command: string): CommandClassification {
   }
 
   if (GIT_MUTATING_SUBCOMMANDS.has(subcommand)) {
-    // Check destructive patterns
     for (const pattern of DESTRUCTIVE_PATTERNS) {
       if (pattern.test(command)) {
         return { isReadOnly: false, isDestructive: true, reason: `Destructive: ${pattern.source}` };
@@ -356,6 +380,11 @@ function classifySingleCommand(
     return classifyGitCommand(command);
   }
 
+  // xargs with git: treat as a git command (e.g. xargs git add)
+  if (name === "xargs" && /\bgit\b/.test(command)) {
+    return classifyGitCommand(command);
+  }
+
   // Check against read-only allowlist
   const extraReadOnly = new Set(config?.extraReadOnlyCommands ?? []);
   if (READ_ONLY_COMMANDS.has(name) || extraReadOnly.has(name)) {
@@ -387,6 +416,23 @@ export function classifyCommand(
   const subCommands = splitCompoundCommand(command);
   if (subCommands.length === 0) {
     return { isReadOnly: true, isDestructive: false, reason: "Empty command" };
+  }
+
+  // cd/pushd + git compound: prevents bare-repo attacks where
+  // `cd /tmp/malicious-repo && git status` triggers malicious hooks
+  if (subCommands.length > 1) {
+    const hasCd = subCommands.some((s) => /^(cd|pushd)\s/.test(s.trim()));
+    const hasGit = subCommands.some((s) => {
+      const n = extractCommandName(s);
+      return n === "git" || (n === "xargs" && /\bgit\b/.test(s));
+    });
+    if (hasCd && hasGit) {
+      return {
+        isReadOnly: false,
+        isDestructive: false,
+        reason: "cd + git compound may escape working directory (bare-repo risk)",
+      };
+    }
   }
 
   let allReadOnly = true;

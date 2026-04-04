@@ -1,4 +1,5 @@
 import type { Tool, ToolResult, ToolContext } from "./types.js";
+import { GREP_PROMPT } from "./prompts/grep.js";
 
 const MAX_MATCHES = 250;
 
@@ -7,6 +8,7 @@ export const grepTool: Tool = {
   description:
     "Search file contents using ripgrep (rg). Supports regex patterns. " +
     "Returns matching lines with file paths and line numbers.",
+  prompt: GREP_PROMPT,
   isReadOnly: true,
   isConcurrencySafe: true,
   parameters: {

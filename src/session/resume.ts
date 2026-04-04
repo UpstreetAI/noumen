@@ -17,6 +17,7 @@ import type {
 import type { FileCheckpointSnapshot } from "../checkpoint/types.js";
 import type { StoredCostState } from "../cost/tracker.js";
 import { applySnipRemovals } from "../compact/history-snip.js";
+import { sanitizeForResume, type TurnInterruption } from "./recovery.js";
 
 export interface ResumePayload {
   messages: ChatMessage[];
@@ -26,6 +27,14 @@ export interface ResumePayload {
   overflowEntries: ToolResultOverflowEntry[];
   /** Persisted content replacement records for disk-spilled tool results. */
   contentReplacements: ContentReplacementRecord[];
+  /** Detected turn interruption state after sanitization. */
+  interruption: TurnInterruption;
+  /** Number of messages removed per sanitization filter. */
+  recoveryRemovals: {
+    unresolvedToolUses: number;
+    whitespaceOnly: number;
+    orphanedThinking: number;
+  };
 }
 
 /**
@@ -129,11 +138,15 @@ export async function restoreSession(
 
   const checkpointSnapshots = buildCheckpointChain(entries, checkpointsByMessageId);
 
+  const sanitized = sanitizeForResume(messages);
+
   return {
-    messages,
+    messages: sanitized.messages,
     checkpointSnapshots,
     metadata,
     overflowEntries,
     contentReplacements,
+    interruption: sanitized.interruption,
+    recoveryRemovals: sanitized.removals,
   };
 }

@@ -1,10 +1,12 @@
 import type { Tool, ToolResult, ToolContext } from "./types.js";
+import { WRITE_PROMPT } from "./prompts/write.js";
 
 export const writeFileTool: Tool = {
   name: "WriteFile",
   description:
     "Create or overwrite a file with the given content. " +
     "Parent directories are created automatically if they don't exist.",
+  prompt: WRITE_PROMPT,
   isReadOnly: false,
   checkPermissions(args) {
     const filePath = args.file_path as string;

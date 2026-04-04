@@ -167,11 +167,26 @@ export {
 } from "./tools/streaming-executor.js";
 
 // Shell safety / command classification
-export { classifyCommand } from "./tools/shell-safety/command-classification.js";
+export { classifyCommand, extractCommandName } from "./tools/shell-safety/command-classification.js";
 export type {
   CommandClassification,
   ShellSafetyConfig,
 } from "./tools/shell-safety/types.js";
+
+// Git safety
+export {
+  isGitInternalPath,
+  looksLikeBareRepo,
+  commandWritesGitInternals,
+} from "./tools/shell-safety/git-safety.js";
+export {
+  detectGitOperations,
+  hasGitIndexLockError,
+} from "./tools/shell-safety/git-tracking.js";
+export type {
+  GitOperationType,
+  GitOperationEvent,
+} from "./tools/shell-safety/git-tracking.js";
 
 // Task management
 export type { Task, TaskStatus, TaskCreateInput, TaskUpdateInput } from "./tasks/types.js";
@@ -513,6 +528,17 @@ export {
 export type { ResumePayload } from "./session/resume.js";
 export { restoreSession } from "./session/resume.js";
 export type { StoredCostState } from "./cost/tracker.js";
+
+// Conversation Recovery
+export {
+  filterUnresolvedToolUses,
+  filterWhitespaceOnlyAssistantMessages,
+  filterOrphanedThinkingMessages,
+  detectTurnInterruption,
+  sanitizeForResume,
+  generateMissingToolResults,
+} from "./session/recovery.js";
+export type { TurnInterruption, SanitizeResult } from "./session/recovery.js";
 
 // New session types
 export type { FileCheckpointEntry } from "./session/types.js";

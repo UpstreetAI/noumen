@@ -268,7 +268,17 @@ export type StreamEvent =
       deleted: string[];
     }
   | { type: "session_resumed"; sessionId: string; messageCount: number }
-  | { type: "checkpoint_snapshot"; messageId: string };
+  | { type: "checkpoint_snapshot"; messageId: string }
+  | { type: "recovery_filtered"; filterName: string; removedCount: number }
+  | {
+      type: "interrupted_turn_detected";
+      kind: "interrupted_tool" | "interrupted_prompt";
+    }
+  | {
+      type: "git_operation";
+      operation: "commit" | "push" | "pr_create" | "merge" | "rebase";
+      details: string;
+    };
 
 export interface RunOptions {
   signal?: AbortSignal;

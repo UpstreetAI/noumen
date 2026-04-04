@@ -1,5 +1,6 @@
 import type { Tool, ToolResult, ToolContext } from "./types.js";
 import { runNotificationHooks } from "../hooks/runner.js";
+import { AGENT_PROMPT } from "./prompts/agent.js";
 
 const DEFAULT_MAX_TURNS = 25;
 
@@ -10,6 +11,7 @@ export const agentTool: Tool = {
     "runs in its own conversation context and returns its final response. " +
     "Use for tasks that benefit from independent context (research, " +
     "code generation, analysis) or when you want to parallelise work.",
+  prompt: AGENT_PROMPT,
   isReadOnly: false,
   isConcurrencySafe: true,
   parameters: {

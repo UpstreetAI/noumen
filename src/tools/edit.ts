@@ -1,5 +1,6 @@
 import type { Tool, ToolResult, ToolContext } from "./types.js";
 import { findActualString, countOccurrences, preserveQuoteStyle } from "./edit-utils.js";
+import { EDIT_PROMPT } from "./prompts/edit.js";
 
 export const editFileTool: Tool = {
   name: "EditFile",
@@ -7,6 +8,7 @@ export const editFileTool: Tool = {
     "Edit a file by replacing an exact string match with new content. " +
     "The old_string must match exactly (including whitespace and indentation). " +
     "Set replace_all to true to replace all occurrences.",
+  prompt: EDIT_PROMPT,
   isReadOnly: false,
   checkPermissions(args) {
     const filePath = args.file_path as string;

@@ -1,4 +1,5 @@
 import type { Tool, ToolResult, ToolContext } from "./types.js";
+import { GLOB_PROMPT } from "./prompts/glob.js";
 
 const MAX_RESULTS = 200;
 
@@ -8,6 +9,7 @@ export const globTool: Tool = {
     "Find files matching a glob pattern. Uses ripgrep (rg --files --glob) " +
     "for fast, gitignore-aware file discovery. Returns matching file paths " +
     "sorted by modification time.",
+  prompt: GLOB_PROMPT,
   isReadOnly: true,
   isConcurrencySafe: true,
   parameters: {

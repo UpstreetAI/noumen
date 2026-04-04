@@ -1,5 +1,8 @@
 import type { Tool, ToolResult, ToolContext } from "./types.js";
 import { classifyCommand } from "./shell-safety/command-classification.js";
+import { detectGitOperations, type GitOperationEvent } from "./shell-safety/git-tracking.js";
+import { commandWritesGitInternals } from "./shell-safety/git-safety.js";
+import { BASH_PROMPT } from "./prompts/bash.js";
 
 const MAX_OUTPUT_CHARS = 100_000;
 
@@ -8,6 +11,7 @@ export const bashTool: Tool = {
   description:
     "Execute a bash shell command. Use this for running scripts, " +
     "installing packages, git operations, and other system commands.",
+  prompt: BASH_PROMPT,
   isReadOnly(args) {
     const command = args.command as string;
     return classifyCommand(command).isReadOnly;
@@ -23,6 +27,12 @@ export const bashTool: Tool = {
       return {
         behavior: "ask" as const,
         message: `Destructive command: ${command}${classification.reason ? ` (${classification.reason})` : ""}`,
+      };
+    }
+    if (commandWritesGitInternals(command)) {
+      return {
+        behavior: "ask" as const,
+        message: `Command writes to .git/ internals: ${command}`,
       };
     }
     return {
@@ -85,10 +95,20 @@ export const bashTool: Tool = {
         output = `Exit code: ${result.exitCode}\n${output}`;
       }
 
-      return {
+      const toolResult: ToolResult = {
         content: output,
         isError: result.exitCode !== 0,
       };
+
+      // Track git operations on success
+      if (result.exitCode === 0) {
+        const gitOps = detectGitOperations(command, result.stdout ?? "");
+        if (gitOps.length > 0) {
+          toolResult.metadata = { gitOperations: gitOps };
+        }
+      }
+
+      return toolResult;
     } catch (err) {
       return {
         content: `Error executing command: ${err instanceof Error ? err.message : String(err)}`,

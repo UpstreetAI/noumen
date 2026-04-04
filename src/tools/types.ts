@@ -10,6 +10,8 @@ import type { FileStateCache } from "../file-state/cache.js";
 export interface ToolResult {
   content: string | import("../session/types.js").ContentPart[];
   isError?: boolean;
+  /** Opaque metadata bag for tool-specific information (e.g. git operations). */
+  metadata?: Record<string, unknown>;
 }
 
 export interface SubagentConfig {
@@ -84,6 +86,13 @@ export interface ToolParameters {
 export interface Tool {
   name: string;
   description: string;
+  /**
+   * Long model-facing instructions sent as the tool's API description.
+   * When omitted, `description` is used instead. This allows a short
+   * `description` for UI/permission prompts while sending detailed
+   * usage guidance to the model.
+   */
+  prompt?: string | (() => string);
   parameters: ToolParameters;
   /**
    * Optional Zod schema for input validation. When present, tool input is

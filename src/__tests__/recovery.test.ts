@@ -1,0 +1,253 @@
+import { describe, it, expect } from "vitest";
+import type { ChatMessage, AssistantMessage } from "../session/types.js";
+import {
+  filterUnresolvedToolUses,
+  filterWhitespaceOnlyAssistantMessages,
+  filterOrphanedThinkingMessages,
+  detectTurnInterruption,
+  sanitizeForResume,
+  generateMissingToolResults,
+} from "../session/recovery.js";
+
+describe("filterUnresolvedToolUses", () => {
+  it("drops assistants where all tool_calls are unresolved", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "do it" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          { id: "tc_1", type: "function", function: { name: "Bash", arguments: '{"command":"ls"}' } },
+        ],
+      },
+      // No tool result for tc_1
+    ];
+    const result = filterUnresolvedToolUses(messages);
+    expect(result.removed).toBe(1);
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0].role).toBe("user");
+  });
+
+  it("keeps assistants with at least one resolved tool_call", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "do it" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          { id: "tc_1", type: "function", function: { name: "Bash", arguments: '{}' } },
+          { id: "tc_2", type: "function", function: { name: "Grep", arguments: '{}' } },
+        ],
+      },
+      { role: "tool", tool_call_id: "tc_1", content: "ok" },
+      // tc_2 is unresolved but tc_1 is resolved, so assistant is kept
+    ];
+    const result = filterUnresolvedToolUses(messages);
+    expect(result.removed).toBe(0);
+    expect(result.messages).toHaveLength(3);
+  });
+
+  it("keeps assistants without tool_calls", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+    ];
+    const result = filterUnresolvedToolUses(messages);
+    expect(result.removed).toBe(0);
+    expect(result.messages).toHaveLength(2);
+  });
+});
+
+describe("filterWhitespaceOnlyAssistantMessages", () => {
+  it("drops whitespace-only assistants with no tool_calls", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "   \n  " },
+      { role: "user", content: "again" },
+    ];
+    const result = filterWhitespaceOnlyAssistantMessages(messages);
+    expect(result.removed).toBe(1);
+    // Consecutive users should be merged
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0].role).toBe("user");
+    expect(result.messages[0].content).toContain("hi");
+    expect(result.messages[0].content).toContain("again");
+  });
+
+  it("keeps assistants with tool_calls even if text is empty", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hi" },
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [{ id: "tc_1", type: "function", function: { name: "Bash", arguments: '{}' } }],
+      },
+    ];
+    const result = filterWhitespaceOnlyAssistantMessages(messages);
+    expect(result.removed).toBe(0);
+    expect(result.messages).toHaveLength(2);
+  });
+
+  it("keeps assistants with real text content", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello there" },
+    ];
+    const result = filterWhitespaceOnlyAssistantMessages(messages);
+    expect(result.removed).toBe(0);
+  });
+});
+
+describe("filterOrphanedThinkingMessages", () => {
+  it("drops null-content assistants with no tool_calls", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: null } as AssistantMessage,
+      { role: "assistant", content: "real response" },
+    ];
+    const result = filterOrphanedThinkingMessages(messages);
+    expect(result.removed).toBe(1);
+    expect(result.messages).toHaveLength(2);
+  });
+
+  it("keeps null-content assistants that have tool_calls", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hi" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [{ id: "tc_1", type: "function", function: { name: "Bash", arguments: '{}' } }],
+      } as AssistantMessage,
+    ];
+    const result = filterOrphanedThinkingMessages(messages);
+    expect(result.removed).toBe(0);
+  });
+});
+
+describe("detectTurnInterruption", () => {
+  it("returns none for empty messages", () => {
+    expect(detectTurnInterruption([]).kind).toBe("none");
+  });
+
+  it("returns none when last significant message is assistant", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+    ];
+    expect(detectTurnInterruption(messages).kind).toBe("none");
+  });
+
+  it("returns interrupted_tool when last message is a tool result", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "do it" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          { id: "tc_1", type: "function", function: { name: "Bash", arguments: '{}' } },
+        ],
+      },
+      { role: "tool", tool_call_id: "tc_1", content: "done" },
+    ];
+    expect(detectTurnInterruption(messages).kind).toBe("interrupted_tool");
+  });
+
+  it("returns interrupted_prompt when last message is user", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+      { role: "user", content: "now do this" },
+    ];
+    expect(detectTurnInterruption(messages).kind).toBe("interrupted_prompt");
+  });
+
+  it("skips trailing system messages", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+      { role: "system", content: "system note" },
+    ];
+    expect(detectTurnInterruption(messages).kind).toBe("none");
+  });
+});
+
+describe("sanitizeForResume", () => {
+  it("runs all filters in order and detects interruption", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "step 1" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [{ id: "tc_1", type: "function", function: { name: "Bash", arguments: '{}' } }],
+      },
+      // No tool result — this assistant should be dropped
+      { role: "user", content: "step 2" },
+      { role: "assistant", content: "   " },  // whitespace only — should be dropped
+      { role: "user", content: "step 3" },
+    ];
+
+    const result = sanitizeForResume(messages);
+    expect(result.removals.unresolvedToolUses).toBe(1);
+    expect(result.removals.whitespaceOnly).toBe(1);
+    expect(result.interruption.kind).toBe("interrupted_prompt");
+  });
+
+  it("returns clean result for well-formed conversation", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+    ];
+    const result = sanitizeForResume(messages);
+    expect(result.removals.unresolvedToolUses).toBe(0);
+    expect(result.removals.whitespaceOnly).toBe(0);
+    expect(result.removals.orphanedThinking).toBe(0);
+    expect(result.interruption.kind).toBe("none");
+    expect(result.messages).toHaveLength(2);
+  });
+});
+
+describe("generateMissingToolResults", () => {
+  it("generates synthetic results for unresolved tool_calls", () => {
+    const assistant: AssistantMessage = {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        { id: "tc_1", type: "function", function: { name: "Bash", arguments: '{}' } },
+        { id: "tc_2", type: "function", function: { name: "Grep", arguments: '{}' } },
+      ],
+    };
+    const existing: ChatMessage[] = [
+      { role: "tool", tool_call_id: "tc_1", content: "ok" },
+    ];
+
+    const missing = generateMissingToolResults(assistant, existing, "Interrupted by abort");
+    expect(missing).toHaveLength(1);
+    expect(missing[0].tool_call_id).toBe("tc_2");
+    expect(missing[0].content).toContain("Interrupted by abort");
+  });
+
+  it("returns empty array when all tool_calls are resolved", () => {
+    const assistant: AssistantMessage = {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        { id: "tc_1", type: "function", function: { name: "Bash", arguments: '{}' } },
+      ],
+    };
+    const existing: ChatMessage[] = [
+      { role: "tool", tool_call_id: "tc_1", content: "ok" },
+    ];
+
+    const missing = generateMissingToolResults(assistant, existing, "test");
+    expect(missing).toHaveLength(0);
+  });
+
+  it("returns empty array for assistant without tool_calls", () => {
+    const assistant: AssistantMessage = {
+      role: "assistant",
+      content: "just text",
+    };
+    const missing = generateMissingToolResults(assistant, [], "test");
+    expect(missing).toHaveLength(0);
+  });
+});

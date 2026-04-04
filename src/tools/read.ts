@@ -1,10 +1,12 @@
 import type { Tool, ToolResult, ToolContext } from "./types.js";
+import { READ_PROMPT } from "./prompts/read.js";
 
 export const readFileTool: Tool = {
   name: "ReadFile",
   description:
     "Read a file from the filesystem. Returns the file content with line numbers. " +
     "Use offset and limit to read specific portions of large files.",
+  prompt: READ_PROMPT,
   isReadOnly: true,
   isConcurrencySafe: true,
   parameters: {
