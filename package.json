@@ -1,5 +1,5 @@
 {
-  "name": "lisk-code",
+  "name": "fangd",
   "version": "0.1.0",
   "type": "module",
   "description": "Programmatic AI coding agent library with pluggable providers and virtual infrastructure",
@@ -28,6 +28,7 @@
   "dependencies": {
     "openai": "^4.85.0",
     "@anthropic-ai/sdk": "^0.39.0",
+    "@google/genai": "^1.48.0",
     "uuid": "^11.1.0"
   },
   "devDependencies": {

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ChatStreamChunk } from "../providers/types.js";
+import type { ChatMessage } from "../session/types.js";
 
 describe("OpenAIProvider", () => {
   beforeEach(() => {
@@ -198,3 +199,243 @@ describe("AnthropicProvider", () => {
     expect(last.choices[0].finish_reason).toBe("tool_calls");
   });
 });
+
+describe("GeminiProvider", () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  it("maps streaming text chunks to OpenAI-shaped format", async () => {
+    const streamChunks = [
+      {
+        candidates: [
+          {
+            content: { parts: [{ text: "Hello" }] },
+            finishReason: undefined,
+          },
+        ],
+      },
+      {
+        candidates: [
+          {
+            content: { parts: [{ text: " world" }] },
+            finishReason: "STOP",
+          },
+        ],
+      },
+    ];
+
+    vi.doMock("@google/genai", () => ({
+      GoogleGenAI: class {
+        models = {
+          generateContentStream: vi.fn().mockResolvedValue(
+            (async function* () {
+              for (const chunk of streamChunks) yield chunk;
+            })(),
+          ),
+        };
+      },
+    }));
+
+    const { GeminiProvider } = await import("../providers/gemini.js");
+    const provider = new GeminiProvider({ apiKey: "test-key" });
+
+    const chunks: ChatStreamChunk[] = [];
+    for await (const chunk of provider.chat({
+      model: "gemini-2.5-flash",
+      messages: [{ role: "user", content: "hi" }],
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks.length).toBeGreaterThanOrEqual(2);
+
+    const textParts = chunks
+      .map((c) => c.choices[0]?.delta?.content)
+      .filter(Boolean);
+    expect(textParts).toContain("Hello");
+    expect(textParts).toContain(" world");
+
+    const stopChunk = chunks.find((c) => c.choices[0]?.finish_reason === "stop");
+    expect(stopChunk).toBeDefined();
+  });
+
+  it("maps function call parts to tool_calls chunks", async () => {
+    const streamChunks = [
+      {
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  functionCall: {
+                    name: "ReadFile",
+                    args: { file_path: "test.ts" },
+                  },
+                },
+              ],
+            },
+            finishReason: "STOP",
+          },
+        ],
+      },
+    ];
+
+    vi.doMock("@google/genai", () => ({
+      GoogleGenAI: class {
+        models = {
+          generateContentStream: vi.fn().mockResolvedValue(
+            (async function* () {
+              for (const chunk of streamChunks) yield chunk;
+            })(),
+          ),
+        };
+      },
+    }));
+
+    const { GeminiProvider } = await import("../providers/gemini.js");
+    const provider = new GeminiProvider({ apiKey: "test-key" });
+
+    const chunks: ChatStreamChunk[] = [];
+    for await (const chunk of provider.chat({
+      model: "gemini-2.5-flash",
+      messages: [{ role: "user", content: "read test.ts" }],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "ReadFile",
+            description: "Read a file",
+            parameters: {
+              type: "object",
+              properties: { file_path: { type: "string" } },
+              required: ["file_path"],
+            },
+          },
+        },
+      ],
+    })) {
+      chunks.push(chunk);
+    }
+
+    const tcChunk = chunks.find(
+      (c) => c.choices[0]?.delta?.tool_calls?.[0]?.function?.name === "ReadFile",
+    );
+    expect(tcChunk).toBeDefined();
+    expect(
+      JSON.parse(tcChunk!.choices[0].delta.tool_calls![0].function!.arguments!),
+    ).toEqual({ file_path: "test.ts" });
+
+    const finishChunk = chunks.find(
+      (c) => c.choices[0]?.finish_reason === "tool_calls",
+    );
+    expect(finishChunk).toBeDefined();
+  });
+
+  it("passes system instruction in config", async () => {
+    const mockStream = vi.fn().mockResolvedValue(
+      (async function* () {
+        yield {
+          candidates: [
+            {
+              content: { parts: [{ text: "ok" }] },
+              finishReason: "STOP",
+            },
+          ],
+        };
+      })(),
+    );
+
+    vi.doMock("@google/genai", () => ({
+      GoogleGenAI: class {
+        models = { generateContentStream: mockStream };
+      },
+    }));
+
+    const { GeminiProvider } = await import("../providers/gemini.js");
+    const provider = new GeminiProvider({ apiKey: "test-key" });
+
+    for await (const _ of provider.chat({
+      model: "gemini-2.5-flash",
+      messages: [{ role: "user", content: "hi" }],
+      system: "You are helpful.",
+    })) {
+      // consume
+    }
+
+    const callArgs = mockStream.mock.calls[0][0];
+    expect(callArgs.config.systemInstruction).toBe("You are helpful.");
+  });
+
+  it("converts tool result messages using function name lookup", async () => {
+    const mockStream = vi.fn().mockResolvedValue(
+      (async function* () {
+        yield {
+          candidates: [
+            {
+              content: { parts: [{ text: "done" }] },
+              finishReason: "STOP",
+            },
+          ],
+        };
+      })(),
+    );
+
+    vi.doMock("@google/genai", () => ({
+      GoogleGenAI: class {
+        models = { generateContentStream: mockStream };
+      },
+    }));
+
+    const { GeminiProvider } = await import("../providers/gemini.js");
+    const provider = new GeminiProvider({ apiKey: "test-key" });
+
+    const messages: ChatMessage[] = [
+      { role: "user", content: "read test.ts" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: "tc-1",
+            type: "function",
+            function: { name: "ReadFile", arguments: '{"file_path":"test.ts"}' },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        tool_call_id: "tc-1",
+        content: "file contents here",
+      },
+    ];
+
+    for await (const _ of provider.chat({
+      model: "gemini-2.5-flash",
+      messages,
+    })) {
+      // consume
+    }
+
+    const callArgs = mockStream.mock.calls[0][0];
+    const contents = callArgs.contents;
+
+    // The function response should use "ReadFile" as the name, not "tc-1"
+    const userTurnWithFnResponse = contents.find((c: Record<string, unknown>) =>
+      (c.parts as GeminiPartLike[])?.some(
+        (p: GeminiPartLike) => p.functionResponse,
+      ),
+    );
+    expect(userTurnWithFnResponse).toBeDefined();
+    const fnResponse = (userTurnWithFnResponse.parts as GeminiPartLike[]).find(
+      (p: GeminiPartLike) => p.functionResponse,
+    );
+    expect(fnResponse!.functionResponse!.name).toBe("ReadFile");
+  });
+});
+
+interface GeminiPartLike {
+  text?: string;
+  functionCall?: { name: string; args: Record<string, unknown> };
+  functionResponse?: { name: string; response: { result: unknown } };
+}

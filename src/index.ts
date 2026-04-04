@@ -21,6 +21,10 @@ export {
   AnthropicProvider,
   type AnthropicProviderOptions,
 } from "./providers/anthropic.js";
+export {
+  GeminiProvider,
+  type GeminiProviderOptions,
+} from "./providers/gemini.js";
 
 // Virtual infrastructure
 export type {

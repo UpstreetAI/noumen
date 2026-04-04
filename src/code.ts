@@ -45,7 +45,7 @@ export class Code {
     this.aiProvider = opts.aiProvider;
     this.fs = opts.virtualFs;
     this.computer = opts.virtualComputer;
-    this.sessionDir = opts.options?.sessionDir ?? ".lisk-code/sessions";
+    this.sessionDir = opts.options?.sessionDir ?? ".fangd/sessions";
     this.skills = opts.options?.skills ?? [];
     this.skillsPaths = opts.options?.skillsPaths ?? [];
     this.systemPrompt = opts.options?.systemPrompt;

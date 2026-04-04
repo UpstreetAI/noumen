@@ -1,13 +1,13 @@
-# lisk-code
+# fangd
 
 Programmatic AI coding agent library with pluggable providers and virtual infrastructure.
 
-`lisk-code` gives you a headless, API-only coding agent that can read, write, edit files, run shell commands, and search codebases — all backed by swappable AI providers (OpenAI, Anthropic) and virtual filesystems/computers (local Node.js, [sprites.dev](https://sprites.dev) containers).
+`fangd` gives you a headless, API-only coding agent that can read, write, edit files, run shell commands, and search codebases — all backed by swappable AI providers (OpenAI, Anthropic, Google Gemini) and virtual filesystems/computers (local Node.js, [sprites.dev](https://sprites.dev) containers).
 
 ## Install
 
 ```bash
-pnpm add lisk-code
+pnpm add fangd
 ```
 
 ## Quick Start
@@ -18,7 +18,7 @@ import {
   OpenAIProvider,
   LocalFs,
   LocalComputer,
-} from "lisk-code";
+} from "fangd";
 
 const code = new Code({
   aiProvider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY }),
@@ -48,7 +48,7 @@ for await (const event of thread.run("Add a health-check endpoint to server.ts")
 ### OpenAI
 
 ```typescript
-import { OpenAIProvider } from "lisk-code";
+import { OpenAIProvider } from "fangd";
 
 const provider = new OpenAIProvider({
   apiKey: "sk-...",
@@ -60,11 +60,22 @@ const provider = new OpenAIProvider({
 ### Anthropic
 
 ```typescript
-import { AnthropicProvider } from "lisk-code";
+import { AnthropicProvider } from "fangd";
 
 const provider = new AnthropicProvider({
   apiKey: "sk-ant-...",
   model: "claude-sonnet-4-20250514", // default
+});
+```
+
+### Google Gemini
+
+```typescript
+import { GeminiProvider } from "fangd";
+
+const provider = new GeminiProvider({
+  apiKey: "...",                   // Google AI Studio API key
+  model: "gemini-2.5-flash",      // default
 });
 ```
 
@@ -75,7 +86,7 @@ const provider = new AnthropicProvider({
 Backed by `fs/promises` and `child_process`:
 
 ```typescript
-import { LocalFs, LocalComputer } from "lisk-code";
+import { LocalFs, LocalComputer } from "fangd";
 
 const fs = new LocalFs({ basePath: "/my/project" });
 const computer = new LocalComputer({ defaultCwd: "/my/project" });
@@ -86,7 +97,7 @@ const computer = new LocalComputer({ defaultCwd: "/my/project" });
 Run inside a remote [sprites.dev](https://docs.sprites.dev) container:
 
 ```typescript
-import { SpritesFs, SpritesComputer } from "lisk-code";
+import { SpritesFs, SpritesComputer } from "fangd";
 
 const fs = new SpritesFs({
   token: process.env.SPRITE_TOKEN,
@@ -107,7 +118,7 @@ const code = new Code({
   virtualFs,
   virtualComputer,
   options: {
-    sessionDir: ".lisk-code/sessions", // JSONL transcript storage path
+    sessionDir: ".fangd/sessions", // JSONL transcript storage path
     model: "gpt-4o",                   // default model
     maxTokens: 8192,                   // max output tokens per turn
     autoCompact: true,                 // auto-compact when context is large

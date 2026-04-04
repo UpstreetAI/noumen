@@ -9,6 +9,7 @@ import {
 import { Thread } from "../thread.js";
 import type { ThreadConfig } from "../thread.js";
 import type { StreamEvent } from "../session/types.js";
+import type { ChatStreamChunk } from "../providers/types.js";
 import { createAutoCompactConfig } from "../compact/auto-compact.js";
 
 let fs: MockFs;
@@ -223,7 +224,7 @@ describe("Thread", () => {
   describe("abort", () => {
     it("stops the generator", async () => {
       // Use a response that yields many chunks
-      const chunks = Array.from({ length: 100 }, (_, i) => ({
+      const chunks: ChatStreamChunk[] = Array.from({ length: 100 }, (_, i) => ({
         id: `c${i}`,
         model: "m",
         choices: [
