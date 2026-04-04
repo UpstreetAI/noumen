@@ -187,11 +187,19 @@ export async function resolvePermission(
 
   // Auto mode: use classifier to decide
   if (permCtx.mode === "auto" && opts?.autoModeConfig) {
+    if (!opts.aiProvider) {
+      return {
+        behavior: "ask",
+        message: `Auto-mode requires an AI provider for classification. Falling back to ask.`,
+        reason: "classifier",
+      };
+    }
+
     const result = await classifyPermission(
       toolName,
       input,
       opts.recentMessages ?? [],
-      opts.aiProvider!,
+      opts.aiProvider,
       {
         classifierPrompt: opts.autoModeConfig.classifierPrompt,
         classifierModel: opts.autoModeConfig.classifierModel,

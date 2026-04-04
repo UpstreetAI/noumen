@@ -50,6 +50,20 @@ export const editFileTool: Tool = {
     const newString = args.new_string as string;
     const replaceAll = (args.replace_all as boolean) ?? false;
 
+    if (filePath.endsWith(".ipynb")) {
+      return {
+        content: `Error: ${filePath} is a Jupyter Notebook. Use the NotebookEdit tool to edit notebook files.`,
+        isError: true,
+      };
+    }
+
+    if (oldString === newString) {
+      return {
+        content: "No changes to make: old_string and new_string are exactly the same.",
+        isError: true,
+      };
+    }
+
     try {
       // Read-before-edit enforcement
       if (ctx.fileStateCache) {

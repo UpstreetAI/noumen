@@ -13,7 +13,8 @@ export function getRetryDelay(
   if (retryAfterHeader) {
     const seconds = parseInt(retryAfterHeader, 10);
     if (!isNaN(seconds)) {
-      return seconds * 1000;
+      const MAX_RETRY_AFTER_MS = 6 * 60 * 60 * 1000; // 6 hours absolute ceiling
+      return Math.min(seconds * 1000, maxDelayMs, MAX_RETRY_AFTER_MS);
     }
   }
 
@@ -35,12 +36,15 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
       return;
     }
 
-    const timer = setTimeout(resolve, ms);
-
     const onAbort = () => {
       clearTimeout(timer);
       reject(new DOMException("Aborted", "AbortError"));
     };
+
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
 
     signal?.addEventListener("abort", onAbort, { once: true });
   });

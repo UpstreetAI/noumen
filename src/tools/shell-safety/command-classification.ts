@@ -57,8 +57,6 @@ const READ_ONLY_COMMANDS = new Set([
   "nslookup",
   "host",
   "traceroute",
-  "curl", // mostly read, but can POST — classified as read-only for agent use
-  "wget",
   "grep",
   "egrep",
   "fgrep",
@@ -90,8 +88,6 @@ const READ_ONLY_COMMANDS = new Set([
   "sha256sum",
   "shasum",
   "base64",
-  "tee",
-  "xargs",
   "true",
   "false",
   "test",
@@ -108,15 +104,6 @@ const READ_ONLY_COMMANDS = new Set([
   "sysctl",
   "getconf",
   "dotnet", // dotnet --info, dotnet --list-sdks
-  "node",
-  "python",
-  "python3",
-  "ruby",
-  "perl",
-  "java",
-  "go",
-  "rustc",
-  "cargo",
 ]);
 
 // -- Git read-only subcommands --

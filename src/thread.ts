@@ -415,6 +415,8 @@ export class Thread {
       this.microcompactTokensFreed = 0;
 
       while (!signal.aborted) {
+        this.hasAttemptedReactiveCompact = false;
+
         // --- Pre-call compaction pipeline ---
         if (this.config.toolResultBudget?.enabled) {
           const budgetResult = enforceToolResultBudget(
@@ -1184,6 +1186,11 @@ export class Thread {
           }
 
           if (preventContinuation) break;
+
+          if (opts?.maxTurns !== undefined && callCount >= opts.maxTurns) {
+            yield { type: "max_turns_reached", maxTurns: opts.maxTurns, turnCount: callCount };
+            break;
+          }
           continue;
         }
 
@@ -1569,6 +1576,16 @@ export class Thread {
         }
         if (this.config.costTracker && payload.costState) {
           this.config.costTracker.restore(payload.costState);
+        }
+        if (payload.contentReplacements.length > 0) {
+          this.contentReplacementState = reconstructContentReplacementState(
+            payload.contentReplacements,
+            this.messages,
+          );
+          this.messages = applyPersistedReplacements(
+            this.messages,
+            this.contentReplacementState,
+          );
         }
         this.resumeRequested = false;
       } else {

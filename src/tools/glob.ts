@@ -40,7 +40,7 @@ export const globTool: Tool = {
       ? pattern
       : `**/${pattern}`;
 
-    const command = `rg --files --glob ${shellEscape(fullPattern)} --sort=modified 2>/dev/null | head -n ${MAX_RESULTS + 1}`;
+    const command = `rg --files --glob ${shellEscape(fullPattern)} --sort=modified 2>/dev/null | head -n ${String(MAX_RESULTS + 1)}`;
 
     try {
       const result = await ctx.computer.executeCommand(command, {

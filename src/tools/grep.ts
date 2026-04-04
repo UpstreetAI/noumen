@@ -60,10 +60,9 @@ export const grepTool: Tool = {
 
     if (caseInsensitive) rgArgs.push("-i");
     if (contextLines !== undefined) rgArgs.push(`-C${contextLines}`);
-    if (glob) rgArgs.push(`--glob=${shellEscape(glob)}`);
+    if (glob) rgArgs.push(`--glob`, shellEscape(glob));
 
-    rgArgs.push(shellEscape(pattern));
-    rgArgs.push(".");
+    rgArgs.push("--", shellEscape(pattern), ".");
 
     const command = rgArgs.join(" ");
 

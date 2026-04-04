@@ -181,6 +181,15 @@ export function convertAnthropicMessages(
       if (addCache && caching) {
         toolResultBlock.cache_control = buildCacheControlBlock(cacheConfig);
       }
+
+      const prev = result[result.length - 1];
+      if (prev && prev.role === "user" && Array.isArray(prev.content)) {
+        const blocks = prev.content as Record<string, unknown>[];
+        if (blocks.length > 0 && blocks[0].type === "tool_result") {
+          blocks.push(toolResultBlock);
+          continue;
+        }
+      }
       result.push({ role: "user", content: [toolResultBlock] });
     }
   }
@@ -248,6 +257,10 @@ export async function* streamAnthropicChat(
     messages: inputMessages,
     tools,
   };
+
+  if (!thinkingEnabled && params.temperature !== undefined) {
+    streamParams.temperature = params.temperature;
+  }
 
   if (thinkingEnabled) {
     streamParams.thinking = {

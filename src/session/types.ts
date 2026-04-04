@@ -283,10 +283,16 @@ export type StreamEvent =
       type: "structured_output";
       data: unknown;
       schema: OutputFormat;
-    };
+    }
+  | { type: "max_turns_reached"; maxTurns: number; turnCount: number };
 
 export interface RunOptions {
   signal?: AbortSignal;
+  /**
+   * Maximum number of model-to-tool turns before the loop terminates.
+   * When exceeded, the thread yields a `max_turns_reached` event and stops.
+   */
+  maxTurns?: number;
   /**
    * Constrain the model to produce structured output.
    *

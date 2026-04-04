@@ -66,10 +66,11 @@ export class GeminiProvider implements AIProvider {
       maxOutputTokens: params.max_tokens,
       temperature: params.temperature,
       tools,
-      thinkingConfig: {
-        thinkingBudget: thinkingBudget,
-      },
     };
+
+    if (thinkingEnabled) {
+      config.thinkingConfig = { thinkingBudget: thinkingBudget };
+    }
 
     if (params.outputFormat?.type === "json_schema") {
       config.responseSchema = params.outputFormat.schema;
@@ -175,12 +176,16 @@ export class GeminiProvider implements AIProvider {
 
       const finishReason = candidates[0].finishReason;
       if (finishReason && finishReason !== "FINISH_REASON_UNSPECIFIED") {
-        const mapped =
-          finishReason === "STOP"
-            ? toolCallIndex > 0
-              ? "tool_calls"
-              : "stop"
-            : "stop";
+        let mapped: string;
+        if (finishReason === "STOP") {
+          mapped = toolCallIndex > 0 ? "tool_calls" : "stop";
+        } else if (finishReason === "MAX_TOKENS") {
+          mapped = "length";
+        } else if (finishReason === "SAFETY" || finishReason === "RECITATION") {
+          mapped = "content_filter";
+        } else {
+          mapped = "stop";
+        }
 
         yield {
           id: chunkId,

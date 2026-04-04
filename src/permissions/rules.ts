@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import * as fs from "node:fs";
 import type {
   PermissionBehavior,
   PermissionContext,
@@ -126,6 +127,17 @@ export function getMatchingRules(
 }
 
 /**
+ * Reject paths that contain shell expansion syntax which could cause TOCTOU
+ * issues — the path resolves differently in Node vs when the shell evaluates it.
+ */
+export function containsShellExpansion(p: string): boolean {
+  if (p.includes("$") || p.includes("%") || p.startsWith("=")) return true;
+  if (/^~[^/]/.test(p)) return true; // ~user, ~+, ~- (bare ~/... is fine)
+  if (p.startsWith("\\\\")) return true; // UNC paths
+  return false;
+}
+
+/**
  * Check whether a file path falls within any of the configured working directories.
  */
 export function isPathInWorkingDirectories(
@@ -133,6 +145,7 @@ export function isPathInWorkingDirectories(
   workingDirectories: string[],
 ): boolean {
   if (workingDirectories.length === 0) return false;
+  if (containsShellExpansion(filePath)) return false;
 
   const normalized = normalizePath(filePath);
   return workingDirectories.some((dir) => {
@@ -146,6 +159,11 @@ export function isPathInWorkingDirectories(
 
 function normalizePath(p: string): string {
   let result = path.resolve(p);
+  try {
+    result = fs.realpathSync(result);
+  } catch {
+    // Path doesn't exist yet — fall through to the resolved path
+  }
   while (result.endsWith("/") && result.length > 1) {
     result = result.slice(0, -1);
   }

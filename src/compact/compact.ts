@@ -94,7 +94,7 @@ export function estimateCompactionSavings(
   const splitIdx = Math.max(0, messages.length - tailMessagesToKeep);
   const tail = messages.slice(splitIdx);
   const tailTokens = estimateMessagesTokens(tail);
-  const estimatedSummary = 1000;
+  const estimatedSummary = 10_000;
   return {
     currentTokens,
     estimatedAfter: tailTokens + estimatedSummary,

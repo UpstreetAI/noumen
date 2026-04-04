@@ -8,7 +8,7 @@
  */
 
 import type { VirtualFs } from "../virtual/fs.js";
-import type { ChatMessage, ToolResultMessage } from "../session/types.js";
+import type { ChatMessage, ToolResultMessage, AssistantMessage } from "../session/types.js";
 import { contentToString } from "../utils/content.js";
 import { estimateTokens } from "../utils/tokens.js";
 
@@ -161,6 +161,15 @@ export async function enforceToolResultStorageBudget(
   const replacementState = state ?? createContentReplacementState();
   const budget = config.perMessageBudget ?? DEFAULT_PER_MESSAGE_BUDGET;
   const result = [...messages];
+
+  const toolCallIdToName = new Map<string, string>();
+  for (const msg of messages) {
+    if (msg.role === "assistant" && (msg as AssistantMessage).tool_calls) {
+      for (const tc of (msg as AssistantMessage).tool_calls!) {
+        toolCallIdToName.set(tc.id, tc.function.name);
+      }
+    }
+  }
   let totalTokensFreed = 0;
   const allSpilled: ContentReplacementRecord[] = [];
 
@@ -219,11 +228,12 @@ export async function enforceToolResultStorageBudget(
       const text = contentToString(toolMsg.content);
       if (text.length < (config.previewChars ?? DEFAULT_PREVIEW_CHARS) + 100) continue;
 
+      const toolName = toolCallIdToName.get(toolMsg.tool_call_id) ?? "unknown";
       const replacement = await persistToolResult(
         fs,
         sessionId,
         toolMsg.tool_call_id,
-        "unknown", // tool name not available on the message
+        toolName,
         text,
         config,
       );

@@ -41,6 +41,7 @@ export class OpenAIProvider implements AIProvider {
         function: t.function,
       })),
       stream: true,
+      stream_options: { include_usage: true },
     };
 
     if (isOSeries && params.thinking?.type === "enabled") {

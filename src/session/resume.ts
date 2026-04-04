@@ -122,7 +122,7 @@ export async function restoreSession(
   const contentReplacements: ContentReplacementRecord[] = [];
   const metadata: Record<string, unknown> = {};
 
-  for (const entry of entries) {
+  for (const entry of activeEntries) {
     if (entry.type === "file-checkpoint") {
       checkpointsByMessageId.set(entry.messageId, entry);
     } else if (entry.type === "tool-result-overflow") {
@@ -136,6 +136,8 @@ export async function restoreSession(
     }
   }
 
+  // Checkpoints use the full entry list for the chain since they may reference
+  // messages across compaction boundaries.
   const checkpointSnapshots = buildCheckpointChain(entries, checkpointsByMessageId);
 
   const sanitized = sanitizeForResume(messages);
