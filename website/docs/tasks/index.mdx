@@ -5,6 +5,10 @@ description: Track work items with an in-memory task store and agent-accessible 
 
 The task system lets agents create and manage structured work items. When enabled, four tools are added (TaskCreate, TaskList, TaskGet, TaskUpdate) that the agent uses to decompose work into trackable steps.
 
+## Why opt-in?
+
+Task tools are disabled by default because each additional tool increases the token cost of every request and can influence model behavior — the agent may start creating and tracking tasks even for simple one-shot work. Keeping tasks opt-in lets you pay for the overhead only when you actually need structured work tracking.
+
 ## Configuration
 
 ```typescript
