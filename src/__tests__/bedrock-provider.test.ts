@@ -19,6 +19,22 @@ function makeMockClient(
 
 describe("BedrockAnthropicProvider", () => {
   it("throws when no client provided and SDK not installed", () => {
+    let sdkInstalled = false;
+    try {
+      require("@anthropic-ai/bedrock-sdk");
+      sdkInstalled = true;
+    } catch {
+      // SDK not installed — test can proceed
+    }
+
+    if (sdkInstalled) {
+      // When the SDK is installed, the require() succeeds and the
+      // Bedrock constructor defers to the AWS credential chain without
+      // throwing. Verify it at least constructs without error.
+      expect(() => new BedrockAnthropicProvider({})).not.toThrow();
+      return;
+    }
+
     expect(() => new BedrockAnthropicProvider({})).toThrow(
       "requires @anthropic-ai/bedrock-sdk",
     );
