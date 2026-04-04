@@ -8,13 +8,12 @@ const LINES: {
   delay: number;
   accent?: boolean;
 }[] = [
-  { prompt: '$ const thread = code.createThread()', delay: 0 },
-  { prompt: '$ for await (const ev of thread.run("Add a health-check endpoint"))', delay: 800 },
-  { text: '  [tool] ReadFile  server.ts', delay: 600 },
-  { text: '  [tool] EditFile  server.ts', delay: 500 },
-  { text: '  [tool] Bash      npm test', delay: 700 },
-  { text: '  [result] All 14 tests passed', delay: 500, accent: true },
-  { text: '  turn_complete  tokens: 3,241  calls: 3', delay: 400 },
+  { prompt: '$ thread.run("Add input validation to the signup handler")', delay: 0 },
+  { text: '  [ReadFile]   src/handlers/signup.ts', delay: 700 },
+  { text: '  [EditFile]   src/handlers/signup.ts  +14 lines', delay: 600 },
+  { text: '  [Bash]       npm test -- signup', delay: 800 },
+  { text: '  All 9 tests passed', delay: 500, accent: true },
+  { text: '  turn_complete  tokens: 2,847  calls: 3', delay: 400 },
 ];
 
 const Cursor = () => (

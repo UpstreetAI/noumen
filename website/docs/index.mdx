@@ -1,9 +1,9 @@
 ---
 title: Introduction
-description: noumen is a headless, provider-agnostic coding agent library for Node.js with pluggable AI providers and virtual infrastructure.
+description: "noumen is the coding agent you npm install — the missing layer between LLMs and codebases, with pluggable providers and virtual infrastructure."
 ---
 
-A programmatic AI coding agent that can read, write, and edit files, run shell commands, and search codebases -- all backed by swappable AI providers (OpenAI, Anthropic, Google Gemini) and virtual filesystems (local Node.js or remote containers).
+The coding agent you `npm install`. LLM SDKs give you chat. Sandbox providers give you containers. noumen is everything in between — the tool loop, file editing, shell execution, and session management that turn a language model into a coding agent.
 
 ## Install
 
@@ -49,22 +49,22 @@ for await (const event of thread.run("Add a health-check endpoint to server.ts")
 ## Key features
 
 <Cards>
-  <Card title="Provider-agnostic" href="/docs/providers">
-    Swap between OpenAI, Anthropic, and Google Gemini without changing your application code.
+  <Card title="Swap models in one line" href="/docs/providers">
+    OpenAI, Anthropic, Google Gemini. Same streaming interface, same tool dispatch. Bring your own keys.
   </Card>
-  <Card title="Virtual infrastructure" href="/docs/virtual">
-    Run on local Node.js filesystems or remote sprites.dev containers with the same API.
+  <Card title="Run anywhere" href="/docs/virtual">
+    Local Node.js, remote containers via sprites.dev, or implement VirtualFs yourself. The agent doesn't care.
   </Card>
-  <Card title="Built-in coding tools" href="/docs/tools">
-    ReadFile, WriteFile, EditFile, Bash, Glob, and Grep -- everything an agent needs to code.
+  <Card title="Read, write, edit, execute" href="/docs/tools">
+    ReadFile, WriteFile, EditFile, Bash, Glob, Grep — the same tools shipping inside production coding agents.
   </Card>
-  <Card title="MCP support" href="/docs/mcp">
-    Connect to external MCP servers for additional tools, or expose your agent's tools as an MCP server.
+  <Card title="Connect to anything" href="/docs/mcp">
+    Client and server support for Model Context Protocol. Expose external tools and resources seamlessly.
   </Card>
-  <Card title="Skills system" href="/docs/skills">
-    Inject domain-specific instructions via markdown SKILL.md files with frontmatter metadata.
+  <Card title="Teach your agent" href="/docs/skills">
+    Inject markdown instructions into the system prompt. Load SKILL.md files from the filesystem.
   </Card>
-  <Card title="Session persistence" href="/docs/sessions">
+  <Card title="Resume, compact, persist" href="/docs/sessions">
     JSONL-based conversation storage with automatic compaction and resume support.
   </Card>
 </Cards>

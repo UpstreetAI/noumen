@@ -10,13 +10,13 @@ const spaceGrotesk = Space_Grotesk({
 });
 
 export const metadata: Metadata = {
-  title: "noumen — programmatic AI coding agents",
+  title: "noumen — the coding agent you npm install",
   description:
-    "Headless, provider-agnostic coding agent library with pluggable AI providers and virtual infrastructure.",
+    "The missing layer between LLMs and codebases. Tool loop, file editing, shell execution, and session management in one TypeScript package.",
   openGraph: {
-    title: "noumen — programmatic AI coding agents",
+    title: "noumen — the coding agent you npm install",
     description:
-      "Headless, provider-agnostic coding agent library with pluggable AI providers and virtual infrastructure.",
+      "The missing layer between LLMs and codebases. Tool loop, file editing, shell execution, and session management in one TypeScript package.",
     type: "website",
   },
 };

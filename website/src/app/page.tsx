@@ -5,40 +5,40 @@ import { Sparkles } from "@/components/Sparkles";
 
 const FEATURES = [
   {
-    icon: "🔌",
-    title: "Pluggable Providers",
+    icon: "🛠️",
+    title: "Read, write, edit, execute",
     description:
-      "Swap between OpenAI, Anthropic, and Google Gemini with a single config change. Bring-your-own-key, any model.",
+      "ReadFile, WriteFile, EditFile, Bash, Glob, Grep — the same tools shipping inside production coding agents, wired up and ready to go.",
+  },
+  {
+    icon: "🔌",
+    title: "Swap models in one line",
+    description:
+      "OpenAI, Anthropic, Google Gemini. Same streaming interface, same tool dispatch, same results. Bring your own keys.",
   },
   {
     icon: "💻",
-    title: "Virtual Infrastructure",
+    title: "Run anywhere",
     description:
-      "Run against local Node.js fs/child_process, or spin up remote containers via sprites.dev. Same API either way.",
-  },
-  {
-    icon: "🛠️",
-    title: "Built-in Tools",
-    description:
-      "ReadFile, WriteFile, EditFile, Bash, Glob, Grep — everything a coding agent needs, wired up out of the box.",
-  },
-  {
-    icon: "📚",
-    title: "Skills",
-    description:
-      "Inject markdown instructions into the system prompt. Inline or loaded from SKILL.md files on your virtual filesystem.",
+      "Local Node.js, remote containers via sprites.dev, or implement VirtualFs yourself. The agent doesn't care where it runs.",
   },
   {
     icon: "💾",
-    title: "Sessions",
+    title: "Resume, compact, persist",
     description:
-      "Conversations persist as JSONL. Resume where you left off, auto-compact when context gets large.",
+      "Conversations save as JSONL. Auto-compaction keeps context under control. Resume any thread by ID, right where you left off.",
+  },
+  {
+    icon: "📚",
+    title: "Teach your agent",
+    description:
+      "Inject markdown instructions into the system prompt. Load SKILL.md files from the filesystem. Shape behavior without changing code.",
   },
   {
     icon: "🔗",
-    title: "MCP Support",
+    title: "Connect to anything",
     description:
-      "Connect to any Model Context Protocol server. Expose external tools and resources to the agent seamlessly.",
+      "Client and server support for Model Context Protocol. Expose external tools and resources to the agent seamlessly.",
   },
 ];
 
@@ -97,20 +97,22 @@ export default function Home() {
           {/* Left: copy */}
           <div className="min-w-0 flex flex-col gap-6">
             <div className="inline-flex w-fit items-center gap-2 rounded-full border border-[var(--color-accent-blue-dim)] bg-[var(--color-accent-blue-dim)] px-3 py-1 text-xs font-medium text-[var(--color-accent-blue)]">
-              <span>🐍</span> pluggable coding agent
+              <span>🐍</span> coding agent SDK
             </div>
 
             <h1 className="font-[family-name:var(--font-display)] text-4xl font-extrabold leading-[1.08] tracking-tight text-[var(--color-text-primary)] sm:text-5xl lg:text-6xl">
-              One library.
+              The coding agent
               <br />
+              you{" "}
               <span className="bg-gradient-to-r from-[var(--color-accent-blue)] to-[var(--color-accent-cyan)] bg-clip-text text-transparent">
-                Every provider.
+                npm install.
               </span>
             </h1>
             <p className="max-w-lg text-lg leading-relaxed text-[var(--color-text-secondary)]">
-              A headless, API-only coding agent that reads, writes, edits files,
-              runs commands, and searches codebases — backed by any LLM and any
-              filesystem.
+              LLM SDKs give you chat. Sandbox providers give you containers.
+              noumen is everything in between — the tool loop, file editing,
+              shell execution, and session management that turn a language model
+              into a coding agent.
             </p>
 
             <div className="flex flex-col gap-1.5 text-xs font-medium tracking-wide text-[var(--color-text-tertiary)] uppercase sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4 sm:gap-y-1">
@@ -119,13 +121,13 @@ export default function Home() {
                 <span className="text-[var(--color-accent-blue-dim)]">
                   ✦
                 </span>
-                <span>Virtual infrastructure</span>
+                <span>Full tool loop</span>
               </div>
               <span className="hidden sm:inline text-[var(--color-accent-blue-dim)]">
                 ✦
               </span>
               <div className="flex items-center gap-4">
-                <span>Async iterable</span>
+                <span>Virtual infra</span>
                 <span className="text-[var(--color-accent-blue-dim)]">
                   ✦
                 </span>
@@ -173,11 +175,11 @@ export default function Home() {
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent via-[var(--color-accent-blue-dim)] to-transparent opacity-30" />
         <div className="relative mx-auto max-w-6xl px-6">
           <h2 className="font-[family-name:var(--font-display)] text-center text-3xl font-bold tracking-tight text-[var(--color-text-primary)] sm:text-4xl">
-            Everything you need to build a coding agent
+            The missing layer between LLMs and codebases
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-center text-[var(--color-text-secondary)]">
-            Pluggable providers, virtual filesystems, built-in tools, and
-            session management — all in one package.
+            The tool loop, session management, and virtual infrastructure
+            that every coding agent needs — so you don&apos;t have to build it yourself.
           </p>
 
           <div className="mt-14 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
@@ -209,10 +211,11 @@ export default function Home() {
               Quick Start
             </div>
             <h2 className="font-[family-name:var(--font-display)] text-3xl font-bold tracking-tight sm:text-4xl bg-gradient-to-r from-[var(--color-accent-blue)] to-[var(--color-accent-cyan)] bg-clip-text text-transparent">
-              Up and running in minutes.
+              Up and running in 12 lines.
             </h2>
             <p className="mt-4 text-[var(--color-text-secondary)]">
               Pick a provider, point at a filesystem, and start streaming events.
+              The serpent handles the rest.
             </p>
           </div>
 
@@ -236,11 +239,11 @@ export default function Home() {
       <section className="py-24 sm:py-32">
         <div className="mx-auto max-w-6xl px-6">
           <h2 className="font-[family-name:var(--font-display)] text-center text-3xl font-bold tracking-tight text-[var(--color-text-primary)] sm:text-4xl">
-            Adapters for everything
+            The agent loop stays the same. Swap the brain.
           </h2>
           <p className="mx-auto mt-4 max-w-lg text-center text-[var(--color-text-secondary)]">
-            Swap providers with a single line. Same streaming interface, same
-            tool loop, same results.
+            One interface. Three providers. Same streaming, same tool dispatch,
+            same results. Pick the model that fits.
           </p>
 
           <div className="mx-auto mt-12 grid max-w-3xl gap-6 sm:grid-cols-3">
@@ -267,10 +270,10 @@ export default function Home() {
         <div className="relative mx-auto max-w-2xl px-6 text-center">
           <div className="mb-4 text-5xl">🐍</div>
           <h2 className="font-[family-name:var(--font-display)] text-3xl font-bold tracking-tight text-[var(--color-text-primary)] sm:text-4xl">
-            Start building.
+            Stop building the plumbing.
             <br />
             <span className="bg-gradient-to-r from-[var(--color-accent-blue)] to-[var(--color-accent-cyan)] bg-clip-text text-transparent">
-              Ship an agent today.
+              Ship the agent.
             </span>
           </h2>
           <div className="mt-8 space-y-2 text-left">
@@ -315,7 +318,7 @@ export default function Home() {
             </a>
           </div>
           <p className="text-xs text-[var(--color-text-tertiary)]">
-            &copy; {new Date().getFullYear()} noumen &mdash; MIT License
+            🐍 &copy; {new Date().getFullYear()} noumen &mdash; MIT License
           </p>
         </div>
       </footer>
