@@ -19,7 +19,9 @@
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "dev": "tsup --watch"
+    "dev": "tsup --watch",
+    "prepublishOnly": "pnpm run build",
+    "publish:lib": "pnpm publish --access public --no-git-checks"
   },
   "packageManager": "pnpm@10.8.1",
   "engines": {
