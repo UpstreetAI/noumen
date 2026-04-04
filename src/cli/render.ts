@@ -29,6 +29,31 @@ export function renderEvent(
   renderPretty(event, config, state);
 }
 
+/** Event types that produce visible terminal output in pretty mode. */
+const VISIBLE_EVENTS = new Set([
+  "text_delta",
+  "tool_use_start",
+  "tool_result",
+  "permission_request",
+  "permission_denied",
+  "error",
+  "compact_start",
+  "retry_attempt",
+  "retry_exhausted",
+  "subagent_start",
+  "subagent_end",
+  "session_resumed",
+  "max_turns_reached",
+]);
+
+export function isVisibleEvent(event: StreamEvent, config: MergedConfig): boolean {
+  if (config.json) return true;
+  if (event.type === "thinking_delta" && config.verbose) return true;
+  if (event.type === "cost_update" && config.verbose) return true;
+  if (event.type === "permission_granted" && config.verbose) return true;
+  return VISIBLE_EVENTS.has(event.type);
+}
+
 export interface RenderState {
   accumulatedText: string;
   activeTools: Map<string, string>;

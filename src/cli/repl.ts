@@ -3,7 +3,7 @@ import chalk from "chalk";
 import type { Code } from "../code.js";
 import type { Thread } from "../thread.js";
 import type { MergedConfig } from "./config.js";
-import { renderEvent, createRenderState, promptPermission } from "./render.js";
+import { renderEvent, createRenderState, promptPermission, isVisibleEvent } from "./render.js";
 import { DEFAULT_MODELS } from "./provider-factory.js";
 import { startSpinner } from "./spinner.js";
 
@@ -77,7 +77,7 @@ export async function startRepl(
       runningTurn = true;
       try {
         for await (const event of thread.run(input, runOpts)) {
-          if (!state.showedActivity && spinner) {
+          if (!state.showedActivity && spinner && isVisibleEvent(event, config)) {
             spinner.stop();
             state.showedActivity = true;
           }

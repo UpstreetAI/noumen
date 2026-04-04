@@ -255,6 +255,7 @@ async function runAgent(config: MergedConfig): Promise<void> {
 
 async function runOneShot(code: Code, config: MergedConfig): Promise<void> {
   const { startSpinner } = await import("./spinner.js");
+  const { isVisibleEvent } = await import("./render.js");
   const thread = code.createThread();
   const state = createRenderState();
   const runOpts = config.maxTurns ? { maxTurns: config.maxTurns } : undefined;
@@ -264,7 +265,7 @@ async function runOneShot(code: Code, config: MergedConfig): Promise<void> {
 
   try {
     for await (const event of thread.run(config.prompt!, runOpts)) {
-      if (!state.showedActivity && spinner) {
+      if (!state.showedActivity && spinner && isVisibleEvent(event, config)) {
         spinner.stop();
         state.showedActivity = true;
       }
