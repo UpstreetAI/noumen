@@ -104,12 +104,21 @@ export interface MetadataEntry {
   value: unknown;
 }
 
+export interface ToolResultOverflowEntry {
+  type: "tool-result-overflow";
+  sessionId: string;
+  timestamp: string;
+  toolCallId: string;
+  originalContent: string;
+}
+
 export type Entry =
   | MessageEntry
   | CompactBoundaryEntry
   | SummaryEntry
   | CustomTitleEntry
-  | MetadataEntry;
+  | MetadataEntry
+  | ToolResultOverflowEntry;
 
 export interface SessionInfo {
   sessionId: string;
@@ -146,6 +155,13 @@ export type StreamEvent =
     }
   | { type: "compact_start" }
   | { type: "compact_complete" }
+  | { type: "microcompact_complete"; tokensFreed: number }
+  | {
+      type: "tool_result_truncated";
+      toolCallId: string;
+      originalChars: number;
+      truncatedChars: number;
+    }
   | { type: "error"; error: Error }
   | {
       type: "permission_request";

@@ -109,7 +109,7 @@ function parseContextOverflow(
   message: string,
   status?: number,
 ): ClassifiedError["contextOverflowData"] | undefined {
-  if (status !== 400 && status !== undefined) return undefined;
+  if (status !== 400 && status !== 413 && status !== undefined) return undefined;
 
   // Anthropic format
   const anthropicRegex =

@@ -46,8 +46,27 @@ import { compactConversation } from "./compact/compact.js";
 import {
   createAutoCompactConfig,
   shouldAutoCompact,
+  canAutoCompact,
+  recordAutoCompactSuccess,
+  recordAutoCompactFailure,
+  createAutoCompactTracking,
   type AutoCompactConfig,
+  type AutoCompactTrackingState,
 } from "./compact/auto-compact.js";
+import {
+  microcompactMessages,
+  type MicrocompactConfig,
+} from "./compact/microcompact.js";
+import {
+  enforceToolResultBudget,
+  createBudgetState,
+  type ToolResultBudgetConfig,
+  type BudgetState,
+} from "./compact/tool-result-budget.js";
+import {
+  tryReactiveCompact,
+  type ReactiveCompactConfig,
+} from "./compact/reactive-compact.js";
 import { generateUUID } from "./utils/uuid.js";
 import { activateSkillsForPaths, getActiveSkills } from "./skills/activation.js";
 import { createSkillTool } from "./tools/skill.js";
@@ -75,6 +94,9 @@ export interface ThreadConfig {
   model?: string;
   maxTokens?: number;
   autoCompact?: AutoCompactConfig;
+  microcompact?: MicrocompactConfig;
+  toolResultBudget?: ToolResultBudgetConfig;
+  reactiveCompact?: ReactiveCompactConfig;
   permissions?: PermissionConfig;
   hooks?: HookDefinition[];
   spawnSubagent?: (config: SubagentConfig) => SubagentRun;
@@ -108,6 +130,10 @@ export class Thread {
   private anchorMessageIndex: number | undefined;
   private prePlanMode: import("./permissions/types.js").PermissionMode | null = null;
   private tracer: Tracer;
+  private autoCompactTracking: AutoCompactTrackingState;
+  private budgetState: BudgetState;
+  private hasAttemptedReactiveCompact = false;
+  private microcompactTokensFreed = 0;
 
   constructor(config: ThreadConfig, opts?: ThreadOptions) {
     this.config = config;
@@ -138,6 +164,8 @@ export class Thread {
     this.toolRegistry = new ToolRegistry(extraTools.length > 0 ? extraTools : undefined);
     this.hooks = config.hooks ?? [];
     this.tracer = config.tracer ?? new NoopTracer();
+    this.autoCompactTracking = createAutoCompactTracking();
+    this.budgetState = createBudgetState();
 
     if (opts?.resume) {
       this.loaded = false;
@@ -220,7 +248,38 @@ export class Thread {
       const retryConfig = this.config.retry;
       let currentMaxTokens = this.config.maxTokens;
 
+      this.microcompactTokensFreed = 0;
+
       while (!signal.aborted) {
+        // --- Pre-call compaction pipeline ---
+        if (this.config.toolResultBudget?.enabled) {
+          const budgetResult = enforceToolResultBudget(
+            this.messages,
+            this.config.toolResultBudget,
+            this.budgetState,
+          );
+          this.messages = budgetResult.messages;
+          this.budgetState = budgetResult.state;
+          this.microcompactTokensFreed += budgetResult.tokensFreed;
+          for (const entry of budgetResult.truncatedEntries) {
+            yield {
+              type: "tool_result_truncated",
+              toolCallId: entry.toolCallId,
+              originalChars: entry.originalChars,
+              truncatedChars: entry.truncatedChars,
+            };
+          }
+        }
+
+        if (this.config.microcompact?.enabled) {
+          const mcResult = microcompactMessages(this.messages, this.config.microcompact);
+          if (mcResult.tokensFreed > 0) {
+            this.messages = mcResult.messages;
+            this.microcompactTokensFreed += mcResult.tokensFreed;
+            yield { type: "microcompact_complete", tokensFreed: mcResult.tokensFreed };
+          }
+        }
+
         const accumulatedContent: string[] = [];
         const accumulatedToolCalls = new Map<
           number,
@@ -262,6 +321,7 @@ export class Thread {
         yield { type: "span_start", name: "noumen.provider.chat", spanId: providerSpanId };
         const providerStart = Date.now();
 
+        try {
         if (retryConfig) {
           const retryGen = withRetry(
             (ctx) => {
@@ -296,6 +356,43 @@ export class Thread {
           if (retryResult.value === undefined) break;
         } else {
           stream = this.config.aiProvider.chat(chatParams);
+        }
+        } catch (providerErr) {
+          // Reactive compact: recover from context overflow by compacting
+          const isOverflow =
+            (providerErr instanceof CannotRetryError &&
+              classifyError(providerErr.originalError).isContextOverflow) ||
+            (!retryConfig && classifyError(providerErr).isContextOverflow);
+
+          if (
+            isOverflow &&
+            this.config.reactiveCompact?.enabled &&
+            !this.hasAttemptedReactiveCompact
+          ) {
+            this.hasAttemptedReactiveCompact = true;
+            providerSpan.setStatus(SpanStatusCode.ERROR, "context overflow — reactive compact");
+            providerSpan.end();
+            yield { type: "span_end", name: "noumen.provider.chat", spanId: providerSpanId, durationMs: Date.now() - providerStart, error: "context overflow" };
+
+            yield { type: "compact_start" };
+            const recovered = await tryReactiveCompact(
+              this.config.aiProvider,
+              this.model,
+              this.messages,
+              this.storage,
+              this.sessionId,
+            );
+            if (recovered) {
+              this.messages = recovered.messages;
+              this.lastUsage = undefined;
+              this.anchorMessageIndex = undefined;
+              yield { type: "compact_complete" };
+              continue;
+            }
+            yield { type: "compact_complete" };
+          }
+
+          throw providerErr;
         }
 
         const apiStartTime = Date.now();
@@ -747,10 +844,19 @@ export class Thread {
         }
       }
 
-      // --- Compaction with hooks ---
+      // --- Compaction with hooks (model-aware + circuit breaker) ---
       const autoCompactConfig =
-        this.config.autoCompact ?? createAutoCompactConfig();
-      if (shouldAutoCompact(this.messages, autoCompactConfig, this.lastUsage, this.anchorMessageIndex)) {
+        this.config.autoCompact ?? createAutoCompactConfig({ model: this.model });
+      if (
+        canAutoCompact(this.autoCompactTracking) &&
+        shouldAutoCompact(
+          this.messages,
+          autoCompactConfig,
+          this.lastUsage,
+          this.anchorMessageIndex,
+          this.microcompactTokensFreed,
+        )
+      ) {
         await runNotificationHooks(hooks, "PreCompact", {
           event: "PreCompact",
           sessionId: this.sessionId,
@@ -779,6 +885,7 @@ export class Thread {
           );
           this.lastUsage = undefined;
           this.anchorMessageIndex = undefined;
+          recordAutoCompactSuccess(this.autoCompactTracking);
 
           compactSpan.setAttribute("messages.after", this.messages.length);
           compactSpan.setStatus(SpanStatusCode.OK);
@@ -792,6 +899,8 @@ export class Thread {
             sessionId: this.sessionId,
           });
         } catch (err) {
+          recordAutoCompactFailure(this.autoCompactTracking);
+
           const error = err instanceof Error
             ? err
             : new Error(`Compaction failed: ${String(err)}`);
@@ -963,6 +1072,8 @@ export class Thread {
       this.sessionId,
       { customInstructions: opts?.instructions },
     );
+    this.lastUsage = undefined;
+    this.anchorMessageIndex = undefined;
   }
 
   abort(): void {

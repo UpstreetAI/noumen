@@ -5,6 +5,7 @@ import type {
   MessageEntry,
   CompactBoundaryEntry,
   SummaryEntry,
+  ToolResultOverflowEntry,
   SessionInfo,
 } from "./types.js";
 import { generateUUID } from "../utils/uuid.js";
@@ -83,6 +84,21 @@ export class SessionStorage {
     };
     await this.appendEntry(sessionId, entry);
     return uuid;
+  }
+
+  async appendToolResultOverflow(
+    sessionId: string,
+    toolCallId: string,
+    originalContent: string,
+  ): Promise<void> {
+    const entry: ToolResultOverflowEntry = {
+      type: "tool-result-overflow",
+      sessionId,
+      timestamp: new Date().toISOString(),
+      toolCallId,
+      originalContent,
+    };
+    await this.appendEntry(sessionId, entry);
   }
 
   async loadMessages(sessionId: string): Promise<ChatMessage[]> {

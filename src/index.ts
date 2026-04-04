@@ -66,6 +66,7 @@ export type {
   MessageEntry,
   CompactBoundaryEntry,
   SummaryEntry,
+  ToolResultOverflowEntry,
   CustomTitleEntry,
   MetadataEntry,
   SessionInfo,
@@ -208,8 +209,36 @@ export type { CompactOptions } from "./compact/compact.js";
 export {
   createAutoCompactConfig,
   shouldAutoCompact,
+  canAutoCompact,
+  recordAutoCompactSuccess,
+  recordAutoCompactFailure,
+  createAutoCompactTracking,
   type AutoCompactConfig,
+  type AutoCompactTrackingState,
 } from "./compact/auto-compact.js";
+
+// Microcompact
+export {
+  microcompactMessages,
+  COMPACTABLE_TOOLS,
+  CLEARED_PLACEHOLDER,
+} from "./compact/microcompact.js";
+export type { MicrocompactConfig, MicrocompactResult } from "./compact/microcompact.js";
+
+// Tool result budget
+export {
+  enforceToolResultBudget,
+  createBudgetState,
+} from "./compact/tool-result-budget.js";
+export type {
+  ToolResultBudgetConfig,
+  BudgetState,
+  ToolResultBudgetResult,
+} from "./compact/tool-result-budget.js";
+
+// Reactive compact
+export { tryReactiveCompact } from "./compact/reactive-compact.js";
+export type { ReactiveCompactConfig, ReactiveCompactResult } from "./compact/reactive-compact.js";
 
 // Context window / token utilities
 export {

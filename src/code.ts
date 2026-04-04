@@ -23,6 +23,9 @@ import type { RetryConfig } from "./retry/types.js";
 import type { ModelPricing } from "./cost/types.js";
 import type { TracingConfig, Tracer } from "./tracing/types.js";
 import type { MemoryConfig, MemoryProvider } from "./memory/types.js";
+import type { MicrocompactConfig } from "./compact/microcompact.js";
+import type { ToolResultBudgetConfig } from "./compact/tool-result-budget.js";
+import type { ReactiveCompactConfig } from "./compact/reactive-compact.js";
 import { CostTracker } from "./cost/tracker.js";
 import { McpClientManager } from "./mcp/client.js";
 import { SessionStorage } from "./session/storage.js";
@@ -61,6 +64,9 @@ export interface CodeOptions {
     maxTokens?: number;
     autoCompact?: boolean;
     autoCompactThreshold?: number;
+    microcompact?: MicrocompactConfig;
+    toolResultBudget?: ToolResultBudgetConfig;
+    reactiveCompact?: ReactiveCompactConfig;
     cwd?: string;
     permissions?: PermissionConfig;
     hooks?: HookDefinition[];
@@ -119,6 +125,9 @@ export class Code {
   private tracer?: Tracer;
   private memoryProvider?: MemoryProvider;
   private memoryConfig?: MemoryConfig;
+  private microcompactConfig?: MicrocompactConfig;
+  private toolResultBudgetConfig?: ToolResultBudgetConfig;
+  private reactiveCompactConfig?: ReactiveCompactConfig;
 
   constructor(opts: CodeOptions) {
     this.aiProvider = opts.aiProvider;
@@ -174,6 +183,10 @@ export class Code {
       this.memoryConfig = opts.options.memory;
       this.memoryProvider = opts.options.memory.provider;
     }
+
+    this.microcompactConfig = opts.options?.microcompact;
+    this.toolResultBudgetConfig = opts.options?.toolResultBudget;
+    this.reactiveCompactConfig = opts.options?.reactiveCompact;
   }
 
   private async getSkills(): Promise<SkillDefinition[]> {
@@ -257,6 +270,7 @@ export class Code {
     const autoCompact = createAutoCompactConfig({
       enabled: this.autoCompactEnabled,
       threshold: this.autoCompactThreshold,
+      model: this.model,
     });
 
     const skills = this.resolvedSkills ?? this.skills;
@@ -274,6 +288,9 @@ export class Code {
         model: this.model,
         maxTokens: this.maxTokens,
         autoCompact,
+        microcompact: this.microcompactConfig,
+        toolResultBudget: this.toolResultBudgetConfig,
+        reactiveCompact: this.reactiveCompactConfig,
         permissions: this.permissions,
         hooks: this.hooks,
         spawnSubagent: this.enableSubagents
