@@ -12,9 +12,11 @@ import type {
   Entry,
   FileCheckpointEntry,
   ToolResultOverflowEntry,
+  ContentReplacementRecord,
 } from "./types.js";
 import type { FileCheckpointSnapshot } from "../checkpoint/types.js";
 import type { StoredCostState } from "../cost/tracker.js";
+import { applySnipRemovals } from "../compact/history-snip.js";
 
 export interface ResumePayload {
   messages: ChatMessage[];
@@ -22,6 +24,8 @@ export interface ResumePayload {
   metadata: Record<string, unknown>;
   costState?: StoredCostState;
   overflowEntries: ToolResultOverflowEntry[];
+  /** Persisted content replacement records for disk-spilled tool results. */
+  contentReplacements: ContentReplacementRecord[];
 }
 
 /**
@@ -84,18 +88,29 @@ export async function restoreSession(
     }
   }
 
-  const messages: ChatMessage[] = [];
   const startIdx = lastBoundaryIdx + 1;
+  const activeEntries = entries.slice(startIdx);
 
-  for (let i = startIdx; i < entries.length; i++) {
-    const entry = entries[i];
-    if (entry.type === "message" || entry.type === "summary") {
-      messages.push(entry.message);
+  // Check if there are any snip boundaries to process
+  const hasSnips = activeEntries.some((e) => e.type === "snip-boundary");
+
+  let messages: ChatMessage[];
+  if (hasSnips) {
+    // Apply snip removals with parent relinking
+    const snipResult = applySnipRemovals(activeEntries);
+    messages = snipResult.messages;
+  } else {
+    messages = [];
+    for (const entry of activeEntries) {
+      if (entry.type === "message" || entry.type === "summary") {
+        messages.push(entry.message);
+      }
     }
   }
 
   const checkpointsByMessageId = new Map<string, FileCheckpointEntry>();
   const overflowEntries: ToolResultOverflowEntry[] = [];
+  const contentReplacements: ContentReplacementRecord[] = [];
   const metadata: Record<string, unknown> = {};
 
   for (const entry of entries) {
@@ -103,6 +118,8 @@ export async function restoreSession(
       checkpointsByMessageId.set(entry.messageId, entry);
     } else if (entry.type === "tool-result-overflow") {
       overflowEntries.push(entry);
+    } else if (entry.type === "content-replacement") {
+      contentReplacements.push(...entry.replacements);
     } else if (entry.type === "custom-title") {
       metadata.title = entry.title;
     } else if (entry.type === "metadata") {
@@ -117,5 +134,6 @@ export async function restoreSession(
     checkpointSnapshots,
     metadata,
     overflowEntries,
+    contentReplacements,
   };
 }

@@ -30,6 +30,9 @@ import type { MemoryConfig, MemoryProvider } from "./memory/types.js";
 import type { MicrocompactConfig } from "./compact/microcompact.js";
 import type { ToolResultBudgetConfig } from "./compact/tool-result-budget.js";
 import type { ReactiveCompactConfig } from "./compact/reactive-compact.js";
+import type { FileStateCacheConfig } from "./file-state/types.js";
+import type { ToolResultStorageConfig } from "./compact/tool-result-storage.js";
+import type { SnipConfig } from "./compact/history-snip.js";
 import { CostTracker } from "./cost/tracker.js";
 import { McpClientManager } from "./mcp/client.js";
 import { SessionStorage } from "./session/storage.js";
@@ -97,6 +100,12 @@ export interface CodeOptions {
     checkpoint?: CheckpointConfig;
     /** Prompt caching: enable deterministic tool ordering and cache_control injection. */
     promptCaching?: CacheControlConfig;
+    /** File state cache: track reads for read-before-edit enforcement. */
+    fileStateCache?: FileStateCacheConfig;
+    /** Disk-backed storage for oversized tool results. */
+    toolResultStorage?: ToolResultStorageConfig;
+    /** History snip: enable middle-range removal from conversation history. */
+    historySnip?: SnipConfig;
   };
 }
 
@@ -142,6 +151,9 @@ export class Code {
   private toolSearchEnabled: boolean;
   private checkpointManager: FileCheckpointManager | null = null;
   private promptCachingConfig: CacheControlConfig | undefined;
+  private fileStateCacheConfig: FileStateCacheConfig | undefined;
+  private toolResultStorageConfig: ToolResultStorageConfig | undefined;
+  private historySnipConfig: SnipConfig | undefined;
 
   constructor(opts: CodeOptions) {
     this.aiProvider = opts.aiProvider;
@@ -203,6 +215,9 @@ export class Code {
     this.reactiveCompactConfig = opts.options?.reactiveCompact;
     this.toolSearchEnabled = opts.options?.toolSearch ?? false;
     this.promptCachingConfig = opts.options?.promptCaching;
+    this.fileStateCacheConfig = opts.options?.fileStateCache;
+    this.toolResultStorageConfig = opts.options?.toolResultStorage;
+    this.historySnipConfig = opts.options?.historySnip;
 
     if (opts.options?.checkpoint?.enabled) {
       this.checkpointManager = new FileCheckpointManager(
@@ -279,6 +294,9 @@ export class Code {
           tracer: this.tracer,
           memory: this.memoryConfig,
           checkpointManager: this.checkpointManager ?? undefined,
+          fileStateCacheConfig: this.fileStateCacheConfig,
+          toolResultStorage: this.toolResultStorageConfig,
+          historySnip: this.historySnipConfig,
           promptCachingEnabled: this.promptCachingConfig?.enabled ?? false,
           skipCacheWrite: true,
         },
@@ -333,6 +351,9 @@ export class Code {
         memory: this.memoryConfig,
         toolSearchEnabled: this.toolSearchEnabled,
         checkpointManager: this.checkpointManager ?? undefined,
+        fileStateCacheConfig: this.fileStateCacheConfig,
+        toolResultStorage: this.toolResultStorageConfig,
+        historySnip: this.historySnipConfig,
         promptCachingEnabled: this.promptCachingConfig?.enabled ?? false,
         mcpToolNames: this.mcpToolNames.size > 0 ? this.mcpToolNames : undefined,
       },

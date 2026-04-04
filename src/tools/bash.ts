@@ -1,4 +1,5 @@
 import type { Tool, ToolResult, ToolContext } from "./types.js";
+import { classifyCommand } from "./shell-safety/command-classification.js";
 
 const MAX_OUTPUT_CHARS = 100_000;
 
@@ -7,8 +8,23 @@ export const bashTool: Tool = {
   description:
     "Execute a bash shell command. Use this for running scripts, " +
     "installing packages, git operations, and other system commands.",
+  isReadOnly(args) {
+    const command = args.command as string;
+    return classifyCommand(command).isReadOnly;
+  },
+  isDestructive(args) {
+    const command = args.command as string;
+    return classifyCommand(command).isDestructive;
+  },
   checkPermissions(args) {
     const command = args.command as string;
+    const classification = classifyCommand(command);
+    if (classification.isDestructive) {
+      return {
+        behavior: "ask" as const,
+        message: `Destructive command: ${command}${classification.reason ? ` (${classification.reason})` : ""}`,
+      };
+    }
     return {
       behavior: "passthrough" as const,
       message: `Execute: ${command}`,

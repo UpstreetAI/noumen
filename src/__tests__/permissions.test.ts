@@ -125,14 +125,25 @@ describe("built-in tool permission metadata", () => {
     });
   });
 
-  it("Bash.checkPermissions returns passthrough with command", () => {
+  it("Bash.checkPermissions returns ask for destructive commands", () => {
     const result = bashTool.checkPermissions!(
       { command: "rm -rf /" },
       ctx,
     );
     expect(result).toMatchObject({
+      behavior: "ask",
+    });
+    expect((result as { message: string }).message).toContain("Destructive");
+  });
+
+  it("Bash.checkPermissions returns passthrough for safe commands", () => {
+    const result = bashTool.checkPermissions!(
+      { command: "ls -la" },
+      ctx,
+    );
+    expect(result).toMatchObject({
       behavior: "passthrough",
-      message: "Execute: rm -rf /",
+      message: "Execute: ls -la",
     });
   });
 });
@@ -326,7 +337,7 @@ describe("resolvePermission", () => {
   it("content-specific deny rule does not block non-matching command", async () => {
     const result = await resolvePermission(
       bashTool,
-      { command: "npm test" },
+      { command: "npm install" },
       ctx,
       makeContext({
         rules: [{ toolName: "Bash", behavior: "deny", ruleContent: "rm -rf /" }],
@@ -419,7 +430,7 @@ describe("resolvePermission", () => {
   it("dontAsk mode denies tools that would prompt", async () => {
     const result = await resolvePermission(
       bashTool,
-      { command: "echo hello" },
+      { command: "npm install" },
       ctx,
       makeContext({ mode: "dontAsk" }),
     );
@@ -657,7 +668,7 @@ describe("Thread permission gating", () => {
 
   it("no handler + ask = fail-closed deny", async () => {
     provider.addResponse(
-      toolCallResponse("tc1", "Bash", { command: "echo hello" }),
+      toolCallResponse("tc1", "Bash", { command: "npm install" }),
     );
     provider.addResponse(textResponse("Done"));
 
@@ -680,13 +691,13 @@ describe("Thread permission gating", () => {
   });
 
   it("handler can add rules that persist across tool calls", async () => {
-    // First call: Bash with npm test → handler approves and adds allow rule
-    // Second call: Bash with npm test again → should be auto-allowed by rule
+    // First call: Bash with npm install → handler approves and adds allow rule
+    // Second call: Bash with npm install again → should be auto-allowed by rule
     provider.addResponse(
-      toolCallResponse("tc1", "Bash", { command: "npm test" }),
+      toolCallResponse("tc1", "Bash", { command: "npm install" }),
     );
     provider.addResponse(
-      toolCallResponse("tc2", "Bash", { command: "npm test" }),
+      toolCallResponse("tc2", "Bash", { command: "npm install" }),
     );
     provider.addResponse(textResponse("Done"));
 
@@ -700,7 +711,7 @@ describe("Thread permission gating", () => {
           return {
             allow: true,
             addRules: [
-              { toolName: "Bash", behavior: "allow" as const, ruleContent: "npm test" },
+              { toolName: "Bash", behavior: "allow" as const, ruleContent: "npm install" },
             ],
           };
         },
@@ -708,7 +719,7 @@ describe("Thread permission gating", () => {
     };
 
     const thread = new Thread(config, { sessionId: "s1", cwd: "/project" });
-    const events = await collectEvents(thread.run("run tests twice"));
+    const events = await collectEvents(thread.run("run install twice"));
 
     // Handler should only have been called once; second call auto-allowed by rule
     expect(handlerCalls).toBe(1);

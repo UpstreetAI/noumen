@@ -70,10 +70,22 @@ import {
   type BudgetState,
 } from "./compact/tool-result-budget.js";
 import {
+  persistToolResult,
+  enforceToolResultStorageBudget,
+  reconstructContentReplacementState,
+  applyPersistedReplacements,
+  createContentReplacementState,
+  type ToolResultStorageConfig,
+  type ContentReplacementState,
+} from "./compact/tool-result-storage.js";
+import {
   tryReactiveCompact,
   type ReactiveCompactConfig,
 } from "./compact/reactive-compact.js";
+import type { SnipConfig } from "./compact/history-snip.js";
 import { contentToString } from "./utils/content.js";
+import { FileStateCache } from "./file-state/cache.js";
+import type { FileStateCacheConfig } from "./file-state/types.js";
 import { generateUUID } from "./utils/uuid.js";
 import { activateSkillsForPaths, getActiveSkills } from "./skills/activation.js";
 import { createSkillTool } from "./tools/skill.js";
@@ -118,6 +130,12 @@ export interface ThreadConfig {
   memory?: MemoryConfig;
   toolSearchEnabled?: boolean;
   checkpointManager?: FileCheckpointManager;
+  /** File state cache config for read-before-edit enforcement. */
+  fileStateCacheConfig?: FileStateCacheConfig;
+  /** Disk-backed tool result storage config. */
+  toolResultStorage?: ToolResultStorageConfig;
+  /** History snip: enable middle-range removal from conversation history. */
+  historySnip?: SnipConfig;
   /** Enable deterministic tool ordering and CacheSafeParams tracking for prompt caching. */
   promptCachingEnabled?: boolean;
   /** When true, signal skipCacheWrite to the provider (for subagent forks). */
@@ -150,6 +168,8 @@ export class Thread {
   private hasAttemptedReactiveCompact = false;
   private microcompactTokensFreed = 0;
   private resumeRequested = false;
+  private fileStateCache: FileStateCache | null = null;
+  private contentReplacementState: ContentReplacementState;
 
   constructor(config: ThreadConfig, opts?: ThreadOptions) {
     this.config = config;
@@ -195,6 +215,11 @@ export class Thread {
     this.autoCompactTracking = createAutoCompactTracking();
     this.budgetState = createBudgetState();
 
+    if (config.fileStateCacheConfig?.enabled !== false) {
+      this.fileStateCache = new FileStateCache(config.fileStateCacheConfig);
+    }
+    this.contentReplacementState = createContentReplacementState();
+
     if (opts?.resume) {
       this.loaded = false;
       this.resumeRequested = true;
@@ -230,6 +255,18 @@ export class Thread {
 
           if (this.config.costTracker && payload.costState) {
             this.config.costTracker.restore(payload.costState);
+          }
+
+          // Reconstruct content replacement state and re-apply spilled stubs
+          if (payload.contentReplacements.length > 0) {
+            this.contentReplacementState = reconstructContentReplacementState(
+              payload.contentReplacements,
+              this.messages,
+            );
+            this.messages = applyPersistedReplacements(
+              this.messages,
+              this.contentReplacementState,
+            );
           }
 
           this.resumeRequested = false;
@@ -297,6 +334,7 @@ export class Thread {
           this.cwd = newCwd;
           toolCtx.cwd = newCwd;
         },
+        fileStateCache: this.fileStateCache ?? undefined,
       };
 
       const turnUsage: ChatCompletionUsage = {
@@ -651,6 +689,8 @@ export class Thread {
               allResults.push(result);
             }
 
+            const spilledRecords: import("./compact/tool-result-storage.js").ContentReplacementRecord[] = [];
+
             for (const execResult of allResults) {
               for (const evt of execResult.events) {
                 yield evt;
@@ -669,10 +709,24 @@ export class Thread {
                 preventContinuation = true;
               }
 
+              // Spill oversized results to disk before appending to messages
+              let resultContent = execResult.result.content;
+              if (typeof resultContent === "string") {
+                const spill = await this.maybeSpillToolResult(
+                  execResult.toolCall.id,
+                  execResult.toolCall.function.name,
+                  resultContent,
+                );
+                if (spill.spilled) {
+                  resultContent = spill.content;
+                  spilledRecords.push({ toolUseId: execResult.toolCall.id, replacement: spill.content });
+                }
+              }
+
               const toolResultMsg: ChatMessage = {
                 role: "tool",
                 tool_call_id: execResult.toolCall.id,
-                content: execResult.result.content,
+                content: resultContent,
               };
               messages.push(toolResultMsg);
               await storage.appendMessage(sessionId, toolResultMsg);
@@ -683,6 +737,11 @@ export class Thread {
               ) {
                 touchedFilePaths.push(execResult.parsedArgs.file_path);
               }
+            }
+
+            // Persist content replacement records for resume
+            if (spilledRecords.length > 0) {
+              await storage.appendContentReplacement(sessionId, spilledRecords);
             }
           } else {
             // Batched execution (original path)
@@ -835,6 +894,8 @@ export class Thread {
             return { toolCall: tc, parsedArgs: currentArgs, result };
           };
 
+          const batchSpilledRecords: import("./compact/tool-result-storage.js").ContentReplacementRecord[] = [];
+
           for await (const execResult of runToolsBatched(
             toolCalls,
             (name) => registry.get(name),
@@ -857,10 +918,20 @@ export class Thread {
               };
             }
 
+            // Spill oversized results to disk before appending to messages
+            let resultContent = result.content;
+            if (typeof resultContent === "string") {
+              const spill = await this.maybeSpillToolResult(tc.id, tc.function.name, resultContent);
+              if (spill.spilled) {
+                resultContent = spill.content;
+                batchSpilledRecords.push({ toolUseId: tc.id, replacement: spill.content });
+              }
+            }
+
             const toolResultMsg: ChatMessage = {
               role: "tool",
               tool_call_id: tc.id,
-              content: result.content,
+              content: resultContent,
             };
 
             messages.push(toolResultMsg);
@@ -876,6 +947,11 @@ export class Thread {
               yield evt;
             }
             eventQueue.length = 0;
+
+            // Persist content replacement records for resume
+            if (batchSpilledRecords.length > 0) {
+              await storage.appendContentReplacement(sessionId, batchSpilledRecords);
+            }
           }
 
           if (touchedFilePaths.length > 0 && allSkills.length > 0) {
@@ -1041,6 +1117,37 @@ export class Thread {
     }
   }
 
+  /**
+   * If tool result storage is enabled and the content exceeds the threshold,
+   * spill to disk and return the replacement stub. Otherwise return the original.
+   */
+  private async maybeSpillToolResult(
+    toolUseId: string,
+    toolName: string,
+    content: string,
+  ): Promise<{ content: string; spilled: boolean }> {
+    const storageConfig = this.config.toolResultStorage;
+    if (!storageConfig?.enabled) return { content, spilled: false };
+
+    const replacement = await persistToolResult(
+      this.config.fs,
+      this.sessionId,
+      toolUseId,
+      toolName,
+      content,
+      storageConfig,
+    );
+
+    if (replacement) {
+      this.contentReplacementState.seenIds.add(toolUseId);
+      this.contentReplacementState.replacements.set(toolUseId, replacement);
+      return { content: replacement, spilled: true };
+    }
+
+    this.contentReplacementState.seenIds.add(toolUseId);
+    return { content, spilled: false };
+  }
+
   private buildStreamingExecutorFn(
     toolCtx: ToolContext,
     hooks: HookDefinition[],
@@ -1195,6 +1302,37 @@ export class Thread {
     );
     this.lastUsage = undefined;
     this.anchorMessageIndex = undefined;
+  }
+
+  /**
+   * Remove specific messages from the middle of conversation history.
+   *
+   * Unlike `compact()` which summarizes a prefix, `snip()` removes
+   * specific messages by UUID. The JSONL transcript records the removed
+   * UUIDs so they're filtered on resume. Parent pointers are relinked
+   * across gaps.
+   *
+   * @param uuids - UUIDs of messages to remove
+   */
+  async snip(uuids: string[]): Promise<void> {
+    if (uuids.length === 0) return;
+    await this.storage.appendSnipBoundary(this.sessionId, uuids);
+
+    // Rebuild messages from entries with snip applied
+    const entries = await this.storage.loadAllEntries(this.sessionId);
+    const { applySnipRemovals } = await import("./compact/history-snip.js");
+
+    let lastBoundaryIdx = -1;
+    for (let i = entries.length - 1; i >= 0; i--) {
+      if (entries[i].type === "compact-boundary") {
+        lastBoundaryIdx = i;
+        break;
+      }
+    }
+
+    const activeEntries = entries.slice(lastBoundaryIdx + 1);
+    const result = applySnipRemovals(activeEntries);
+    this.messages = result.messages;
   }
 
   abort(): void {

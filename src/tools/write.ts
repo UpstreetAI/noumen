@@ -43,6 +43,21 @@ export const writeFileTool: Tool = {
       const existed = await ctx.fs.exists(filePath);
       await ctx.fs.writeFile(filePath, content);
 
+      // Update file state cache with the written content
+      if (ctx.fileStateCache) {
+        let mtime = 0;
+        try {
+          const stat = await ctx.fs.stat(filePath);
+          mtime = stat.modifiedAt ? Math.floor(stat.modifiedAt.getTime()) : 0;
+        } catch {
+          // best-effort
+        }
+        ctx.fileStateCache.set(filePath, {
+          content,
+          timestamp: mtime,
+        });
+      }
+
       return {
         content: existed
           ? `File updated successfully at: ${filePath}`

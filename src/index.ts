@@ -57,6 +57,10 @@ export {
   type SpritesComputerOptions,
 } from "./virtual/sprites-computer.js";
 
+// File State Cache
+export type { FileState, FileStateCacheConfig } from "./file-state/types.js";
+export { FileStateCache } from "./file-state/cache.js";
+
 // Session types
 export type {
   ChatMessage,
@@ -81,6 +85,9 @@ export type {
   StreamEvent,
   ToolResult,
   RunOptions,
+  ContentReplacementEntry,
+  ContentReplacementRecord,
+  SnipBoundaryEntry,
 } from "./session/types.js";
 
 // Tools
@@ -97,6 +104,13 @@ export { readFileTool } from "./tools/read.js";
 export { writeFileTool } from "./tools/write.js";
 export { editFileTool } from "./tools/edit.js";
 export { bashTool } from "./tools/bash.js";
+export {
+  normalizeQuotes,
+  findActualString,
+  countOccurrences,
+  preserveQuoteStyle,
+  stripTrailingWhitespace,
+} from "./tools/edit-utils.js";
 export { globTool } from "./tools/glob.js";
 export { grepTool } from "./tools/grep.js";
 export { createSkillTool } from "./tools/skill.js";
@@ -130,6 +144,13 @@ export {
   type StreamingExecResult,
   type StreamingToolExecutorFn,
 } from "./tools/streaming-executor.js";
+
+// Shell safety / command classification
+export { classifyCommand } from "./tools/shell-safety/command-classification.js";
+export type {
+  CommandClassification,
+  ShellSafetyConfig,
+} from "./tools/shell-safety/types.js";
 
 // Task management
 export type { Task, TaskStatus, TaskCreateInput, TaskUpdateInput } from "./tasks/types.js";
@@ -249,6 +270,21 @@ export {
 } from "./compact/microcompact.js";
 export type { MicrocompactConfig, MicrocompactResult } from "./compact/microcompact.js";
 
+// Tool result storage (disk-backed spilling)
+export {
+  persistToolResult,
+  enforceToolResultStorageBudget,
+  reconstructContentReplacementState,
+  applyPersistedReplacements,
+  createContentReplacementState,
+} from "./compact/tool-result-storage.js";
+export type {
+  ToolResultStorageConfig,
+  ContentReplacementState,
+  ContentReplacementRecord as ToolResultReplacementRecord,
+  ToolResultSpillResult,
+} from "./compact/tool-result-storage.js";
+
 // Tool result budget
 export {
   enforceToolResultBudget,
@@ -259,6 +295,17 @@ export type {
   BudgetState,
   ToolResultBudgetResult,
 } from "./compact/tool-result-budget.js";
+
+// History snip
+export {
+  applySnipRemovals,
+  snipMessagesByUuids,
+  projectSnippedView,
+} from "./compact/history-snip.js";
+export type {
+  SnipConfig,
+  SnipResult,
+} from "./compact/history-snip.js";
 
 // Reactive compact
 export { tryReactiveCompact } from "./compact/reactive-compact.js";

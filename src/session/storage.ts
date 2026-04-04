@@ -7,6 +7,9 @@ import type {
   SummaryEntry,
   ToolResultOverflowEntry,
   FileCheckpointEntry,
+  ContentReplacementEntry,
+  ContentReplacementRecord,
+  SnipBoundaryEntry,
   SessionInfo,
 } from "./types.js";
 import type { FileCheckpointSnapshot } from "../checkpoint/types.js";
@@ -116,6 +119,34 @@ export class SessionStorage {
       messageId,
       snapshot,
       isSnapshotUpdate,
+    };
+    await this.appendEntry(sessionId, entry);
+  }
+
+  async appendSnipBoundary(
+    sessionId: string,
+    removedUuids: string[],
+  ): Promise<void> {
+    if (removedUuids.length === 0) return;
+    const entry: SnipBoundaryEntry = {
+      type: "snip-boundary",
+      sessionId,
+      timestamp: new Date().toISOString(),
+      snipMetadata: { removedUuids },
+    };
+    await this.appendEntry(sessionId, entry);
+  }
+
+  async appendContentReplacement(
+    sessionId: string,
+    replacements: ContentReplacementRecord[],
+  ): Promise<void> {
+    if (replacements.length === 0) return;
+    const entry: ContentReplacementEntry = {
+      type: "content-replacement",
+      sessionId,
+      timestamp: new Date().toISOString(),
+      replacements,
     };
     await this.appendEntry(sessionId, entry);
   }

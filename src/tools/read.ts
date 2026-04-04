@@ -37,6 +37,28 @@ export const readFileTool: Tool = {
     const limit = args.limit as number | undefined;
 
     try {
+      // Dedup: if cache has same path/offset/limit and mtime is unchanged, skip re-read
+      if (ctx.fileStateCache) {
+        const cached = ctx.fileStateCache.get(filePath);
+        if (
+          cached &&
+          !cached.isPartialView &&
+          cached.offset !== undefined &&
+          cached.offset === offset &&
+          cached.limit === limit
+        ) {
+          try {
+            const stat = await ctx.fs.stat(filePath);
+            const mtime = stat.modifiedAt ? Math.floor(stat.modifiedAt.getTime()) : 0;
+            if (mtime === cached.timestamp) {
+              return { content: "file_unchanged" };
+            }
+          } catch {
+            // stat failure — proceed with full read
+          }
+        }
+      }
+
       const content = await ctx.fs.readFile(filePath);
       const lines = content.split("\n");
 
@@ -51,6 +73,23 @@ export const readFileTool: Tool = {
       let result = numbered.join("\n");
       if (endIdx < lines.length) {
         result += `\n... ${lines.length - endIdx} lines not shown ...`;
+      }
+
+      // Record this read in the file state cache
+      if (ctx.fileStateCache) {
+        let mtime = 0;
+        try {
+          const stat = await ctx.fs.stat(filePath);
+          mtime = stat.modifiedAt ? Math.floor(stat.modifiedAt.getTime()) : 0;
+        } catch {
+          // If stat fails, use 0 — edits will still require a read
+        }
+        ctx.fileStateCache.set(filePath, {
+          content: selectedLines.join("\n"),
+          timestamp: mtime,
+          offset,
+          limit,
+        });
       }
 
       return { content: result || "File is empty." };

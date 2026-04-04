@@ -5,6 +5,7 @@ import type { PermissionMode } from "../permissions/types.js";
 import type { TaskStore } from "../tasks/store.js";
 import type { LspServerManager } from "../lsp/manager.js";
 import type { FileCheckpointManager } from "../checkpoint/manager.js";
+import type { FileStateCache } from "../file-state/cache.js";
 
 export interface ToolResult {
   content: string | import("../session/types.js").ContentPart[];
@@ -61,6 +62,8 @@ export interface ToolContext {
   checkpointManager?: FileCheckpointManager;
   /** Current message ID for checkpoint tracking (set per user turn). */
   currentMessageId?: string;
+  /** File state cache for read-before-edit enforcement and dedup. */
+  fileStateCache?: FileStateCache;
 }
 
 export interface ToolParameterProperty {

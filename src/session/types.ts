@@ -139,6 +139,27 @@ export interface FileCheckpointEntry {
   isSnapshotUpdate: boolean;
 }
 
+export interface SnipBoundaryEntry {
+  type: "snip-boundary";
+  sessionId: string;
+  timestamp: string;
+  snipMetadata: {
+    removedUuids: string[];
+  };
+}
+
+export interface ContentReplacementRecord {
+  toolUseId: string;
+  replacement: string;
+}
+
+export interface ContentReplacementEntry {
+  type: "content-replacement";
+  sessionId: string;
+  timestamp: string;
+  replacements: ContentReplacementRecord[];
+}
+
 export type Entry =
   | MessageEntry
   | CompactBoundaryEntry
@@ -146,7 +167,9 @@ export type Entry =
   | CustomTitleEntry
   | MetadataEntry
   | ToolResultOverflowEntry
-  | FileCheckpointEntry;
+  | FileCheckpointEntry
+  | ContentReplacementEntry
+  | SnipBoundaryEntry;
 
 export interface SessionInfo {
   sessionId: string;

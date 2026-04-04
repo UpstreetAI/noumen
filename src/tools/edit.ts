@@ -1,4 +1,5 @@
 import type { Tool, ToolResult, ToolContext } from "./types.js";
+import { findActualString, countOccurrences, preserveQuoteStyle } from "./edit-utils.js";
 
 export const editFileTool: Tool = {
   name: "EditFile",
@@ -48,13 +49,40 @@ export const editFileTool: Tool = {
     const replaceAll = (args.replace_all as boolean) ?? false;
 
     try {
+      // Read-before-edit enforcement
+      if (ctx.fileStateCache) {
+        const cached = ctx.fileStateCache.get(filePath);
+        if (!cached || cached.isPartialView) {
+          return {
+            content: `Error: File has not been read yet. Use ReadFile on ${filePath} before editing.`,
+            isError: true,
+          };
+        }
+
+        // Staleness check: reject if file was modified after our last read
+        try {
+          const stat = await ctx.fs.stat(filePath);
+          const mtime = stat.modifiedAt ? Math.floor(stat.modifiedAt.getTime()) : 0;
+          if (mtime > cached.timestamp && cached.offset !== undefined) {
+            return {
+              content: `Error: ${filePath} has been modified since last read. Re-read the file before editing.`,
+              isError: true,
+            };
+          }
+        } catch {
+          // stat failure — proceed anyway, the writeFile will catch real issues
+        }
+      }
+
       if (ctx.checkpointManager && ctx.currentMessageId) {
         await ctx.checkpointManager.trackEdit(filePath, ctx.currentMessageId, ctx.sessionId ?? "");
       }
 
       const content = await ctx.fs.readFile(filePath);
 
-      if (!content.includes(oldString)) {
+      // Fuzzy matching: try exact match first, then quote-normalized match
+      const actualOldString = findActualString(content, oldString);
+      if (!actualOldString) {
         return {
           content: `Error: old_string not found in ${filePath}. Make sure the string matches exactly, including whitespace and indentation.`,
           isError: true,
@@ -62,7 +90,7 @@ export const editFileTool: Tool = {
       }
 
       if (!replaceAll) {
-        const count = content.split(oldString).length - 1;
+        const count = countOccurrences(content, oldString);
         if (count > 1) {
           return {
             content: `Error: old_string appears ${count} times in ${filePath}. Provide more context to make it unique, or set replace_all to true.`,
@@ -71,11 +99,29 @@ export const editFileTool: Tool = {
         }
       }
 
+      // Preserve the file's quote style in the replacement text
+      const actualNewString = preserveQuoteStyle(oldString, actualOldString, newString);
+
       const updated = replaceAll
-        ? content.split(oldString).join(newString)
-        : content.replace(oldString, newString);
+        ? content.split(actualOldString).join(actualNewString)
+        : content.replace(actualOldString, actualNewString);
 
       await ctx.fs.writeFile(filePath, updated);
+
+      // Update cache with the full post-edit content
+      if (ctx.fileStateCache) {
+        let mtime = 0;
+        try {
+          const stat = await ctx.fs.stat(filePath);
+          mtime = stat.modifiedAt ? Math.floor(stat.modifiedAt.getTime()) : 0;
+        } catch {
+          // best-effort
+        }
+        ctx.fileStateCache.set(filePath, {
+          content: updated,
+          timestamp: mtime,
+        });
+      }
 
       return {
         content: `File ${filePath} has been updated successfully.`,
