@@ -63,6 +63,7 @@ describe("BedrockAnthropicProvider", () => {
 
     const chunks: ChatStreamChunk[] = [];
     for await (const chunk of provider.chat({
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0",
       messages: [{ role: "user", content: "hi" }],
     })) {
       chunks.push(chunk);
@@ -90,6 +91,7 @@ describe("BedrockAnthropicProvider", () => {
 
     const chunks: ChatStreamChunk[] = [];
     for await (const chunk of provider.chat({
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0",
       messages: [{ role: "user", content: "read test.ts" }],
       tools: [
         {

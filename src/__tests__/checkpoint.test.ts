@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { MockFs } from "./helpers.js";
 import { FileCheckpointManager } from "../checkpoint/manager.js";
-import type { CheckpointConfig } from "../checkpoint/types.js";
+import type { CheckpointConfig, FileCheckpointSnapshot } from "../checkpoint/types.js";
 
 let fs: MockFs;
 let manager: FileCheckpointManager;
@@ -164,7 +164,7 @@ describe("FileCheckpointManager", () => {
   });
 
   it("restoreStateFromEntries rebuilds state from snapshots", () => {
-    const snapshots = [
+    const snapshots: FileCheckpointSnapshot[] = [
       {
         messageId: "msg-1",
         trackedFileBackups: {

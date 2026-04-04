@@ -67,6 +67,7 @@ describe("VertexAnthropicProvider", () => {
 
     const chunks: ChatStreamChunk[] = [];
     for await (const chunk of provider.chat({
+      model: "claude-sonnet-4@20250514",
       messages: [{ role: "user", content: "hi" }],
     })) {
       chunks.push(chunk);
@@ -102,6 +103,7 @@ describe("VertexAnthropicProvider", () => {
 
     const chunks: ChatStreamChunk[] = [];
     for await (const chunk of provider.chat({
+      model: "claude-sonnet-4@20250514",
       messages: [{ role: "user", content: "hi" }],
     })) {
       chunks.push(chunk);
@@ -132,6 +134,7 @@ describe("VertexAnthropicProvider", () => {
 
     const chunks: ChatStreamChunk[] = [];
     for await (const chunk of provider.chat({
+      model: "claude-sonnet-4@20250514",
       messages: [{ role: "user", content: "list files" }],
       tools: [
         {
