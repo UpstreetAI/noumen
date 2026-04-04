@@ -1635,6 +1635,19 @@ export class Thread {
     this.messages = result.messages;
   }
 
+  setModel(model: string): void {
+    this.model = model;
+  }
+
+  setProvider(provider: AIProvider, model?: string): void {
+    this.config.aiProvider = provider;
+    if (model) this.model = model;
+  }
+
+  getModel(): string {
+    return this.model;
+  }
+
   abort(): void {
     this.abortController?.abort();
   }

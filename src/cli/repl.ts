@@ -4,7 +4,7 @@ import type { Code } from "../code.js";
 import type { Thread } from "../thread.js";
 import type { MergedConfig } from "./config.js";
 import { renderEvent, createRenderState, promptPermission, isVisibleEvent } from "./render.js";
-import { DEFAULT_MODELS } from "./provider-factory.js";
+import { DEFAULT_MODELS, createProvider, SUPPORTED_PROVIDERS } from "./provider-factory.js";
 import { startSpinner } from "./spinner.js";
 
 export async function startRepl(
@@ -174,6 +174,50 @@ async function handleSlashCommand(
       return "continue";
     }
 
+    case "/model": {
+      const arg = input.trim().split(/\s+/).slice(1).join(" ");
+      if (!arg) {
+        process.stderr.write(chalk.dim(`Current model: ${thread.getModel()}\n`));
+      } else {
+        thread.setModel(arg);
+        process.stderr.write(chalk.dim(`Model set to ${arg}\n`));
+      }
+      return "continue";
+    }
+
+    case "/provider": {
+      const parts = input.trim().split(/\s+/).slice(1);
+      const providerName = parts[0];
+      const modelArg = parts[1];
+      if (!providerName) {
+        process.stderr.write(
+          chalk.dim(`Current: ${config.provider ?? "auto"}/${thread.getModel()}\n`) +
+          chalk.dim(`Available: ${SUPPORTED_PROVIDERS.join(", ")}\n`),
+        );
+        return "continue";
+      }
+      if (!SUPPORTED_PROVIDERS.includes(providerName)) {
+        process.stderr.write(chalk.red(`Unknown provider: ${providerName}. Available: ${SUPPORTED_PROVIDERS.join(", ")}\n`));
+        return "continue";
+      }
+      try {
+        const model = modelArg ?? DEFAULT_MODELS[providerName];
+        const provider = await createProvider(providerName, {
+          apiKey: config.apiKey,
+          model,
+          configApiKey: config.apiKey,
+          baseURL: config.baseURL,
+        });
+        thread.setProvider(provider, model);
+        config.provider = providerName;
+        config.model = model;
+        process.stderr.write(chalk.dim(`Switched to ${providerName}/${model}\n`));
+      } catch (err) {
+        process.stderr.write(chalk.red(`Failed to switch: ${(err as Error).message}\n`));
+      }
+      return "continue";
+    }
+
     case "/verbose":
       config.verbose = !config.verbose;
       process.stderr.write(
@@ -186,16 +230,18 @@ async function handleSlashCommand(
         chalk.dim(
           [
             "Commands:",
-            "  /quit, /exit    Exit the REPL",
-            "  /new            Start a new conversation",
-            "  /session        Show current session ID",
-            "  /sessions       List saved sessions",
-            "  /cost           Show token usage and cost",
-            "  /verbose        Toggle verbose output",
-            "  /help           Show this help",
+            "  /quit, /exit        Exit the REPL",
+            "  /new                Start a new conversation",
+            "  /model [name]       Show or change the model",
+            "  /provider [name]    Show or switch provider (and model)",
+            "  /session            Show current session ID",
+            "  /sessions           List saved sessions",
+            "  /cost               Show token usage and cost",
+            "  /verbose            Toggle verbose output",
+            "  /help               Show this help",
             "",
             "Shortcuts:",
-            "  Ctrl+C          Cancel current turn / exit when idle",
+            "  Ctrl+C              Cancel current turn / exit when idle",
             "",
           ].join("\n"),
         ),
