@@ -40,21 +40,11 @@ function parseThinking(level: string | undefined): ThinkingConfig | undefined {
 }
 
 /**
- * Try to create a sandboxed LocalSandbox. Falls back to UnsandboxedLocal
- * with a warning when sandbox-runtime is not installed.
+ * Create the CLI sandbox. Defaults to OS-level sandboxed `LocalSandbox`.
+ * Use `--no-sandbox` to explicitly opt out.
  */
 function createCliSandbox(config: MergedConfig): Sandbox {
   if (config.noSandbox) {
-    return UnsandboxedLocal({ cwd: config.cwd });
-  }
-
-  try {
-    require.resolve("@anthropic-ai/sandbox-runtime");
-  } catch {
-    process.stderr.write(
-      chalk.yellow("  ⚠ @anthropic-ai/sandbox-runtime not installed — running without OS sandbox.\n") +
-        chalk.dim("    Install it for local sandboxing: npm install @anthropic-ai/sandbox-runtime\n\n"),
-    );
     return UnsandboxedLocal({ cwd: config.cwd });
   }
 

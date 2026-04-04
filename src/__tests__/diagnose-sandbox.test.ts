@@ -21,7 +21,7 @@ describe("diagnose() sandbox-runtime check", () => {
     expect(result.sandboxRuntime.platform).toBe(process.platform);
   });
 
-  it("reports warning when sandbox-runtime is not installed", async () => {
+  it("reports platform support status", async () => {
     const agent = new Agent({
       provider: mockProvider(),
       sandbox: { fs: new MockFs(), computer: new MockComputer() },
@@ -30,16 +30,15 @@ describe("diagnose() sandbox-runtime check", () => {
 
     const result = await agent.diagnose();
 
-    // In the test environment, sandbox-runtime is likely not installed.
-    // Whether ok is true or false depends on the test host, but the
-    // field must be present and typed correctly.
     expect(result.sandboxRuntime).toBeDefined();
+    // On macOS/Linux in CI the runtime should be functional;
+    // on unsupported platforms it reports a warning.
     if (!result.sandboxRuntime.ok) {
       expect(result.sandboxRuntime.warning).toBeTruthy();
     }
   });
 
-  it("does not affect overall health when sandbox-runtime is unavailable", async () => {
+  it("does not affect overall health based on sandbox-runtime status", async () => {
     const agent = new Agent({
       provider: mockProvider(),
       sandbox: { fs: new MockFs(), computer: new MockComputer() },
@@ -48,8 +47,7 @@ describe("diagnose() sandbox-runtime check", () => {
 
     const result = await agent.diagnose();
 
-    // overall should still be true as long as provider + sandbox pass,
-    // regardless of sandbox-runtime availability
+    // overall depends on provider + sandbox fs/computer, not sandbox-runtime
     expect(result.overall).toBe(true);
     expect(result.provider.ok).toBe(true);
     expect(result.sandbox.fs.ok).toBe(true);

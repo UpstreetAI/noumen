@@ -1,5 +1,9 @@
 import { exec as execCb } from "node:child_process";
 import type { VirtualComputer, ExecOptions, CommandResult } from "./computer.js";
+import {
+  SandboxManager,
+  type SandboxRuntimeConfig,
+} from "@anthropic-ai/sandbox-runtime";
 
 /**
  * Filesystem and network restriction config passed to `@anthropic-ai/sandbox-runtime`.
@@ -29,22 +33,17 @@ export interface SandboxedLocalComputerOptions {
   sandbox?: SandboxConfig;
 }
 
-type SandboxManagerModule = typeof import("@anthropic-ai/sandbox-runtime");
-
 /**
  * `VirtualComputer` that wraps every command with OS-level sandboxing via
  * `@anthropic-ai/sandbox-runtime`. Uses macOS Seatbelt (`sandbox-exec`) or
  * Linux bubblewrap (`bwrap`) under the hood.
- *
- * Requires `@anthropic-ai/sandbox-runtime` as a peer dependency — it is
- * loaded lazily on first command execution.
  */
 export class SandboxedLocalComputer implements VirtualComputer {
   private defaultCwd: string;
   private defaultTimeout: number;
   private sandboxConfig: SandboxConfig;
-  private srtModule: SandboxManagerModule | null = null;
   private initPromise: Promise<void> | null = null;
+  private initialized = false;
 
   constructor(opts?: SandboxedLocalComputerOptions) {
     this.defaultCwd = opts?.defaultCwd ?? process.cwd();
@@ -52,7 +51,7 @@ export class SandboxedLocalComputer implements VirtualComputer {
     this.sandboxConfig = opts?.sandbox ?? {};
   }
 
-  private buildRuntimeConfig(): Record<string, unknown> {
+  private buildRuntimeConfig(): SandboxRuntimeConfig {
     const fs = this.sandboxConfig.filesystem;
     const net = this.sandboxConfig.network;
     return {
@@ -69,37 +68,24 @@ export class SandboxedLocalComputer implements VirtualComputer {
     };
   }
 
-  private async ensureInitialized(): Promise<SandboxManagerModule> {
-    if (this.srtModule) return this.srtModule;
+  private async ensureInitialized(): Promise<void> {
+    if (this.initialized) return;
 
     if (!this.initPromise) {
       this.initPromise = (async () => {
-        try {
-          this.srtModule = (await import(
-            "@anthropic-ai/sandbox-runtime"
-          )) as unknown as SandboxManagerModule;
-        } catch {
-          throw new Error(
-            "LocalSandbox requires @anthropic-ai/sandbox-runtime for OS-level sandboxing. " +
-              "Install it with: npm install @anthropic-ai/sandbox-runtime\n" +
-              "Or use UnsandboxedLocal() if you don't need sandboxing.",
-          );
-        }
-
-        const config = this.buildRuntimeConfig();
-        await this.srtModule!.SandboxManager.initialize(config);
+        await SandboxManager.initialize(this.buildRuntimeConfig());
+        this.initialized = true;
       })();
     }
 
     await this.initPromise;
-    return this.srtModule!;
   }
 
   async executeCommand(
     command: string,
     opts?: ExecOptions,
   ): Promise<CommandResult> {
-    const { SandboxManager } = await this.ensureInitialized();
+    await this.ensureInitialized();
 
     const wrappedCommand = await SandboxManager.wrapWithSandbox(command);
 
@@ -132,9 +118,9 @@ export class SandboxedLocalComputer implements VirtualComputer {
    * Tear down the sandbox runtime. Call when the agent is done.
    */
   async dispose(): Promise<void> {
-    if (this.srtModule) {
-      await this.srtModule.SandboxManager.reset();
-      this.srtModule = null;
+    if (this.initialized) {
+      await SandboxManager.reset();
+      this.initialized = false;
       this.initPromise = null;
     }
   }

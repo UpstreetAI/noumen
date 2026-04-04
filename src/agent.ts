@@ -694,16 +694,22 @@ export class Agent {
 
     // --- Sandbox Runtime (OS-level sandboxing) ------------------------------
     let sandboxRuntimeCheck: DiagnoseResult["sandboxRuntime"];
-    try {
-      const srt = await import("@anthropic-ai/sandbox-runtime");
-      const supported = srt.SandboxManager.isSupportedPlatform();
-      const deps = srt.SandboxManager.checkDependencies();
-      if (supported && deps.satisfied) {
-        sandboxRuntimeCheck = { ok: true, latencyMs: 0, platform: process.platform };
+    {
+      const { SandboxManager } = await import("@anthropic-ai/sandbox-runtime");
+      const supported = SandboxManager.isSupportedPlatform();
+      const deps = SandboxManager.checkDependencies();
+      const hasErrors = deps.errors.length > 0;
+      if (supported && !hasErrors) {
+        sandboxRuntimeCheck = {
+          ok: true,
+          latencyMs: 0,
+          platform: process.platform,
+          ...(deps.warnings.length > 0 && { warning: deps.warnings.join("; ") }),
+        };
       } else {
         const reasons: string[] = [];
         if (!supported) reasons.push(`platform ${process.platform} not supported`);
-        if (!deps.satisfied && deps.missing) reasons.push(`missing: ${deps.missing.join(", ")}`);
+        reasons.push(...deps.errors);
         sandboxRuntimeCheck = {
           ok: false,
           latencyMs: 0,
@@ -711,13 +717,6 @@ export class Agent {
           platform: process.platform,
         };
       }
-    } catch {
-      sandboxRuntimeCheck = {
-        ok: false,
-        latencyMs: 0,
-        warning: "Not installed. Run: npm install @anthropic-ai/sandbox-runtime",
-        platform: process.platform,
-      };
     }
 
     // --- MCP servers -------------------------------------------------------
