@@ -78,7 +78,29 @@ export const webFetchTool: Tool = {
         };
       }
 
-      const text = await response.text();
+      // Stream the body with a size cap to avoid OOM when Content-Length is absent
+      let text = "";
+      let bytesRead = 0;
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          bytesRead += value.byteLength;
+          if (bytesRead > MAX_CONTENT_LENGTH) {
+            reader.cancel();
+            return {
+              content: `Response too large (>${MAX_CONTENT_LENGTH} bytes streamed, limit ${MAX_CONTENT_LENGTH})`,
+              isError: true,
+            };
+          }
+          text += decoder.decode(value, { stream: true });
+        }
+        text += decoder.decode();
+      } else {
+        text = await response.text();
+      }
 
       let markdown: string;
       if (contentType.includes("text/html") || contentType.includes("xhtml")) {
@@ -89,8 +111,9 @@ export const webFetchTool: Tool = {
       }
 
       if (markdown.length > MAX_OUTPUT_CHARS) {
+        const totalChars = markdown.length;
         markdown = markdown.slice(0, MAX_OUTPUT_CHARS) +
-          `\n\n... content truncated (${markdown.length} total chars)`;
+          `\n\n... content truncated (${totalChars} total chars)`;
       }
 
       let result = `# Content from ${url}\n\n${markdown}`;

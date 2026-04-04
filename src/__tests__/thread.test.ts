@@ -247,7 +247,7 @@ describe("Thread", () => {
       const turnComplete = events.find((e) => e.type === "turn_complete");
       expect(turnComplete).toBeDefined();
       if (turnComplete?.type === "turn_complete") {
-        expect(turnComplete.usage).toEqual(mockUsage);
+        expect(turnComplete.usage).toMatchObject(mockUsage);
         expect(turnComplete.callCount).toBe(1);
       }
     });
@@ -291,7 +291,7 @@ describe("Thread", () => {
       const turnComplete = events.find((e) => e.type === "turn_complete");
       expect(turnComplete).toBeDefined();
       if (turnComplete?.type === "turn_complete") {
-        expect(turnComplete.usage).toEqual({
+        expect(turnComplete.usage).toMatchObject({
           prompt_tokens: 130,
           completion_tokens: 35,
           total_tokens: 165,
@@ -309,7 +309,7 @@ describe("Thread", () => {
       const turnComplete = events.find((e) => e.type === "turn_complete");
       expect(turnComplete).toBeDefined();
       if (turnComplete?.type === "turn_complete") {
-        expect(turnComplete.usage).toEqual({
+        expect(turnComplete.usage).toMatchObject({
           prompt_tokens: 0,
           completion_tokens: 0,
           total_tokens: 0,

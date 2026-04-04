@@ -5,6 +5,7 @@ import type {
   PermissionContext,
   PermissionRule,
 } from "./types.js";
+import { RULE_SOURCE_PRECEDENCE } from "./types.js";
 /**
  * Check whether a tool name matches a rule's `toolName` field.
  *
@@ -110,7 +111,7 @@ export function getMatchingRules(
   content?: string,
   mcpInfo?: { serverName: string; toolName: string },
 ): PermissionRule[] {
-  return context.rules.filter((rule) => {
+  const matched = context.rules.filter((rule) => {
     if (rule.behavior !== behavior) return false;
     if (!toolMatchesRule(toolName, rule, mcpInfo)) return false;
 
@@ -124,6 +125,15 @@ export function getMatchingRules(
     // rules override content-specific ones, matching claude-code behavior).
     return true;
   });
+
+  // Sort by source precedence so higher-precedence sources win first
+  matched.sort((a, b) => {
+    const aIdx = a.source ? RULE_SOURCE_PRECEDENCE.indexOf(a.source) : RULE_SOURCE_PRECEDENCE.length;
+    const bIdx = b.source ? RULE_SOURCE_PRECEDENCE.indexOf(b.source) : RULE_SOURCE_PRECEDENCE.length;
+    return aIdx - bIdx;
+  });
+
+  return matched;
 }
 
 /**

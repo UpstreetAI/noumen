@@ -78,6 +78,13 @@ description: Every event type emitted during an agent run, including text stream
 | `span_end` | `name`, `spanId`, `durationMs`, `error?` | A span ended |
 | `git_operation` | `operation`, `details` | A git operation was detected (`commit`, `push`, `pr_create`, `merge`, `rebase`) |
 
+### Structured output and limits
+
+| Event | Fields | Description |
+|-------|--------|-------------|
+| `structured_output` | `data`, `schema` | Structured output was produced matching the requested schema |
+| `max_turns_reached` | `maxTurns`, `turnCount` | The agent hit the maxTurns limit and stopped |
+
 ## Handling events
 
 ```typescript

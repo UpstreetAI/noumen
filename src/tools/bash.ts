@@ -86,9 +86,10 @@ export const bashTool: Tool = {
       }
 
       if (output.length > MAX_OUTPUT_CHARS) {
+        const totalChars = output.length;
         output =
           output.slice(0, MAX_OUTPUT_CHARS) +
-          `\n... output truncated (${output.length} total chars)`;
+          `\n... output truncated (${totalChars} total chars)`;
       }
 
       if (result.exitCode !== 0) {

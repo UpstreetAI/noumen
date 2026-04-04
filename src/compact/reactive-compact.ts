@@ -43,7 +43,8 @@ export async function tryReactiveCompact(
       { stripBinaryContent: true },
     );
     return { messages: compacted, strategy: "compacted" };
-  } catch {
+  } catch (err) {
+    console.warn("[reactive-compact] compaction failed, falling back to head truncation:", err);
     // Compaction failed — fall back to head truncation
     const targetTokens = getEffectiveContextWindow(model);
     const truncated = truncateHeadForPTLRetry(messages, targetTokens);

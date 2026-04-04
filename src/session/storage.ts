@@ -5,6 +5,7 @@ import type {
   MessageEntry,
   CompactBoundaryEntry,
   SummaryEntry,
+  MetadataEntry,
   ToolResultOverflowEntry,
   FileCheckpointEntry,
   ContentReplacementEntry,
@@ -151,6 +152,21 @@ export class SessionStorage {
     await this.appendEntry(sessionId, entry);
   }
 
+  async appendMetadata(
+    sessionId: string,
+    key: string,
+    value: unknown,
+  ): Promise<void> {
+    const entry: MetadataEntry = {
+      type: "metadata",
+      sessionId,
+      timestamp: new Date().toISOString(),
+      key,
+      value,
+    };
+    await this.appendEntry(sessionId, entry);
+  }
+
   async loadMessages(sessionId: string): Promise<ChatMessage[]> {
     const path = this.getTranscriptPath(sessionId);
 
@@ -227,19 +243,49 @@ export class SessionStorage {
         );
         const allEntries = parseJSONL<Entry>(content);
 
+        // Find last compact boundary to mirror loadMessages behavior
+        let lastBoundaryIdx = -1;
+        for (let i = allEntries.length - 1; i >= 0; i--) {
+          if (allEntries[i].type === "compact-boundary") {
+            lastBoundaryIdx = i;
+            break;
+          }
+        }
+        const activeEntries = allEntries.slice(lastBoundaryIdx + 1);
+
+        // Collect snipped UUIDs
+        const snippedUuids = new Set<string>();
+        for (const e of activeEntries) {
+          if (e.type === "snip-boundary") {
+            for (const uuid of e.snipMetadata.removedUuids) {
+              snippedUuids.add(uuid);
+            }
+          }
+        }
+
         let messageCount = 0;
         let title: string | undefined;
         let firstTimestamp: string | undefined;
         let lastTimestamp: string | undefined;
 
-        for (const e of allEntries) {
-          if (e.type === "message" || e.type === "summary") {
+        for (const e of activeEntries) {
+          if ((e.type === "message" || e.type === "summary") && !snippedUuids.has(e.uuid)) {
             messageCount++;
             if (!firstTimestamp) firstTimestamp = e.timestamp;
             lastTimestamp = e.timestamp;
           }
           if (e.type === "custom-title") {
             title = e.title;
+          }
+        }
+
+        // Fall back to full entries for timestamps if all messages were compacted
+        if (!firstTimestamp) {
+          for (const e of allEntries) {
+            if (e.type === "message" || e.type === "summary") {
+              if (!firstTimestamp) firstTimestamp = e.timestamp;
+              lastTimestamp = e.timestamp;
+            }
           }
         }
 

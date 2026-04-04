@@ -1,5 +1,6 @@
 import type { AIProvider, ChatParams } from "../providers/types.js";
-import type { ChatMessage } from "../session/types.js";
+import type { ChatMessage, ContentPart } from "../session/types.js";
+import { contentToString } from "../utils/content.js";
 
 export interface ClassifierResult {
   shouldBlock: boolean;
@@ -44,7 +45,7 @@ export async function classifyPermission(
 
   const contextWindow = recentMessages.slice(-6);
   const contextText = contextWindow
-    .map((m) => `${m.role}: ${typeof m.content === "string" ? m.content?.slice(0, 200) : ""}`)
+    .map((m) => `${m.role}: ${contentToString(m.content as string | ContentPart[]).slice(0, 200)}`)
     .join("\n");
 
   const userPrompt =

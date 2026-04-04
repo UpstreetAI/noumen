@@ -26,12 +26,12 @@ const code = new Code({
   aiProvider,
   sandbox,
   options: {
-    autoCompactThreshold: 0.8, // compact at 80% of context window
+    autoCompactThreshold: 100_000, // compact when estimated token usage exceeds this count
   },
 });
 ```
 
-The system estimates token usage before each provider call and compacts if the threshold is exceeded. A circuit breaker prevents repeated compaction failures from blocking progress.
+The threshold is an absolute token count (default: 100,000). When a model name is provided, the threshold is automatically derived from the model's context window. The system estimates token usage before each provider call and compacts if the threshold is exceeded. A circuit breaker prevents repeated compaction failures from blocking progress.
 
 ## Microcompact
 
@@ -40,12 +40,13 @@ Microcompact clears old tool results for specific tools to reclaim space without
 ```typescript
 options: {
   microcompact: {
-    maxToolResults: 5, // keep only the 5 most recent results per tool
+    enabled: true,
+    keepRecent: 5, // keep the 5 most recent eligible results uncleared
   },
 }
 ```
 
-Tool results from `ReadFile`, `Grep`, `Glob`, `Bash`, `WebFetch`, and `WebSearch` are eligible for clearing. Cleared results are replaced with a `[cleared]` placeholder.
+Tool results from `ReadFile`, `EditFile`, `WriteFile`, `Grep`, `Glob`, `Bash`, `WebFetch`, `WebSearch`, and `NotebookEdit` are eligible for clearing. Cleared results are replaced with a `[tool result cleared to save context]` placeholder.
 
 ## Tool result budget
 
@@ -70,7 +71,6 @@ Reactive compaction is a last-resort strategy that fires when the provider retur
 options: {
   reactiveCompact: {
     enabled: true,
-    maxHeadTruncations: 3,
   },
 }
 ```
@@ -84,6 +84,7 @@ interface CompactOptions {
   customInstructions?: string;
   tailMessagesToKeep?: number;    // messages to exclude from summarization
   stripBinaryContent?: boolean;   // remove base64/binary before summarizing (default: true)
+  signal?: AbortSignal;           // abort signal — partial summary is discarded if fired
 }
 ```
 

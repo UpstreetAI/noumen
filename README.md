@@ -520,16 +520,28 @@ thread.abort();
 | `retry_exhausted` | `attempts`, `error` | All retries exhausted |
 | `compact_start` | | Auto-compaction started |
 | `compact_complete` | | Auto-compaction finished |
+| `microcompact_complete` | `tokensFreed` | Microcompaction freed tokens from tool results |
+| `tool_result_truncated` | `toolCallId`, `originalChars`, `truncatedChars` | A tool result was truncated by the budget system |
 | `permission_request` | `toolName`, `input`, `message` | Tool call requires user approval |
+| `permission_granted` | `toolName`, `input` | Permission was granted for a tool call |
+| `permission_denied` | `toolName`, `input`, `message` | Permission was denied for a tool call |
+| `denial_limit_exceeded` | `consecutiveDenials`, `totalDenials` | Denial tracking limits hit |
+| `user_input_request` | `toolUseId`, `question` | The agent is asking the user a question |
 | `subagent_start` | `toolUseId`, `prompt` | A subagent is being spawned |
 | `subagent_end` | `toolUseId`, `result` | A subagent finished |
 | `session_resumed` | `sessionId`, `messageCount` | A previous session was restored |
+| `checkpoint_snapshot` | `messageId` | A file checkpoint was taken before edits |
+| `recovery_filtered` | `filterName`, `removedCount` | Corrupt entries were filtered during session restore |
+| `interrupted_turn_detected` | `kind` | A previous turn was interrupted (`interrupted_tool` or `interrupted_prompt`) |
 | `memory_update` | `created`, `updated`, `deleted` | Memories were extracted from the conversation |
-| `structured_output` | `output` | Structured output was produced |
-| `max_turns_reached` | `turns` | The agent hit the maxTurns limit |
+| `span_start` | `name`, `spanId` | An OpenTelemetry-compatible span started |
+| `span_end` | `name`, `spanId`, `durationMs`, `error?` | A span ended |
+| `git_operation` | `operation`, `details` | A git operation was detected |
+| `structured_output` | `data`, `schema` | Structured output was produced |
+| `max_turns_reached` | `maxTurns`, `turnCount` | The agent hit the maxTurns limit |
 | `error` | `error` | An error occurred |
 
-See **[noumen.dev/docs/stream-events](https://noumen.dev/docs/stream-events)** for the full event reference including permissions, tracing, recovery, and more.
+See **[noumen.dev/docs/stream-events](https://noumen.dev/docs/stream-events)** for the full event reference.
 
 ## Built-in Tools
 
@@ -561,7 +573,7 @@ See **[noumen.dev/docs/stream-events](https://noumen.dev/docs/stream-events)** f
 | **ExitPlanMode** | `enablePlanMode` | Return to normal mode with optional plan |
 | **EnterWorktree** | `enableWorktrees` | Create an isolated git worktree |
 | **ExitWorktree** | `enableWorktrees` | Leave and optionally clean up worktree |
-| **LSP** | `enableLsp` | Query language servers (definitions, references, hover) |
+| **LSP** | `lsp` config | Query language servers (definitions, references, hover) |
 | **WebSearch** | `webSearch` config | Search the web via a user-provided backend |
 | **ToolSearch** | `toolSearch` | Discover deferred tools on demand (reduces context usage) |
 

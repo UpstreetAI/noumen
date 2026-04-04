@@ -428,6 +428,9 @@ export class Thread {
         prompt_tokens: 0,
         completion_tokens: 0,
         total_tokens: 0,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        thinking_tokens: 0,
       };
       let callCount = 0;
       let preventContinuation = false;
@@ -818,6 +821,9 @@ export class Thread {
           turnUsage.prompt_tokens += lastUsage.prompt_tokens;
           turnUsage.completion_tokens += lastUsage.completion_tokens;
           turnUsage.total_tokens += lastUsage.total_tokens;
+          turnUsage.cache_read_tokens = (turnUsage.cache_read_tokens ?? 0) + (lastUsage.cache_read_tokens ?? 0);
+          turnUsage.cache_creation_tokens = (turnUsage.cache_creation_tokens ?? 0) + (lastUsage.cache_creation_tokens ?? 0);
+          turnUsage.thinking_tokens = (turnUsage.thinking_tokens ?? 0) + (lastUsage.thinking_tokens ?? 0);
           this.lastUsage = lastUsage;
           this.anchorMessageIndex = this.messages.length - 1;
           this.microcompactTokensFreed = 0;
@@ -844,6 +850,7 @@ export class Thread {
               tools: sortedToolDefs,
               thinking: this.config.thinking,
             }),
+            this.sessionId,
           );
         }
 
@@ -1358,6 +1365,16 @@ export class Thread {
           model: this.model,
           callCount,
         };
+
+        // Persist cost state so it survives resume
+        if (this.config.costTracker) {
+          await this.storage.appendMetadata(
+            this.sessionId,
+            "costState",
+            this.config.costTracker.getState(),
+          );
+        }
+
         break;
       }
 

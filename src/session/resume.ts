@@ -146,6 +146,7 @@ export async function restoreSession(
     messages: sanitized.messages,
     checkpointSnapshots,
     metadata,
+    costState: metadata.costState as StoredCostState | undefined,
     overflowEntries,
     contentReplacements,
     interruption: sanitized.interruption,

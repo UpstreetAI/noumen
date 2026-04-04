@@ -17,14 +17,18 @@ export interface CacheSafeParams {
   thinking?: ThinkingConfig;
 }
 
-let lastCacheSafeParams: CacheSafeParams | null = null;
+const cacheSafeParamsMap = new Map<string, CacheSafeParams>();
 
-export function saveCacheSafeParams(params: CacheSafeParams | null): void {
-  lastCacheSafeParams = params;
+export function saveCacheSafeParams(params: CacheSafeParams | null, sessionId = "_default"): void {
+  if (params) {
+    cacheSafeParamsMap.set(sessionId, params);
+  } else {
+    cacheSafeParamsMap.delete(sessionId);
+  }
 }
 
-export function getLastCacheSafeParams(): CacheSafeParams | null {
-  return lastCacheSafeParams;
+export function getLastCacheSafeParams(sessionId = "_default"): CacheSafeParams | null {
+  return cacheSafeParamsMap.get(sessionId) ?? null;
 }
 
 export function createCacheSafeParams(opts: {

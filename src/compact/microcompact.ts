@@ -28,6 +28,7 @@ export const COMPACTABLE_TOOLS = new Set([
   "Glob",
   "WebFetch",
   "WebSearch",
+  "NotebookEdit",
 ]);
 
 export const CLEARED_PLACEHOLDER = "[tool result cleared to save context]";

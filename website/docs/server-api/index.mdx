@@ -111,10 +111,10 @@ id: 1
 data: {"type":"text_delta","text":"Hello"}
 
 id: 2
-data: {"type":"tool_use_start","toolName":"ReadFile","input":{"path":"src/main.ts"}}
+data: {"type":"tool_use_start","toolName":"ReadFile","toolUseId":"call_abc123"}
 
 id: 3
-data: {"type":"turn_complete","usage":{"inputTokens":100,"outputTokens":50}}
+data: {"type":"turn_complete","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150},"model":"gpt-4o","callCount":1}
 ```
 
 **Resumption:** On reconnect, send `Last-Event-ID: 3` to skip already-received events.
@@ -397,7 +397,7 @@ The most common events to handle:
 |-------|-------------|
 | `text_delta` | Model streaming text (field: `text`) |
 | `thinking_delta` | Model thinking/reasoning (field: `text`) |
-| `tool_use_start` | Tool call begins (fields: `toolName`, `input`) |
+| `tool_use_start` | Tool call begins (fields: `toolName`, `toolUseId`) |
 | `tool_result` | Tool call result (field: `result`) |
 | `permission_request` | Agent needs permission (fields: `toolName`, `input`) |
 | `turn_complete` | Agent turn finished (field: `usage`) |
