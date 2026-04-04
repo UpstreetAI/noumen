@@ -12,11 +12,11 @@ const spaceGrotesk = Space_Grotesk({
 export const metadata: Metadata = {
   title: "noumen — coding agents are products. This is the library.",
   description:
-    "The composable coding agent SDK for Node.js. Swap AI providers, filesystems, and compute backends. Same agent loop, any infrastructure. MIT licensed.",
+    "Every AI startup is rebuilding the same agent loop. This is the TypeScript SDK that replaces it — 7 providers, 4 sandboxes, 9 tools. MIT licensed.",
   openGraph: {
     title: "noumen — coding agents are products. This is the library.",
     description:
-      "The composable coding agent SDK for Node.js. Swap AI providers, filesystems, and compute backends. Same agent loop, any infrastructure. MIT licensed.",
+      "Every AI startup is rebuilding the same agent loop. This is the TypeScript SDK that replaces it — 7 providers, 4 sandboxes, 9 tools. MIT licensed.",
     images: [{ url: "/images/og-image.webp", width: 1536, height: 864 }],
     type: "website",
   },
@@ -24,7 +24,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "noumen — coding agents are products. This is the library.",
     description:
-      "The composable coding agent SDK for Node.js. Swap AI providers, filesystems, and compute backends. Same agent loop, any infrastructure. MIT licensed.",
+      "Every AI startup is rebuilding the same agent loop. This is the TypeScript SDK that replaces it — 7 providers, 4 sandboxes, 9 tools. MIT licensed.",
     images: ["/images/og-image.webp"],
   },
   icons: {
