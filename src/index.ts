@@ -240,11 +240,14 @@ export type { FrontmatterData, ParsedFrontmatter } from "./skills/frontmatter.js
 export { activateSkillsForPaths, getActiveSkills } from "./skills/activation.js";
 
 // MCP
-export { McpClientManager } from "./mcp/client.js";
+export { McpClientManager, type McpClientManagerOptions } from "./mcp/client.js";
 export type {
   McpServerConfig,
   McpStdioServerConfig,
   McpHttpServerConfig,
+  McpSseServerConfig,
+  McpWebSocketServerConfig,
+  McpOAuthConfig,
   McpConfig,
   McpConnection,
   McpToolInfo,
@@ -256,6 +259,28 @@ export {
   getMcpPrefix,
   parseMcpToolName,
 } from "./mcp/normalization.js";
+
+// MCP OAuth
+export type {
+  TokenStorage,
+  OAuthTokenData,
+  OAuthProviderOptions,
+  OAuthClientProvider,
+  OAuthDiscoveryState,
+  OAuthTokens,
+  OAuthClientMetadata,
+  OAuthClientInformation,
+  OAuthClientInformationFull,
+  OAuthClientInformationMixed,
+} from "./mcp/auth/types.js";
+export { InMemoryTokenStorage, FileTokenStorage } from "./mcp/auth/storage.js";
+export {
+  findAvailablePort,
+  OAuthCallbackServer,
+  type OAuthCallbackResult,
+} from "./mcp/auth/callback-server.js";
+export { NoumenOAuthProvider } from "./mcp/auth/provider.js";
+export { createMcpAuthTool } from "./tools/mcp-auth.js";
 
 // Compaction
 export { compactConversation, estimateCompactionSavings } from "./compact/compact.js";

@@ -1,21 +1,51 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { WebSocketClientTransport } from "@modelcontextprotocol/sdk/client/websocket.js";
+import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
+import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { Tool as McpSdkTool } from "@modelcontextprotocol/sdk/types.js";
 import type { Tool, ToolResult } from "../tools/types.js";
 import type {
   McpServerConfig,
+  McpHttpServerConfig,
+  McpSseServerConfig,
   McpConnection,
   McpToolInfo,
 } from "./types.js";
-import { buildMcpToolName, normalizeNameForMCP } from "./normalization.js";
+import type { TokenStorage, McpOAuthConfig } from "./auth/types.js";
+import { NoumenOAuthProvider } from "./auth/provider.js";
+import { findAvailablePort } from "./auth/callback-server.js";
+import { InMemoryTokenStorage } from "./auth/storage.js";
+import { buildMcpToolName } from "./normalization.js";
+
+export interface McpClientManagerOptions {
+  /**
+   * Default token storage used for servers that declare `oauth` config
+   * but no custom `authProvider`. Falls back to InMemoryTokenStorage.
+   */
+  tokenStorage?: TokenStorage;
+  /**
+   * Called when a server requires interactive OAuth and the user must
+   * visit an authorization URL. Passed through to NoumenOAuthProvider.
+   */
+  onAuthorizationUrl?: (url: string) => void | Promise<void>;
+}
 
 export class McpClientManager {
   private connections: Map<string, McpConnection> = new Map();
   private serverConfigs: Record<string, McpServerConfig>;
+  private tokenStorage: TokenStorage;
+  private onAuthorizationUrl?: (url: string) => void | Promise<void>;
 
-  constructor(mcpServers: Record<string, McpServerConfig>) {
+  constructor(
+    mcpServers: Record<string, McpServerConfig>,
+    options?: McpClientManagerOptions,
+  ) {
     this.serverConfigs = mcpServers;
+    this.tokenStorage = options?.tokenStorage ?? new InMemoryTokenStorage();
+    this.onAuthorizationUrl = options?.onAuthorizationUrl;
   }
 
   async connect(): Promise<void> {
@@ -44,34 +74,81 @@ export class McpClientManager {
     config: McpServerConfig,
   ): Promise<void> {
     const client = new Client({ name: `noumen-${name}`, version: "0.1.0" });
-    let transport: StdioClientTransport | StreamableHTTPClientTransport;
+    let transport: StdioClientTransport | StreamableHTTPClientTransport | SSEClientTransport | WebSocketClientTransport;
     let cleanup: () => Promise<void>;
 
-    if ("type" in config && config.type === "http") {
-      const url = new URL(config.url);
-      transport = new StreamableHTTPClientTransport(url, {
-        requestInit: config.headers
-          ? { headers: config.headers }
-          : undefined,
-      });
-      cleanup = async () => {
-        await transport.close();
-      };
-    } else {
-      const stdioConfig = config as { command: string; args?: string[]; env?: Record<string, string> };
-      transport = new StdioClientTransport({
-        command: stdioConfig.command,
-        args: stdioConfig.args,
-        env: stdioConfig.env
-          ? { ...process.env, ...stdioConfig.env } as Record<string, string>
-          : undefined,
-      });
-      cleanup = async () => {
-        await transport.close();
-      };
+    const configType = "type" in config ? config.type : "stdio";
+
+    switch (configType) {
+      case "http": {
+        const httpConfig = config as McpHttpServerConfig;
+        const url = new URL(httpConfig.url);
+        const authProvider = await this.resolveAuthProvider(name, httpConfig);
+        transport = new StreamableHTTPClientTransport(url, {
+          authProvider: authProvider ?? undefined,
+          requestInit: httpConfig.headers
+            ? { headers: httpConfig.headers }
+            : undefined,
+        });
+        cleanup = async () => { await transport.close(); };
+        break;
+      }
+
+      case "sse": {
+        const sseConfig = config as McpSseServerConfig;
+        const url = new URL(sseConfig.url);
+        const authProvider = await this.resolveAuthProvider(name, sseConfig);
+        transport = new SSEClientTransport(url, {
+          authProvider: authProvider ?? undefined,
+          requestInit: sseConfig.headers
+            ? { headers: sseConfig.headers }
+            : undefined,
+        });
+        cleanup = async () => { await transport.close(); };
+        break;
+      }
+
+      case "websocket": {
+        const wsConfig = config as { url: string };
+        const url = new URL(wsConfig.url);
+        transport = new WebSocketClientTransport(url);
+        cleanup = async () => { await transport.close(); };
+        break;
+      }
+
+      default: {
+        const stdioConfig = config as {
+          command: string;
+          args?: string[];
+          env?: Record<string, string>;
+        };
+        transport = new StdioClientTransport({
+          command: stdioConfig.command,
+          args: stdioConfig.args,
+          env: stdioConfig.env
+            ? ({ ...process.env, ...stdioConfig.env } as Record<string, string>)
+            : undefined,
+        });
+        cleanup = async () => { await transport.close(); };
+        break;
+      }
     }
 
-    await client.connect(transport);
+    try {
+      await client.connect(transport);
+    } catch (err) {
+      if (err instanceof UnauthorizedError) {
+        this.connections.set(name, {
+          name,
+          client,
+          status: "needs-auth",
+          config,
+          cleanup,
+        });
+        return;
+      }
+      throw err;
+    }
 
     this.connections.set(name, {
       name,
@@ -79,6 +156,37 @@ export class McpClientManager {
       status: "connected",
       config,
       cleanup,
+    });
+  }
+
+  /**
+   * Resolve an OAuthClientProvider for an HTTP or SSE server config.
+   * Returns null if the server doesn't require authentication.
+   */
+  private async resolveAuthProvider(
+    serverName: string,
+    config: McpHttpServerConfig | McpSseServerConfig,
+  ): Promise<OAuthClientProvider | null> {
+    if (config.authProvider) return config.authProvider;
+    if (!config.oauth) return null;
+
+    const oauth = config.oauth;
+    const serverKey = `${serverName}|${config.url}`;
+    const port = await findAvailablePort(oauth.callbackPort);
+
+    return new NoumenOAuthProvider(serverKey, {
+      storage: this.tokenStorage,
+      clientId: oauth.clientId,
+      clientSecret: oauth.clientSecret,
+      callbackPort: port,
+      onAuthorizationUrl: this.onAuthorizationUrl,
+      clientMetadata: {
+        redirect_uris: [`http://localhost:${port}/callback`],
+        client_name: `noumen-${serverName}`,
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+        scope: oauth.scopes,
+      },
     });
   }
 
@@ -160,11 +268,99 @@ export class McpClientManager {
     }
   }
 
-  getConnectionStatus(): Array<{ name: string; status: string; toolCount?: number }> {
+  getConnectionStatus(): Array<{
+    name: string;
+    status: string;
+    toolCount?: number;
+  }> {
     return Array.from(this.connections.values()).map((c) => ({
       name: c.name,
       status: c.status,
     }));
+  }
+
+  /**
+   * Returns server names that are in `needs-auth` status and require
+   * interactive OAuth before they can be used.
+   */
+  getServersNeedingAuth(): string[] {
+    return Array.from(this.connections.entries())
+      .filter(([, conn]) => conn.status === "needs-auth")
+      .map(([name]) => name);
+  }
+
+  /**
+   * Reconnect a server by closing its existing connection and
+   * establishing a new one. Useful after completing OAuth.
+   */
+  async reconnect(serverName: string): Promise<void> {
+    const conn = this.connections.get(serverName);
+    if (conn) {
+      await conn.cleanup().catch(() => {});
+      this.connections.delete(serverName);
+    }
+
+    const config = this.serverConfigs[serverName];
+    if (!config) return;
+
+    try {
+      await this.connectToServer(serverName, config);
+    } catch {
+      this.connections.set(serverName, {
+        name: serverName,
+        client: null as unknown as Client,
+        status: "failed",
+        config,
+        cleanup: async () => {},
+      });
+    }
+  }
+
+  /**
+   * Trigger interactive OAuth for a `needs-auth` server, then reconnect.
+   * Runs the full MCP SDK auth orchestrator with a local callback server.
+   *
+   * Returns the authorization URL if the flow requires user interaction,
+   * or null if the server connected without browser auth (e.g. cached tokens).
+   */
+  async performAuth(
+    serverName: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<{ authUrl?: string }> {
+    const config = this.serverConfigs[serverName];
+    if (!config) {
+      throw new Error(`Unknown MCP server: ${serverName}`);
+    }
+
+    const configType = "type" in config ? config.type : "stdio";
+    if (configType !== "http" && configType !== "sse") {
+      throw new Error(
+        `OAuth is only supported for HTTP and SSE transports, got: ${configType}`,
+      );
+    }
+
+    const httpConfig = config as McpHttpServerConfig | McpSseServerConfig;
+    if (!httpConfig.oauth && !httpConfig.authProvider) {
+      throw new Error(
+        `Server "${serverName}" has no OAuth configuration`,
+      );
+    }
+
+    let capturedAuthUrl: string | undefined;
+    const originalCallback = this.onAuthorizationUrl;
+
+    this.onAuthorizationUrl = async (url: string) => {
+      capturedAuthUrl = url;
+      if (originalCallback) await originalCallback(url);
+    };
+
+    try {
+      await this.reconnect(serverName);
+    } finally {
+      this.onAuthorizationUrl = originalCallback;
+    }
+
+    return { authUrl: capturedAuthUrl };
   }
 
   async close(): Promise<void> {

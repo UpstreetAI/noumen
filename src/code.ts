@@ -21,6 +21,8 @@ import { LspServerManager } from "./lsp/manager.js";
 import type { LspServerConfig } from "./lsp/types.js";
 import type { SessionInfo } from "./session/types.js";
 import type { McpServerConfig } from "./mcp/types.js";
+import type { TokenStorage } from "./mcp/auth/types.js";
+import { createMcpAuthTool } from "./tools/mcp-auth.js";
 import type { PermissionConfig } from "./permissions/types.js";
 import type { HookDefinition } from "./hooks/types.js";
 import type { ThinkingConfig } from "./thinking/types.js";
@@ -72,6 +74,10 @@ export interface CodeOptions {
     skillsPaths?: string[];
     tools?: Tool[];
     mcpServers?: Record<string, McpServerConfig>;
+    /** Token storage for MCP OAuth flows (defaults to in-memory). */
+    mcpTokenStorage?: TokenStorage;
+    /** Called when an MCP server requires OAuth and the user must visit a URL. */
+    mcpOnAuthorizationUrl?: (url: string) => void | Promise<void>;
     systemPrompt?: string;
     model?: string;
     maxTokens?: number;
@@ -134,6 +140,7 @@ export class Code {
   private mcpManager: McpClientManager | null = null;
   private mcpTools: Tool[] = [];
   private mcpToolNames: Set<string> = new Set();
+  private mcpAuthTools: Tool[] = [];
   private permissions?: PermissionConfig;
   private hooks: HookDefinition[];
   private enableSubagents: boolean;
@@ -214,7 +221,10 @@ export class Code {
     }
 
     if (opts.options?.mcpServers && Object.keys(opts.options.mcpServers).length > 0) {
-      this.mcpManager = new McpClientManager(opts.options.mcpServers);
+      this.mcpManager = new McpClientManager(opts.options.mcpServers, {
+        tokenStorage: opts.options.mcpTokenStorage,
+        onAuthorizationUrl: opts.options.mcpOnAuthorizationUrl,
+      });
     }
 
     this.tracer = opts.options?.tracing?.tracer;
@@ -255,7 +265,7 @@ export class Code {
   }
 
   private getAllTools(): Tool[] {
-    const tools = [...this.tools, ...this.mcpTools];
+    const tools = [...this.tools, ...this.mcpTools, ...this.mcpAuthTools];
     if (this.enableSubagents) {
       tools.push(agentTool);
     }
@@ -412,6 +422,11 @@ export class Code {
         this.mcpManager.connect().then(async () => {
           this.mcpTools = await this.mcpManager!.getTools();
           this.mcpToolNames = new Set(this.mcpTools.map((t) => t.name));
+
+          const needsAuth = this.mcpManager!.getServersNeedingAuth();
+          this.mcpAuthTools = needsAuth.map((name) =>
+            createMcpAuthTool(name, this.mcpManager!),
+          );
         }),
       );
     }
@@ -428,6 +443,7 @@ export class Code {
       tasks.push(
         this.mcpManager.close().then(() => {
           this.mcpTools = [];
+          this.mcpAuthTools = [];
         }),
       );
     }
