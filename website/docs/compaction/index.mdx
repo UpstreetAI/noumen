@@ -19,11 +19,11 @@ This summarizes the conversation using the LLM and replaces older messages with 
 
 ## Auto-compact
 
-Auto-compact triggers compaction automatically when token usage exceeds a threshold. Enable it via `Code` options:
+Auto-compact triggers compaction automatically when token usage exceeds a threshold. Enable it via `Agent` options:
 
 ```typescript
-const code = new Code({
-  aiProvider,
+const code = new Agent({
+  provider,
   sandbox,
   options: {
     autoCompactThreshold: 100_000, // compact when estimated token usage exceeds this count

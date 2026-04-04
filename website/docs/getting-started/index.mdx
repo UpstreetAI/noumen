@@ -138,15 +138,15 @@ Every noumen agent needs two things: an **AI provider** and a **sandbox**.
   </Step>
 
   <Step>
-    ### Create a Code instance
+    ### Create an Agent
 
-    The `Code` class wires everything together:
+    The `Agent` class wires everything together:
 
     ```typescript
-    import { Code } from "noumen";
+    import { Agent } from "noumen";
 
-    const code = new Code({
-      aiProvider: provider,
+    const code = new Agent({
+      provider: provider,
       sandbox,
       options: {
         sessionDir: ".noumen/sessions",
@@ -193,11 +193,11 @@ Every noumen agent needs two things: an **AI provider** and a **sandbox**.
 ## Full example
 
 ```typescript
-import { Code, LocalSandbox } from "noumen";
+import { Agent, LocalSandbox } from "noumen";
 import { OpenAIProvider } from "noumen/openai";
 
-const code = new Code({
-  aiProvider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY! }),
+const code = new Agent({
+  provider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY! }),
   sandbox: LocalSandbox({ cwd: process.cwd() }),
   options: {
     sessionDir: ".noumen/sessions",
@@ -215,7 +215,7 @@ for await (const event of thread.run("Add input validation to the signup handler
 
 ## Quick start with presets
 
-For the fastest setup, use a preset instead of configuring `Code` manually:
+For the fastest setup, use a preset instead of configuring `Agent` manually:
 
 ```typescript
 import { codingAgent } from "noumen";

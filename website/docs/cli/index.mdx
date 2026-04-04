@@ -66,7 +66,7 @@ All fields are optional. The full set of config keys:
 | `permissions` | string | Permission mode |
 | `thinking` | string | `off`, `low`, `medium`, `high` |
 | `sandbox` | string | `local`, `docker`, `e2b`, `sprites` |
-| `mcpServers` | object | MCP server configs (same as `CodeOptions`) |
+| `mcpServers` | object | MCP server configs (same as `AgentOptions`) |
 | `lsp` | object | LSP server configs |
 | `hooks` | array | Hook definitions |
 | `autoCompact` | boolean | Enable auto-compaction (default: true) |
@@ -263,14 +263,14 @@ The `--thinking` flag maps to provider-specific extended thinking:
 
 ## Relation to the library
 
-The CLI is a thin wrapper (~500 lines) over the `Code` and `Thread` APIs. Every config option maps directly to `CodeOptions`. If you need more control, use the library directly:
+The CLI is a thin wrapper (~500 lines) over the `Agent` and `Thread` APIs. Every config option maps directly to `AgentOptions`. If you need more control, use the library directly:
 
 ```typescript
-import { Code, LocalSandbox } from "noumen";
+import { Agent, LocalSandbox } from "noumen";
 import { AnthropicProvider } from "noumen/anthropic";
 
-const code = new Code({
-  aiProvider: new AnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY! }),
+const code = new Agent({
+  provider: new AnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY! }),
   sandbox: LocalSandbox({ cwd: process.cwd() }),
   options: { projectContext: true, costTracking: { enabled: true } },
 });

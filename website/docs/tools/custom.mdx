@@ -3,7 +3,7 @@ title: Custom Tools
 description: Add your own tools to extend what the agent can do.
 ---
 
-noumen's `Tool` interface lets you define custom tools that the agent can call during its runs. Custom tools are passed through `Code` options and are available alongside the built-in tools.
+noumen's `Tool` interface lets you define custom tools that the agent can call during its runs. Custom tools are passed through `Agent` options and are available alongside the built-in tools.
 
 ## The Tool interface
 
@@ -25,10 +25,10 @@ Where:
 
 ## Adding custom tools
 
-Pass tools in the `Code` options:
+Pass tools in the `Agent` options:
 
 ```typescript
-import { Code, LocalSandbox } from "noumen";
+import { Agent, LocalSandbox } from "noumen";
 import { OpenAIProvider } from "noumen/openai";
 import type { Tool, ToolContext, ToolResult } from "noumen";
 
@@ -54,8 +54,8 @@ const fetchUrlTool: Tool = {
   },
 };
 
-const code = new Code({
-  aiProvider: new OpenAIProvider({ apiKey: "..." }),
+const code = new Agent({
+  provider: new OpenAIProvider({ apiKey: "..." }),
   sandbox: LocalSandbox({ cwd: "." }),
   options: {
     tools: [fetchUrlTool],

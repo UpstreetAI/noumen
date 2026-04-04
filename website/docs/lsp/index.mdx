@@ -8,10 +8,10 @@ The LSP integration connects agents to language servers for rich code intelligen
 ## Configuration
 
 ```typescript
-import { Code, LocalSandbox } from "noumen";
+import { Agent, LocalSandbox } from "noumen";
 
-const code = new Code({
-  aiProvider,
+const code = new Agent({
+  provider,
   sandbox: LocalSandbox({ cwd: "/my/project" }),
   options: {
     lsp: {

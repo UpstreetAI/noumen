@@ -8,16 +8,16 @@ The swarm system lets you run multiple agents concurrently, each with its own co
 ## Quick start
 
 ```typescript
-import { Code, SwarmManager, InProcessBackend, LocalSandbox } from "noumen";
+import { Agent, SwarmManager, InProcessBackend, LocalSandbox } from "noumen";
 
 const sandbox = LocalSandbox();
-const code = new Code({ aiProvider, sandbox });
+const code = new Agent({ provider, sandbox });
 await code.init();
 
 // InProcessBackend takes a ThreadConfig-shaped object (without systemPrompt/model,
 // which are set per-member via SwarmMemberConfig).
 const backend = new InProcessBackend({
-  aiProvider,
+  provider,
   fs: sandbox.fs,
   computer: sandbox.computer,
   sessionDir: ".noumen/sessions",

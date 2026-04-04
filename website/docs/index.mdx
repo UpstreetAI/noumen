@@ -18,31 +18,12 @@ pnpm add noumen
 ## Quick start
 
 ```typescript
-import { Code, LocalSandbox } from "noumen";
-import { OpenAIProvider } from "noumen/openai";
+import { Agent } from "noumen";
 
-const code = new Code({
-  aiProvider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY }),
-  sandbox: LocalSandbox({ cwd: "/my/project" }),
-});
+const agent = new Agent({ provider: "anthropic", cwd: "." });
 
-const thread = code.createThread();
-
-for await (const event of thread.run("Add a health-check endpoint to server.ts")) {
-  switch (event.type) {
-    case "text_delta":
-      process.stdout.write(event.text);
-      break;
-    case "tool_use_start":
-      console.log(`\n[tool] ${event.toolName}`);
-      break;
-    case "tool_result":
-      console.log(`[result] ${event.result.content.slice(0, 200)}`);
-      break;
-    case "turn_complete":
-      console.log(`\n[tokens] ${event.usage.total_tokens} total`);
-      break;
-  }
+for await (const event of agent.run("Add a health-check endpoint to server.ts")) {
+  if (event.type === "text_delta") process.stdout.write(event.text);
 }
 ```
 

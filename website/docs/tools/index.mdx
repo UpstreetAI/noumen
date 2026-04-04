@@ -3,7 +3,7 @@ title: Built-in Tools
 description: noumen ships with 20+ tools covering file operations, shell commands, codebase search, web access, subagents, tasks, planning, and code intelligence — all sandboxed through VirtualFs and VirtualComputer.
 ---
 
-Every noumen agent has access to a set of built-in tools registered in the `ToolRegistry`. The nine core tools (ReadFile, WriteFile, EditFile, Bash, Glob, Grep, WebFetch, NotebookEdit, AskUser) are always available. Additional tools are enabled through `Code` options — subagents, tasks, plan mode, worktrees, LSP, web search, and skills each add their own tools when enabled.
+Every noumen agent has access to a set of built-in tools registered in the `ToolRegistry`. The nine core tools (ReadFile, WriteFile, EditFile, Bash, Glob, Grep, WebFetch, NotebookEdit, AskUser) are always available. Additional tools are enabled through `Agent` options — subagents, tasks, plan mode, worktrees, LSP, web search, and skills each add their own tools when enabled.
 
 All tools delegate file and shell access through the sandbox (`VirtualFs` and `VirtualComputer`), so isolation is controlled entirely by which sandbox you provide.
 
@@ -73,11 +73,11 @@ All tools delegate file and shell access through the sandbox (`VirtualFs` and `V
 
 ## Enabling optional tools
 
-Core tools (ReadFile, WriteFile, EditFile, Bash, Glob, Grep, WebFetch, NotebookEdit, AskUser) are always registered. Other tools require enabling their feature in `Code` options:
+Core tools (ReadFile, WriteFile, EditFile, Bash, Glob, Grep, WebFetch, NotebookEdit, AskUser) are always registered. Other tools require enabling their feature in `Agent` options:
 
 ```typescript
-const code = new Code({
-  aiProvider,
+const code = new Agent({
+  provider,
   sandbox,
   options: {
     enableSubagents: true,    // adds Agent tool

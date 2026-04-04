@@ -8,12 +8,12 @@ noumen includes a tracing abstraction that emits spans for provider calls, tool 
 ## Configuration
 
 ```typescript
-import { Code, LocalSandbox, OTelTracer } from "noumen";
+import { Agent, LocalSandbox, OTelTracer } from "noumen";
 
 const tracer = await OTelTracer.create("my-agent", "1.0.0");
 
-const code = new Code({
-  aiProvider,
+const code = new Agent({
+  provider,
   sandbox: LocalSandbox({ cwd: "/my/project" }),
   options: {
     tracing: { tracer },

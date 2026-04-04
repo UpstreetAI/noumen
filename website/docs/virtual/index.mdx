@@ -82,7 +82,7 @@ const sandbox = DockerSandbox({
   cwd: "/workspace",
 });
 
-const code = new Code({ aiProvider, sandbox });
+const code = new Agent({ provider, sandbox });
 
 // Clean up when done
 await container.stop();
@@ -118,7 +118,7 @@ const sandbox = E2BSandbox({
   cwd: "/home/user",
 });
 
-const code = new Code({ aiProvider, sandbox });
+const code = new Agent({ provider, sandbox });
 
 // Clean up when done
 await e2b.close();

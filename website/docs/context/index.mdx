@@ -19,14 +19,14 @@ This is a TypeScript monorepo using pnpm workspaces.
 - Use 2-space indentation.
 ```
 
-2. Enable project context loading in your `Code` options:
+2. Enable project context loading in your `Agent` options:
 
 ```typescript
-import { Code, LocalSandbox } from "noumen";
+import { Agent, LocalSandbox } from "noumen";
 import { OpenAIProvider } from "noumen/openai";
 
-const code = new Code({
-  aiProvider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY }),
+const code = new Agent({
+  provider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY }),
   sandbox: LocalSandbox({ cwd: "/my/project" }),
   options: {
     projectContext: true,
@@ -162,7 +162,7 @@ interface ContextFile {
 
 ## Standalone usage
 
-You can use the loader and formatter independently of `Code`, for example to build your own prompt pipeline:
+You can use the loader and formatter independently of `Agent`, for example to build your own prompt pipeline:
 
 ```typescript
 import { loadProjectContext, buildProjectContextSection } from "noumen";

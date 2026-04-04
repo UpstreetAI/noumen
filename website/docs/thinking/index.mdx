@@ -8,10 +8,10 @@ Extended thinking lets models "think" before responding, producing internal reas
 ## Configuration
 
 ```typescript
-import { Code, LocalSandbox } from "noumen";
+import { Agent, LocalSandbox } from "noumen";
 
-const code = new Code({
-  aiProvider,
+const code = new Agent({
+  provider,
   sandbox: LocalSandbox({ cwd: "/my/project" }),
   options: {
     thinking: { type: "enabled", budgetTokens: 10000 },

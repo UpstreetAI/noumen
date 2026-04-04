@@ -7,11 +7,11 @@ Skills are markdown instructions that guide the agent's behavior for specific ta
 
 ## Inline skills
 
-The simplest way to add skills is inline in the `Code` options:
+The simplest way to add skills is inline in the `Agent` options:
 
 ```typescript
-const code = new Code({
-  aiProvider,
+const code = new Agent({
+  provider,
   sandbox,
   options: {
     skills: [
@@ -33,8 +33,8 @@ const code = new Code({
 For larger skill definitions, use `SKILL.md` files on the virtual filesystem:
 
 ```typescript
-const code = new Code({
-  aiProvider,
+const code = new Agent({
+  provider,
   sandbox,
   options: {
     skillsPaths: [".claude/skills", "~/.config/skills"],

@@ -19,10 +19,10 @@ The permission system controls which tools the agent can use and under what cond
 ## Configuration
 
 ```typescript
-import { Code, type PermissionConfig } from "noumen";
+import { Agent, type PermissionConfig } from "noumen";
 
-const code = new Code({
-  aiProvider,
+const code = new Agent({
+  provider,
   sandbox,
   options: {
     permissions: {

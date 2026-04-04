@@ -8,12 +8,12 @@ noumen ships a built-in server (`noumen/server`) that exposes the agent over HTT
 ## Standalone server
 
 ```typescript
-import { Code, LocalSandbox } from "noumen";
+import { Agent, LocalSandbox } from "noumen";
 import { createServer } from "noumen/server";
 import { AnthropicProvider } from "noumen/anthropic";
 
-const code = new Code({
-  aiProvider: new AnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY! }),
+const code = new Agent({
+  provider: new AnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY! }),
   sandbox: LocalSandbox({ cwd: "/workspace" }),
   options: { permissions: { mode: "bypassPermissions" } },
 });
@@ -253,12 +253,12 @@ Mount the agent on an existing HTTP server using `createRequestHandler()`:
 
 ```typescript
 import express from "express";
-import { Code, LocalSandbox } from "noumen";
+import { Agent, LocalSandbox } from "noumen";
 import { createRequestHandler } from "noumen/server";
 import { OpenAIProvider } from "noumen/openai";
 
-const code = new Code({
-  aiProvider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY! }),
+const code = new Agent({
+  provider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY! }),
   sandbox: LocalSandbox({ cwd: "/workspace" }),
   options: { permissions: { mode: "bypassPermissions" } },
 });

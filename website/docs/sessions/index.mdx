@@ -68,8 +68,8 @@ await thread.compact({
 Enable auto-compaction to automatically summarize when the conversation exceeds a token threshold:
 
 ```typescript
-const code = new Code({
-  aiProvider,
+const code = new Agent({
+  provider,
   sandbox,
   options: {
     autoCompact: true,

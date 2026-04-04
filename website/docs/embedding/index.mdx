@@ -7,14 +7,14 @@ noumen is designed as a library first. Whether you're building a VS Code extensi
 
 ## In-process (Node.js / Bun)
 
-The simplest integration: import `Code`, create a thread, and iterate over events.
+The simplest integration: import `Agent`, create a thread, and iterate over events.
 
 ```typescript
-import { Code, LocalSandbox } from "noumen";
+import { Agent, LocalSandbox } from "noumen";
 import { AnthropicProvider } from "noumen/anthropic";
 
-const code = new Code({
-  aiProvider: new AnthropicProvider({
+const code = new Agent({
+  provider: new AnthropicProvider({
     apiKey: process.env.ANTHROPIC_API_KEY!,
   }),
   sandbox: LocalSandbox({ cwd: "/my/project" }),
@@ -114,12 +114,12 @@ Use `result.overall` as a gate before accepting user prompts in production.
 Expose the agent over HTTP using the built-in server. Clients connect via Server-Sent Events for streaming.
 
 ```typescript
-import { Code, LocalSandbox } from "noumen";
+import { Agent, LocalSandbox } from "noumen";
 import { createServer } from "noumen/server";
 import { AnthropicProvider } from "noumen/anthropic";
 
-const code = new Code({
-  aiProvider: new AnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY! }),
+const code = new Agent({
+  provider: new AnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY! }),
   sandbox: LocalSandbox({ cwd: "/workspace" }),
   options: { permissions: { mode: "bypassPermissions" } },
 });
@@ -160,12 +160,12 @@ Mount the agent on an existing Express, Fastify, or Hono server using `createReq
 
 ```typescript
 import express from "express";
-import { Code, LocalSandbox } from "noumen";
+import { Agent, LocalSandbox } from "noumen";
 import { createRequestHandler } from "noumen/server";
 import { OpenAIProvider } from "noumen/openai";
 
-const code = new Code({
-  aiProvider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY! }),
+const code = new Agent({
+  provider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY! }),
   sandbox: LocalSandbox({ cwd: "/workspace" }),
   options: { permissions: { mode: "bypassPermissions" } },
 });
@@ -228,11 +228,11 @@ Stream agent events to the browser via a Next.js route handler:
 
 ```typescript
 // app/api/agent/route.ts
-import { Code, LocalSandbox } from "noumen";
+import { Agent, LocalSandbox } from "noumen";
 import { OpenAIProvider } from "noumen/openai";
 
-const code = new Code({
-  aiProvider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY! }),
+const code = new Agent({
+  provider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY! }),
   sandbox: LocalSandbox({ cwd: process.env.WORKSPACE_DIR! }),
   options: { permissions: { mode: "bypassPermissions" } },
 });

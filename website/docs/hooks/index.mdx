@@ -7,10 +7,10 @@ Hooks let you intercept key moments in the agent lifecycle — before and after 
 
 ## Defining hooks
 
-Pass hooks through `Code` options:
+Pass hooks through `Agent` options:
 
 ```typescript
-import { Code, type HookDefinition } from "noumen";
+import { Agent, type HookDefinition } from "noumen";
 
 const hooks: HookDefinition[] = [
   {
@@ -35,8 +35,8 @@ const hooks: HookDefinition[] = [
   },
 ];
 
-const code = new Code({
-  aiProvider,
+const code = new Agent({
+  provider,
   sandbox,
   options: { hooks },
 });

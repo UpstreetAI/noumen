@@ -10,8 +10,8 @@ noumen supports the [Model Context Protocol](https://modelcontextprotocol.io/) (
 Connect to external MCP servers to give your agent access to their tools:
 
 ```typescript
-const code = new Code({
-  aiProvider,
+const code = new Agent({
+  provider,
   sandbox,
   options: {
     mcpServers: {
