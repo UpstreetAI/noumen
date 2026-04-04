@@ -1,6 +1,6 @@
 import type { VirtualFs, FileEntry, FileStat, ReadOptions } from "../virtual/fs.js";
 import type { VirtualComputer, ExecOptions, CommandResult } from "../virtual/computer.js";
-import type { AIProvider, ChatParams, ChatStreamChunk } from "../providers/types.js";
+import type { AIProvider, ChatParams, ChatStreamChunk, ChatCompletionUsage } from "../providers/types.js";
 
 // ---------------------------------------------------------------------------
 // MockFs — in-memory VirtualFs backed by a Map<path, content>
@@ -180,11 +180,12 @@ export function textChunk(text: string): ChatStreamChunk {
   };
 }
 
-export function stopChunk(): ChatStreamChunk {
+export function stopChunk(usage?: ChatCompletionUsage): ChatStreamChunk {
   return {
     id: `mock-${_chunkId++}`,
     model: "mock-model",
     choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+    usage,
   };
 }
 
@@ -235,19 +236,20 @@ export function toolCallArgChunk(argsFragment: string): ChatStreamChunk {
   };
 }
 
-export function toolCallsFinishChunk(): ChatStreamChunk {
+export function toolCallsFinishChunk(usage?: ChatCompletionUsage): ChatStreamChunk {
   return {
     id: `mock-${_chunkId++}`,
     model: "mock-model",
     choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+    usage,
   };
 }
 
 /**
  * Build a complete text-only response sequence.
  */
-export function textResponse(text: string): ChatStreamChunk[] {
-  return [textChunk(text), stopChunk()];
+export function textResponse(text: string, usage?: ChatCompletionUsage): ChatStreamChunk[] {
+  return [textChunk(text), stopChunk(usage)];
 }
 
 /**
@@ -257,10 +259,11 @@ export function toolCallResponse(
   toolCallId: string,
   toolName: string,
   args: Record<string, unknown>,
+  usage?: ChatCompletionUsage,
 ): ChatStreamChunk[] {
   return [
     toolCallStartChunk(toolCallId, toolName),
     toolCallArgChunk(JSON.stringify(args)),
-    toolCallsFinishChunk(),
+    toolCallsFinishChunk(usage),
   ];
 }

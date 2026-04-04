@@ -145,6 +145,48 @@ describe("AnthropicProvider", () => {
     expect(last.choices[0].finish_reason).toBe("stop");
   });
 
+  it("populates usage from message_start and message_delta", async () => {
+    const events = [
+      {
+        type: "message_start",
+        message: { usage: { input_tokens: 100, output_tokens: 1 } },
+      },
+      { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hi" } },
+      { type: "message_delta", usage: { output_tokens: 25 } },
+      { type: "message_stop" },
+    ];
+
+    vi.doMock("@anthropic-ai/sdk", () => ({
+      default: class {
+        messages = {
+          stream: () =>
+            (async function* () {
+              for (const event of events) yield event;
+            })(),
+        };
+      },
+    }));
+
+    const { AnthropicProvider } = await import("../providers/anthropic.js");
+    const provider = new AnthropicProvider({ apiKey: "test-key" });
+
+    const chunks: ChatStreamChunk[] = [];
+    for await (const chunk of provider.chat({
+      model: "claude-sonnet-4-20250514",
+      messages: [{ role: "user", content: "hi" }],
+    })) {
+      chunks.push(chunk);
+    }
+
+    const last = chunks[chunks.length - 1];
+    expect(last.usage).toEqual({
+      prompt_tokens: 100,
+      completion_tokens: 25,
+      total_tokens: 125,
+    });
+  });
+
   it("maps tool_use blocks with finish_reason tool_calls", async () => {
     const events = [
       {
@@ -258,6 +300,59 @@ describe("GeminiProvider", () => {
 
     const stopChunk = chunks.find((c) => c.choices[0]?.finish_reason === "stop");
     expect(stopChunk).toBeDefined();
+  });
+
+  it("populates usage from usageMetadata on final chunk", async () => {
+    const streamChunks = [
+      {
+        candidates: [
+          {
+            content: { parts: [{ text: "Hello" }] },
+            finishReason: undefined,
+          },
+        ],
+        usageMetadata: { promptTokenCount: 50, candidatesTokenCount: 5, totalTokenCount: 55 },
+      },
+      {
+        candidates: [
+          {
+            content: { parts: [{ text: " world" }] },
+            finishReason: "STOP",
+          },
+        ],
+        usageMetadata: { promptTokenCount: 50, candidatesTokenCount: 10, totalTokenCount: 60 },
+      },
+    ];
+
+    vi.doMock("@google/genai", () => ({
+      GoogleGenAI: class {
+        models = {
+          generateContentStream: vi.fn().mockResolvedValue(
+            (async function* () {
+              for (const chunk of streamChunks) yield chunk;
+            })(),
+          ),
+        };
+      },
+    }));
+
+    const { GeminiProvider } = await import("../providers/gemini.js");
+    const provider = new GeminiProvider({ apiKey: "test-key" });
+
+    const chunks: ChatStreamChunk[] = [];
+    for await (const chunk of provider.chat({
+      model: "gemini-2.5-flash",
+      messages: [{ role: "user", content: "hi" }],
+    })) {
+      chunks.push(chunk);
+    }
+
+    const last = chunks[chunks.length - 1];
+    expect(last.usage).toEqual({
+      prompt_tokens: 50,
+      completion_tokens: 10,
+      total_tokens: 60,
+    });
   });
 
   it("maps function call parts to tool_calls chunks", async () => {

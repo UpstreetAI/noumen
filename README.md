@@ -164,6 +164,8 @@ thread.abort();
 | `tool_use_delta` | `input` | Incremental tool call arguments |
 | `tool_result` | `toolUseId`, `toolName`, `result` | Tool execution result |
 | `message_complete` | `message` | Full assistant message |
+| `usage` | `usage`, `model` | Token usage for a single model call |
+| `turn_complete` | `usage`, `model`, `callCount` | Accumulated usage for the full agent turn |
 | `compact_start` | | Auto-compaction started |
 | `compact_complete` | | Auto-compaction finished |
 | `error` | `error` | An error occurred |

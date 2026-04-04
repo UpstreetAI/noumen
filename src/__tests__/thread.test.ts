@@ -221,6 +221,104 @@ describe("Thread", () => {
     });
   });
 
+  describe("usage tracking", () => {
+    const mockUsage = { prompt_tokens: 50, completion_tokens: 10, total_tokens: 60 };
+
+    it("yields usage event after a simple text response", async () => {
+      provider.addResponse(textResponse("Hello!", mockUsage));
+
+      const thread = new Thread(config, { sessionId: "s1" });
+      const events = await collectEvents(thread.run("hi"));
+
+      const usageEvents = events.filter((e) => e.type === "usage");
+      expect(usageEvents).toHaveLength(1);
+      if (usageEvents[0].type === "usage") {
+        expect(usageEvents[0].usage).toEqual(mockUsage);
+        expect(usageEvents[0].model).toBeTruthy();
+      }
+    });
+
+    it("yields turn_complete with accumulated usage after text response", async () => {
+      provider.addResponse(textResponse("Hello!", mockUsage));
+
+      const thread = new Thread(config, { sessionId: "s1" });
+      const events = await collectEvents(thread.run("hi"));
+
+      const turnComplete = events.find((e) => e.type === "turn_complete");
+      expect(turnComplete).toBeDefined();
+      if (turnComplete?.type === "turn_complete") {
+        expect(turnComplete.usage).toEqual(mockUsage);
+        expect(turnComplete.callCount).toBe(1);
+      }
+    });
+
+    it("yields usage events for each model call in a tool loop", async () => {
+      fs.files.set("/test.txt", "content");
+      const usage1 = { prompt_tokens: 50, completion_tokens: 20, total_tokens: 70 };
+      const usage2 = { prompt_tokens: 80, completion_tokens: 15, total_tokens: 95 };
+
+      provider.addResponse(
+        toolCallResponse("tc_1", "ReadFile", { file_path: "/test.txt" }, usage1),
+      );
+      provider.addResponse(textResponse("Done.", usage2));
+
+      const thread = new Thread(config, { sessionId: "s1" });
+      const events = await collectEvents(thread.run("read file"));
+
+      const usageEvents = events.filter((e) => e.type === "usage");
+      expect(usageEvents).toHaveLength(2);
+      if (usageEvents[0].type === "usage") {
+        expect(usageEvents[0].usage).toEqual(usage1);
+      }
+      if (usageEvents[1].type === "usage") {
+        expect(usageEvents[1].usage).toEqual(usage2);
+      }
+    });
+
+    it("accumulates usage across calls in turn_complete", async () => {
+      fs.files.set("/test.txt", "content");
+      const usage1 = { prompt_tokens: 50, completion_tokens: 20, total_tokens: 70 };
+      const usage2 = { prompt_tokens: 80, completion_tokens: 15, total_tokens: 95 };
+
+      provider.addResponse(
+        toolCallResponse("tc_1", "ReadFile", { file_path: "/test.txt" }, usage1),
+      );
+      provider.addResponse(textResponse("Done.", usage2));
+
+      const thread = new Thread(config, { sessionId: "s1" });
+      const events = await collectEvents(thread.run("read file"));
+
+      const turnComplete = events.find((e) => e.type === "turn_complete");
+      expect(turnComplete).toBeDefined();
+      if (turnComplete?.type === "turn_complete") {
+        expect(turnComplete.usage).toEqual({
+          prompt_tokens: 130,
+          completion_tokens: 35,
+          total_tokens: 165,
+        });
+        expect(turnComplete.callCount).toBe(2);
+      }
+    });
+
+    it("yields turn_complete with zero usage when provider returns no usage", async () => {
+      provider.addResponse(textResponse("Hello!"));
+
+      const thread = new Thread(config, { sessionId: "s1" });
+      const events = await collectEvents(thread.run("hi"));
+
+      const turnComplete = events.find((e) => e.type === "turn_complete");
+      expect(turnComplete).toBeDefined();
+      if (turnComplete?.type === "turn_complete") {
+        expect(turnComplete.usage).toEqual({
+          prompt_tokens: 0,
+          completion_tokens: 0,
+          total_tokens: 0,
+        });
+        expect(turnComplete.callCount).toBe(1);
+      }
+    });
+  });
+
   describe("abort", () => {
     it("stops the generator", async () => {
       // Use a response that yields many chunks

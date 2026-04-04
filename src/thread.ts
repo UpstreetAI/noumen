@@ -1,4 +1,4 @@
-import type { AIProvider } from "./providers/types.js";
+import type { AIProvider, ChatCompletionUsage } from "./providers/types.js";
 import type { VirtualFs } from "./virtual/fs.js";
 import type { VirtualComputer } from "./virtual/computer.js";
 import type {
@@ -109,6 +109,13 @@ export class Thread {
         cwd: this.cwd,
       };
 
+      const turnUsage: ChatCompletionUsage = {
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+      };
+      let callCount = 0;
+
       while (!signal.aborted) {
         const accumulatedContent: string[] = [];
         const accumulatedToolCalls = new Map<
@@ -116,6 +123,7 @@ export class Thread {
           { id: string; name: string; arguments: string }
         >();
         let finishReason: string | null = null;
+        let lastUsage: ChatCompletionUsage | undefined;
 
         const stream = this.config.aiProvider.chat({
           model: this.model,
@@ -127,6 +135,10 @@ export class Thread {
 
         for await (const chunk of stream) {
           if (signal.aborted) break;
+
+          if (chunk.usage) {
+            lastUsage = chunk.usage;
+          }
 
           for (const choice of chunk.choices) {
             if (choice.finish_reason) {
@@ -177,6 +189,14 @@ export class Thread {
         }
 
         if (signal.aborted) break;
+
+        callCount++;
+        if (lastUsage) {
+          turnUsage.prompt_tokens += lastUsage.prompt_tokens;
+          turnUsage.completion_tokens += lastUsage.completion_tokens;
+          turnUsage.total_tokens += lastUsage.total_tokens;
+          yield { type: "usage", usage: lastUsage, model: this.model };
+        }
 
         const textContent = accumulatedContent.join("");
         const toolCalls: ToolCallContent[] = Array.from(
@@ -257,6 +277,12 @@ export class Thread {
         }
 
         yield { type: "message_complete", message: assistantMsg };
+        yield {
+          type: "turn_complete",
+          usage: turnUsage,
+          model: this.model,
+          callCount,
+        };
         break;
       }
 

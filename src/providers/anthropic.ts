@@ -54,9 +54,28 @@ export class AnthropicProvider implements AIProvider {
     let chunkIndex = 0;
     const toolIndexMap = new Map<string, number>();
     let nextToolIndex = 0;
+    let inputTokens = 0;
+    let outputTokens = 0;
 
     for await (const event of stream) {
       const chunkId = `chatcmpl-${chunkIndex++}`;
+
+      if (event.type === "message_start") {
+        const msg = event.message;
+        if (msg.usage) {
+          inputTokens = msg.usage.input_tokens ?? 0;
+          outputTokens = msg.usage.output_tokens ?? 0;
+        }
+        continue;
+      }
+
+      if (event.type === "message_delta") {
+        const delta = event as { type: string; usage?: { output_tokens?: number } };
+        if (delta.usage?.output_tokens) {
+          outputTokens = delta.usage.output_tokens;
+        }
+        continue;
+      }
 
       if (event.type === "content_block_start") {
         if (event.content_block.type === "text") {
@@ -107,6 +126,11 @@ export class AnthropicProvider implements AIProvider {
               finish_reason: toolIndexMap.size > 0 ? "tool_calls" : "stop",
             },
           ],
+          usage: {
+            prompt_tokens: inputTokens,
+            completion_tokens: outputTokens,
+            total_tokens: inputTokens + outputTokens,
+          },
         };
       }
     }

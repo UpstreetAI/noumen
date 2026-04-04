@@ -1,4 +1,5 @@
 import type { UUID } from "../utils/uuid.js";
+import type { ChatCompletionUsage } from "../providers/types.js";
 
 // --- Chat message types (OpenAI-compatible format) ---
 
@@ -134,6 +135,13 @@ export type StreamEvent =
       result: ToolResult;
     }
   | { type: "message_complete"; message: AssistantMessage }
+  | { type: "usage"; usage: ChatCompletionUsage; model: string }
+  | {
+      type: "turn_complete";
+      usage: ChatCompletionUsage;
+      model: string;
+      callCount: number;
+    }
   | { type: "compact_start" }
   | { type: "compact_complete" }
   | { type: "error"; error: Error };

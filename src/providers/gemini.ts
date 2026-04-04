@@ -68,10 +68,25 @@ export class GeminiProvider implements AIProvider {
 
     let chunkIndex = 0;
     let toolCallIndex = 0;
+    let lastUsage: ChatStreamChunk["usage"] | undefined;
 
     for await (const chunk of stream) {
       const chunkId = `gemini-${chunkIndex++}`;
       const model = params.model ?? this.defaultModel;
+
+      const meta = chunk.usageMetadata as
+        | { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number }
+        | undefined;
+      if (meta) {
+        const prompt = meta.promptTokenCount ?? 0;
+        const completion = meta.candidatesTokenCount ?? 0;
+        lastUsage = {
+          prompt_tokens: prompt,
+          completion_tokens: completion,
+          total_tokens: meta.totalTokenCount ?? (prompt + completion),
+        };
+      }
+
       const candidates = chunk.candidates;
       if (!candidates || candidates.length === 0) continue;
 
@@ -137,6 +152,7 @@ export class GeminiProvider implements AIProvider {
           id: chunkId,
           model,
           choices: [{ index: 0, delta: {}, finish_reason: mapped }],
+          usage: lastUsage,
         };
       }
     }
