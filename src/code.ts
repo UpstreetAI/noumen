@@ -16,6 +16,7 @@ import { taskGetTool } from "./tools/task-get.js";
 import { taskUpdateTool } from "./tools/task-update.js";
 import { enterPlanModeTool, exitPlanModeTool } from "./tools/plan-mode.js";
 import { enterWorktreeTool, exitWorktreeTool } from "./tools/worktree.js";
+import type { LspServerManager } from "./lsp/manager.js";
 import type { LspServerConfig } from "./lsp/types.js";
 import type { SessionInfo } from "./session/types.js";
 import type { McpServerConfig } from "./mcp/types.js";
@@ -148,7 +149,7 @@ export class Code {
   private taskStore: TaskStore | null = null;
   private enablePlanMode: boolean;
   private enableWorktrees: boolean;
-  private lspManager: import("./lsp/manager.js").LspServerManager | null = null;
+  private lspManager: LspServerManager | null = null;
   private lspConfigs?: Record<string, LspServerConfig>;
   private lspToolRef: Tool | null = null;
   private streamingToolExecution: boolean;
@@ -410,9 +411,9 @@ export class Code {
   }
 
   /**
-   * Pre-resolve skills from paths and connect to MCP servers.
-   * Call this once after construction if using skillsPaths or mcpServers,
-   * so that createThread() has skills and MCP tools available synchronously.
+   * Pre-resolve skills, connect to MCP servers, and start LSP servers.
+   * Call this once after construction if using skillsPaths, mcpServers,
+   * or lsp, so that createThread() has everything available synchronously.
    */
   async init(): Promise<void> {
     const tasks: Promise<void>[] = [this.getSkills().then(() => {})];
