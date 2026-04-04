@@ -19,7 +19,7 @@
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "dev": "tsup --watch",
+    "dev": "concurrently -n lib,web -c blue,magenta \"tsup --watch\" \"pnpm --filter noumen-docs dev\"",
     "prepublishOnly": "pnpm run build",
     "publish:lib": "pnpm publish --access public --no-git-checks"
   },
@@ -38,6 +38,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/uuid": "^10.0.0",
+    "concurrently": "^9.2.1",
     "tsup": "^8.4.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
