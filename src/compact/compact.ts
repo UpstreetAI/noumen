@@ -22,6 +22,8 @@ export interface CompactOptions {
   tailMessagesToKeep?: number;
   /** Strip binary/image content from messages before sending to the summarizer. */
   stripBinaryContent?: boolean;
+  /** Abort signal — if fired, the partial summary is discarded instead of persisted. */
+  signal?: AbortSignal;
 }
 
 export async function compactConversation(
@@ -66,11 +68,18 @@ export async function compactConversation(
 
   let summaryText = "";
   for await (const chunk of aiProvider.chat(params)) {
+    if (opts?.signal?.aborted) {
+      throw new DOMException("Compaction aborted", "AbortError");
+    }
     for (const choice of chunk.choices) {
       if (choice.delta.content) {
         summaryText += choice.delta.content;
       }
     }
+  }
+
+  if (opts?.signal?.aborted) {
+    throw new DOMException("Compaction aborted", "AbortError");
   }
 
   await storage.appendCompactBoundary(sessionId);

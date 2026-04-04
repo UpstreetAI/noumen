@@ -52,7 +52,7 @@ export interface McpConfig {
 
 export interface McpConnection {
   name: string;
-  client: Client;
+  client: Client | null;
   status: "connected" | "failed" | "pending" | "needs-auth";
   config: McpServerConfig;
   cleanup: () => Promise<void>;

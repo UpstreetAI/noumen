@@ -102,8 +102,19 @@ export async function* withRetry(
           consecutiveOverloaded >= maxConsecutiveOverloaded &&
           options.fallbackModel
         ) {
+          const previousModel = retryContext.model;
           retryContext.model = options.fallbackModel;
           consecutiveOverloaded = 0;
+
+          yield {
+            type: "retry_attempt",
+            attempt,
+            maxRetries,
+            delayMs: 0,
+            error: new Error(
+              `Model fallback: ${previousModel} → ${options.fallbackModel} after ${maxConsecutiveOverloaded} consecutive overloaded errors`,
+            ),
+          };
         }
       } else {
         consecutiveOverloaded = 0;

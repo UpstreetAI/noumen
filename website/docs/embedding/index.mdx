@@ -1,6 +1,6 @@
 ---
 title: Embedding
-description: Four ways to integrate noumen into your application — in-process, HTTP/SSE, WebSocket, and framework-specific patterns.
+description: Six ways to integrate noumen into your application — in-process, HTTP/SSE, middleware, WebSocket, framework-specific patterns, and headless CLI.
 ---
 
 noumen is designed as a library first. Whether you're building a VS Code extension, a web app with an AI coding assistant, or a CI pipeline, you can embed the full agent loop directly into your application.
@@ -76,7 +76,7 @@ Three presets are available:
 
 | Preset | Permissions | Features |
 |--------|------------|----------|
-| `codingAgent` | `default` | Subagents, tasks, plan mode, retry, cost tracking, project context |
+| `codingAgent` | `default` | Subagents, tasks, plan mode, auto-compact, retry, cost tracking, project context |
 | `planningAgent` | `plan` | Read-only exploration, plan mode |
 | `reviewAgent` | `plan` | Read-only with web search for documentation lookups |
 

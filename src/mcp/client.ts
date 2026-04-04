@@ -22,6 +22,9 @@ import { findAvailablePort } from "./auth/callback-server.js";
 import { InMemoryTokenStorage } from "./auth/storage.js";
 import { buildMcpToolName } from "./normalization.js";
 
+const DEFAULT_TOOL_TIMEOUT_MS = 60_000;
+const MAX_TEXT_RESULT_BYTES = 1_024 * 1_024; // 1 MB
+
 export interface McpClientManagerOptions {
   /**
    * Default token storage used for servers that declare `oauth` config
@@ -62,7 +65,7 @@ export class McpClientManager {
       if (result.status === "rejected") {
         this.connections.set(name, {
           name,
-          client: null as unknown as Client,
+          client: null,
           status: "failed",
           config: entries[i][1],
           cleanup: async () => {},
@@ -196,7 +199,7 @@ export class McpClientManager {
     const tools: Tool[] = [];
 
     for (const [serverName, conn] of this.connections) {
-      if (conn.status !== "connected") continue;
+      if (conn.status !== "connected" || !conn.client) continue;
 
       try {
         const result = await conn.client.listTools();
@@ -239,9 +242,10 @@ export class McpClientManager {
     serverName: string,
     toolName: string,
     args: Record<string, unknown>,
+    options?: { timeoutMs?: number },
   ): Promise<ToolResult> {
     const conn = this.connections.get(serverName);
-    if (!conn || conn.status !== "connected") {
+    if (!conn || conn.status !== "connected" || !conn.client) {
       return {
         content: `MCP server "${serverName}" is not connected`,
         isError: true,
@@ -249,10 +253,20 @@ export class McpClientManager {
     }
 
     try {
-      const result = await conn.client.callTool({
-        name: toolName,
-        arguments: args,
-      });
+      const timeoutMs = options?.timeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
+      const abortController = new AbortController();
+      const timer = setTimeout(() => abortController.abort(), timeoutMs);
+
+      let result: Awaited<ReturnType<Client["callTool"]>>;
+      try {
+        result = await conn.client.callTool(
+          { name: toolName, arguments: args },
+          undefined,
+          { signal: abortController.signal },
+        );
+      } finally {
+        clearTimeout(timer);
+      }
 
       const contentBlocks = result.content as Array<{
         type: string;
@@ -324,18 +338,23 @@ export class McpClientManager {
 
       // If all parts are text, flatten to a single string for simpler downstream handling
       if (parts.every((p) => p.type === "text")) {
-        const text = parts
+        let text = parts
           .map((p) => (p as { text: string }).text)
           .join("\n");
+        if (Buffer.byteLength(text, "utf-8") > MAX_TEXT_RESULT_BYTES) {
+          text = text.slice(0, MAX_TEXT_RESULT_BYTES) + "\n...[output truncated]";
+        }
         return { content: text, isError: result.isError === true };
       }
 
       return { content: parts, isError: result.isError === true };
     } catch (err) {
-      return {
-        content: err instanceof Error ? err.message : String(err),
-        isError: true,
-      };
+      const isAbort =
+        err instanceof DOMException && err.name === "AbortError";
+      const message = isAbort
+        ? `MCP tool "${toolName}" on server "${serverName}" timed out`
+        : err instanceof Error ? err.message : String(err);
+      return { content: message, isError: true };
     }
   }
 
@@ -379,7 +398,7 @@ export class McpClientManager {
     } catch {
       this.connections.set(serverName, {
         name: serverName,
-        client: null as unknown as Client,
+        client: null,
         status: "failed",
         config,
         cleanup: async () => {},

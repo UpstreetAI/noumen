@@ -11,6 +11,25 @@ import type {
   PostToolUseFailureHookOutput,
 } from "./types.js";
 
+const DEFAULT_HOOK_TIMEOUT_MS = 30_000;
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`Hook "${label}" timed out after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
+
 /**
  * Match a tool name against an optional glob-like matcher.
  * Supports '*' as a wildcard prefix/suffix (e.g. "mcp__*", "*File").
@@ -53,7 +72,12 @@ export async function runPreToolUseHooks(
 
   for (const hook of matching) {
     try {
-      const output = (await hook.handler(input)) as PreToolUseHookOutput | void;
+      const label = hook.matcher ?? "PreToolUse";
+      const output = (await withTimeout(
+        Promise.resolve(hook.handler(input)),
+        DEFAULT_HOOK_TIMEOUT_MS,
+        label,
+      )) as PreToolUseHookOutput | void;
       if (!output) continue;
 
       if (output.decision === "deny") {
@@ -68,8 +92,8 @@ export async function runPreToolUseHooks(
       if (output.preventContinuation !== undefined) {
         merged.preventContinuation = output.preventContinuation;
       }
-    } catch {
-      // skip failing hooks — don't block tool execution
+    } catch (err) {
+      console.warn(`[noumen/hooks] PreToolUse hook failed:`, err instanceof Error ? err.message : err);
     }
   }
 
@@ -88,7 +112,12 @@ export async function runPostToolUseHooks(
 
   for (const hook of matching) {
     try {
-      const output = (await hook.handler(input)) as PostToolUseHookOutput | void;
+      const label = hook.matcher ?? "PostToolUse";
+      const output = (await withTimeout(
+        Promise.resolve(hook.handler(input)),
+        DEFAULT_HOOK_TIMEOUT_MS,
+        label,
+      )) as PostToolUseHookOutput | void;
       if (!output) continue;
 
       if (output.updatedOutput !== undefined) {
@@ -98,8 +127,8 @@ export async function runPostToolUseHooks(
       if (output.preventContinuation !== undefined) {
         merged.preventContinuation = output.preventContinuation;
       }
-    } catch {
-      // skip failing hooks — don't block tool execution
+    } catch (err) {
+      console.warn(`[noumen/hooks] PostToolUse hook failed:`, err instanceof Error ? err.message : err);
     }
   }
 
@@ -119,7 +148,12 @@ export async function runPostToolUseFailureHooks(
 
   for (const hook of matching) {
     try {
-      const output = (await hook.handler(input)) as PostToolUseFailureHookOutput | void;
+      const label = hook.matcher ?? "PostToolUseFailure";
+      const output = (await withTimeout(
+        Promise.resolve(hook.handler(input)),
+        DEFAULT_HOOK_TIMEOUT_MS,
+        label,
+      )) as PostToolUseFailureHookOutput | void;
       if (!output) continue;
 
       if (output.updatedOutput !== undefined) {
@@ -129,8 +163,8 @@ export async function runPostToolUseFailureHooks(
       if (output.preventContinuation !== undefined) {
         merged.preventContinuation = output.preventContinuation;
       }
-    } catch {
-      // skip failing hooks — don't block tool execution
+    } catch (err) {
+      console.warn(`[noumen/hooks] PostToolUseFailure hook failed:`, err instanceof Error ? err.message : err);
     }
   }
 
@@ -138,7 +172,7 @@ export async function runPostToolUseFailureHooks(
 }
 
 /**
- * Run notification hooks (fire-and-forget, no return value).
+ * Run notification hooks concurrently (fire-and-forget, no return value).
  */
 export async function runNotificationHooks(
   hooks: HookDefinition[],
@@ -146,11 +180,23 @@ export async function runNotificationHooks(
   input: HookInput,
 ): Promise<void> {
   const matching = getMatchingHooks(hooks, event);
-  for (const hook of matching) {
-    try {
-      await hook.handler(input);
-    } catch {
-      // notification hooks are best-effort
+  if (matching.length === 0) return;
+
+  const results = await Promise.allSettled(
+    matching.map((hook) => {
+      const label = hook.matcher ?? String(event);
+      return withTimeout(
+        Promise.resolve(hook.handler(input)),
+        DEFAULT_HOOK_TIMEOUT_MS,
+        label,
+      );
+    }),
+  );
+
+  for (const result of results) {
+    if (result.status === "rejected") {
+      const err = result.reason;
+      console.warn(`[noumen/hooks] ${event} notification hook failed:`, err instanceof Error ? err.message : err);
     }
   }
 }

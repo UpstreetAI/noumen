@@ -75,8 +75,14 @@ export function findModelPricing(
 }
 
 /**
+ * Set of models already warned about to avoid log spam.
+ */
+const warnedUnknownModels = new Set<string>();
+
+/**
  * Calculate USD cost for a usage record using the given pricing table.
- * Returns 0 if the model is not found in the pricing table.
+ * Returns 0 if the model is not found in the pricing table and logs a
+ * one-time warning per unknown model.
  */
 export function calculateCost(
   model: string,
@@ -84,12 +90,19 @@ export function calculateCost(
   pricing: Record<string, ModelPricing> = DEFAULT_PRICING,
 ): number {
   const p = findModelPricing(model, pricing);
-  if (!p) return 0;
+  if (!p) {
+    if (!warnedUnknownModels.has(model)) {
+      warnedUnknownModels.add(model);
+      console.warn(`[noumen/cost] No pricing data for model "${model}" — cost will be reported as $0`);
+    }
+    return 0;
+  }
 
   const perMillion = 1_000_000;
   let cost = 0;
   cost += (usage.prompt_tokens / perMillion) * p.inputTokens;
   cost += (usage.completion_tokens / perMillion) * p.outputTokens;
+  cost += ((usage.thinking_tokens ?? 0) / perMillion) * p.outputTokens;
   if (usage.cache_read_tokens && p.cacheReadTokens) {
     cost += (usage.cache_read_tokens / perMillion) * p.cacheReadTokens;
   }

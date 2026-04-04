@@ -56,7 +56,7 @@ async function main(): Promise<void> {
     .option("--api-key <key>", "API key (overrides env vars)")
     .option("--base-url <url>", "override provider base URL")
     .option("--cwd <dir>", "working directory")
-    .option("--permission <mode>", "permission mode (default, plan, acceptEdits, auto, bypassPermissions)")
+    .option("--permission <mode>", "permission mode (default, plan, acceptEdits, auto, bypassPermissions, dontAsk)")
     .option("--thinking <level>", "thinking level: off, low, medium, high")
     .option("--max-turns <n>", "max agent turns", parseInt)
     .option("--json", "emit JSONL stream events to stdout")

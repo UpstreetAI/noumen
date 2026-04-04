@@ -129,7 +129,7 @@ Place in `.noumen/config.json` at your project root. The CLI walks up from the w
 | `--api-key` | Override API key |
 | `--base-url` | Override provider base URL |
 | `-c, --prompt` | One-shot prompt (non-interactive) |
-| `--permission` | Permission mode: `default`, `plan`, `acceptEdits`, `auto`, `bypassPermissions` |
+| `--permission` | Permission mode: `default`, `plan`, `acceptEdits`, `auto`, `bypassPermissions`, `dontAsk` |
 | `--thinking` | Thinking level: `off`, `low`, `medium`, `high` |
 | `--max-turns` | Max agent turns before stopping |
 | `--json` | Emit JSONL stream events to stdout |

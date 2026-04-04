@@ -69,6 +69,7 @@ All tools delegate file and shell access through the sandbox (`VirtualFs` and `V
 | Tool | Description |
 |------|-------------|
 | **LSP** | Query language servers for code intelligence: goToDefinition, findReferences, hover, documentSymbol, workspaceSymbol. |
+| **ToolSearch** | Discover deferred tools on demand, reducing context usage by only exposing tools the agent actually needs. |
 
 ## Enabling optional tools
 
@@ -86,6 +87,7 @@ const code = new Code({
     lsp: { ... },             // adds LSP tool (pass Record<string, LspServerConfig>)
     skills: [...],            // adds Skill tool when skills are configured
     webSearch: { ... },       // configures the WebSearch tool backend
+    toolSearch: true,         // adds ToolSearch for on-demand tool discovery
   },
 });
 ```

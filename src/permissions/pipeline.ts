@@ -108,7 +108,16 @@ export async function resolvePermission(
   // 3. Tool's own checkPermissions
   let toolResult: PermissionResult | undefined;
   if (tool.checkPermissions) {
-    toolResult = await tool.checkPermissions(input, ctx);
+    if (opts?.signal?.aborted) {
+      throw new DOMException("Aborted", "AbortError");
+    }
+    try {
+      toolResult = await tool.checkPermissions(input, ctx);
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") throw err;
+      if (err instanceof Error && err.name === "AbortError") throw err;
+      throw err;
+    }
 
     if (toolResult.behavior === "deny") {
       return {
@@ -140,6 +149,14 @@ export async function resolvePermission(
     }
   }
 
+  // Prefer any sanitized input the tool produced (e.g. resolved paths),
+  // falling back to the raw input when checkPermissions was not defined
+  // or returned a variant without updatedInput.
+  const effectiveInput =
+    (toolResult?.behavior === "allow" && toolResult.updatedInput)
+      ? toolResult.updatedInput
+      : input;
+
   // 3b. Interactive tool guard (bypass-immune)
   if (tool.requiresUserInteraction && permCtx.mode === "bypassPermissions") {
     return {
@@ -153,7 +170,7 @@ export async function resolvePermission(
   if (permCtx.mode === "bypassPermissions") {
     return {
       behavior: "allow",
-      updatedInput: input,
+      updatedInput: effectiveInput,
       reason: "mode",
     };
   }
@@ -179,7 +196,7 @@ export async function resolvePermission(
     }
     return {
       behavior: "allow",
-      updatedInput: input,
+      updatedInput: effectiveInput,
       reason: "mode",
     };
   }
@@ -217,7 +234,7 @@ export async function resolvePermission(
 
     return {
       behavior: "allow",
-      updatedInput: input,
+      updatedInput: effectiveInput,
       reason: "classifier",
     };
   }
@@ -227,7 +244,7 @@ export async function resolvePermission(
   if (isReadOnly) {
     return {
       behavior: "allow",
-      updatedInput: input,
+      updatedInput: effectiveInput,
       reason: "readOnly",
     };
   }
@@ -244,7 +261,7 @@ export async function resolvePermission(
     if (contentAllowRules.length > 0) {
       return {
         behavior: "allow",
-        updatedInput: input,
+        updatedInput: effectiveInput,
         reason: "rule",
       };
     }
@@ -261,7 +278,7 @@ export async function resolvePermission(
   if (wholeAllowRules.length > 0) {
     return {
       behavior: "allow",
-      updatedInput: input,
+      updatedInput: effectiveInput,
       reason: "rule",
     };
   }
