@@ -106,7 +106,7 @@ export function SnakeEasterEgg() {
       >
         🐍
         {visibleBackronym && (
-          <span className="absolute top-full left-1/2 -translate-x-1/2 mt-2 whitespace-nowrap rounded-lg border border-[var(--color-border-default)] bg-[var(--color-base-surface)] px-3 py-1.5 font-mono text-[10px] text-[var(--color-accent-cyan)] shadow-lg animate-[fadeInOut_2.2s_ease-in-out_forwards] z-50">
+          <span className="absolute top-full left-0 mt-2 whitespace-nowrap rounded-lg border border-[var(--color-border-default)] bg-[var(--color-base-surface)] px-3 py-1.5 font-mono text-[10px] text-[var(--color-accent-cyan)] shadow-lg animate-[fadeInOut_2.2s_ease-in-out_forwards] z-50">
             {visibleBackronym}
           </span>
         )}
