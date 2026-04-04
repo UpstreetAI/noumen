@@ -1,0 +1,16 @@
+{
+  "title": "noumen",
+  "pages": [
+    "---Getting Started---",
+    "index",
+    "getting-started",
+    "---Reference---",
+    "providers",
+    "virtual",
+    "tools",
+    "skills",
+    "mcp",
+    "sessions",
+    "stream-events"
+  ]
+}

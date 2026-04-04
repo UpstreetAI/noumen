@@ -1,0 +1,131 @@
+@import "tailwindcss";
+@import "fumadocs-ui/css/neutral.css";
+@import "fumadocs-ui/css/preset.css";
+
+@theme {
+  --color-fd-background: #09090b;
+  --color-fd-foreground: #fafafa;
+  --color-fd-muted: #111118;
+  --color-fd-muted-foreground: #a1a1aa;
+  --color-fd-card: #1a1a24;
+  --color-fd-card-foreground: #fafafa;
+  --color-fd-popover: #111118;
+  --color-fd-popover-foreground: #fafafa;
+  --color-fd-border: #27272a;
+  --color-fd-primary: #60a5fa;
+  --color-fd-primary-foreground: #09090b;
+  --color-fd-secondary: #1a1a24;
+  --color-fd-secondary-foreground: #fafafa;
+  --color-fd-accent: rgba(39, 39, 42, 0.5);
+  --color-fd-accent-foreground: #fafafa;
+  --color-fd-ring: rgba(96, 165, 250, 0.27);
+}
+
+html {
+  overscroll-behavior: none;
+}
+
+:root {
+  --fd-nav-height: 3.5rem;
+}
+
+#nd-docs-layout {
+  --fd-banner-height: calc(3.5rem + 1px);
+  --fd-layout-width: 100vw;
+}
+
+main {
+  overflow: visible !important;
+}
+
+#nd-sidebar > div,
+#nd-sidebar > div > div {
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+}
+
+[data-active="true"] {
+  position: relative;
+}
+
+[data-active="true"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 25%;
+  height: 50%;
+  width: 2px;
+  border-radius: 1px;
+  background: linear-gradient(to bottom, #60a5fa, #22d3ee);
+}
+
+.prose img {
+  border-radius: 0.75rem;
+  border: 1px solid var(--color-fd-border);
+}
+
+.prose a {
+  color: #60a5fa;
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.prose a:hover {
+  color: #22d3ee;
+}
+
+figure.shiki {
+  background: #111118 !important;
+  box-shadow: none !important;
+}
+
+.prose pre:where(:not(.not-prose *)) {
+  background: #111118 !important;
+  border: 1px solid #27272a;
+  border-radius: 0.75rem;
+}
+
+.prose pre:where(:not(.not-prose *)):hover {
+  border-color: rgba(96, 165, 250, 0.27);
+}
+
+.prose :not(pre) > code {
+  background: rgba(96, 165, 250, 0.08);
+  border: 1px solid rgba(96, 165, 250, 0.12);
+  border-radius: 0.375rem;
+  padding: 0.15em 0.35em;
+  font-size: 0.875em;
+  color: #60a5fa;
+}
+
+.prose h1 {
+  background: linear-gradient(to right, #fafafa, #60a5fa);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.prose hr {
+  border-color: #27272a;
+}
+
+#nd-sidebar p {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-fd-muted-foreground);
+}
+
+.prose blockquote {
+  border-left-color: #60a5fa;
+  background: rgba(96, 165, 250, 0.04);
+  border-radius: 0 0.5rem 0.5rem 0;
+  padding: 0.75rem 1rem;
+}
+
+button[aria-label="Copy"],
+button[aria-label="Copy to clipboard"],
+pre button {
+  cursor: pointer;
+}

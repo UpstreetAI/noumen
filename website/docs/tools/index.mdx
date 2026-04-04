@@ -1,0 +1,104 @@
+---
+title: Built-in Tools
+description: noumen ships with six coding tools that cover file operations, shell commands, and codebase search.
+---
+
+Every noumen agent has access to six built-in tools. These are automatically registered in the `ToolRegistry` and available to the AI model during agent runs.
+
+## Tool reference
+
+| Tool | Description |
+|------|-------------|
+| **ReadFile** | Read file contents with optional line offset and limit. Returns numbered lines. |
+| **WriteFile** | Create or overwrite a file at a given path. |
+| **EditFile** | Find-and-replace string editing within a file. |
+| **Bash** | Execute shell commands via the VirtualComputer. |
+| **Glob** | Find files matching a glob pattern (backed by ripgrep's `--files --glob`). |
+| **Grep** | Search file contents by regex pattern (backed by ripgrep). |
+
+## ReadFile
+
+Reads a file and returns its contents with line numbers. Supports `offset` and `limit` parameters for reading specific line ranges.
+
+```typescript
+// Parameters
+{
+  file_path: string;  // Path to read
+  offset?: number;    // Starting line (1-based)
+  limit?: number;     // Number of lines to return
+}
+```
+
+## WriteFile
+
+Creates or overwrites a file. Parent directories are created automatically.
+
+```typescript
+// Parameters
+{
+  file_path: string;  // Path to write
+  content: string;    // File contents
+}
+```
+
+## EditFile
+
+Performs exact string replacement within a file. The `old_string` must appear exactly once in the file.
+
+```typescript
+// Parameters
+{
+  file_path: string;   // Path to edit
+  old_string: string;  // Text to find (must be unique)
+  new_string: string;  // Replacement text
+}
+```
+
+## Bash
+
+Executes a shell command and returns stdout, stderr, and exit code.
+
+```typescript
+// Parameters
+{
+  command: string;     // Shell command to run
+  timeout?: number;    // Timeout in milliseconds
+}
+```
+
+## Glob
+
+Finds files matching a glob pattern. Uses ripgrep for fast recursive search.
+
+```typescript
+// Parameters
+{
+  pattern: string;  // Glob pattern (e.g., "**/*.ts")
+  path?: string;    // Directory to search in
+}
+```
+
+## Grep
+
+Searches file contents by regular expression. Uses ripgrep for speed.
+
+```typescript
+// Parameters
+{
+  pattern: string;     // Regex pattern
+  path?: string;       // Directory or file to search
+  include?: string;    // File pattern filter (e.g., "*.ts")
+}
+```
+
+## How tools work
+
+During an agent run, the model can request tool calls. The Thread's agent loop:
+
+1. Sends available tool definitions to the model
+2. Receives tool call requests from the model's response
+3. Executes each tool via the `ToolRegistry`
+4. Sends tool results back to the model
+5. Repeats until the model produces a final text response
+
+See [Custom Tools](/docs/tools/custom) for how to add your own tools.

@@ -1,0 +1,53 @@
+---
+title: OpenAI
+description: Configure the OpenAI provider for GPT-4o and compatible APIs.
+---
+
+## Setup
+
+```typescript
+import { OpenAIProvider } from "noumen";
+
+const provider = new OpenAIProvider({
+  apiKey: "sk-...",
+  model: "gpt-4o",           // default model
+  baseURL: "https://...",     // optional, for compatible APIs
+});
+```
+
+## Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `apiKey` | `string` | required | OpenAI API key |
+| `model` | `string` | `"gpt-4o"` | Default model for all calls |
+| `baseURL` | `string` | — | Override the API base URL (for Azure, proxies, or compatible APIs) |
+
+## Compatible APIs
+
+The `baseURL` option lets you use any OpenAI-compatible API. This includes:
+
+- **Azure OpenAI** -- point to your Azure endpoint
+- **OpenRouter** -- use `https://openrouter.ai/api/v1`
+- **Local models** -- use Ollama, vLLM, or other local servers
+
+```typescript
+const provider = new OpenAIProvider({
+  apiKey: "your-key",
+  baseURL: "https://openrouter.ai/api/v1",
+  model: "anthropic/claude-sonnet-4",
+});
+```
+
+## Streaming
+
+The OpenAI provider uses `stream: true` and `stream_options: { include_usage: true }` to get token usage on the final chunk. No additional configuration is needed.
+
+## Models
+
+Any model available through the OpenAI chat completions API works. Common choices:
+
+- `gpt-4o` -- fast, capable, good default
+- `gpt-4.1` -- latest generation
+- `gpt-4o-mini` -- cheaper, faster for simpler tasks
+- `o3-mini` -- reasoning model

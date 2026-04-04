@@ -1,0 +1,124 @@
+---
+title: Skills
+description: Inject domain-specific instructions into the agent via markdown SKILL.md files with YAML frontmatter.
+---
+
+Skills are markdown instructions that guide the agent's behavior for specific tasks or codebases. They can be provided inline, loaded from `SKILL.md` files on the virtual filesystem, or activated conditionally based on file paths.
+
+## Inline skills
+
+The simplest way to add skills is inline in the `Code` options:
+
+```typescript
+const code = new Code({
+  aiProvider,
+  virtualFs,
+  virtualComputer,
+  options: {
+    skills: [
+      {
+        name: "Testing",
+        content: "Always write vitest tests for new code. Use describe/it blocks.",
+      },
+      {
+        name: "Style",
+        content: "Use TypeScript strict mode. Prefer const over let.",
+      },
+    ],
+  },
+});
+```
+
+## Loading from SKILL.md files
+
+For larger skill definitions, use `SKILL.md` files on the virtual filesystem:
+
+```typescript
+const code = new Code({
+  aiProvider,
+  virtualFs,
+  virtualComputer,
+  options: {
+    skillsPaths: [".claude/skills", "~/.config/skills"],
+  },
+});
+
+await code.init(); // loads SKILL.md files from the paths
+```
+
+Each `SKILL.md` file becomes a skill. The filename (minus extension) becomes the skill name, and the file contents become the skill instructions.
+
+## Frontmatter
+
+SKILL.md files support YAML frontmatter for metadata:
+
+```markdown
+---
+description: Guidelines for writing API handlers
+allowed-tools: ReadFile, WriteFile, EditFile
+paths:
+  - "src/api/**/*.ts"
+  - "src/routes/**/*.ts"
+context: inline
+argument-hint: The specific handler to modify
+---
+
+When working on API handlers, follow these patterns:
+- Use Zod for request validation
+- Return consistent error shapes
+- Add OpenAPI JSDoc comments
+```
+
+### Frontmatter fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `description` | `string` | Short description shown in skill listings |
+| `allowed-tools` | `string` or `string[]` | Tool names this skill can use |
+| `paths` | `string[]` | Glob patterns for conditional activation |
+| `context` | `"inline"` or `"fork"` | How the skill content is used |
+| `argument-hint` | `string` | Hint for the `$ARGUMENTS` placeholder |
+
+## Conditional activation
+
+Skills with `paths` globs are only activated when the agent touches files matching those patterns. This keeps the system prompt focused and avoids injecting irrelevant instructions.
+
+```yaml
+---
+paths:
+  - "**/*.test.ts"
+  - "**/*.spec.ts"
+---
+
+When writing tests, always:
+- Use describe/it blocks
+- Test both happy path and error cases
+- Mock external dependencies
+```
+
+This skill only activates when the agent reads or edits test files.
+
+## The Skill tool
+
+When skills are configured, a `Skill` tool is automatically added to the agent. The model can invoke skills by name:
+
+```
+Skill({ name: "Testing", arguments: "for the UserService class" })
+```
+
+The tool expands the skill content (substituting `$ARGUMENTS` with the provided arguments) and returns it to the model as a tool result.
+
+## SkillDefinition type
+
+```typescript
+interface SkillDefinition {
+  name: string;
+  content: string;
+  path?: string;
+  description?: string;
+  globs?: string[];
+  allowedTools?: string[];
+  context?: "inline" | "fork";
+  argumentHint?: string;
+}
+```

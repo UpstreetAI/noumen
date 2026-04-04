@@ -1,0 +1,45 @@
+---
+title: Google Gemini
+description: Configure the Gemini provider for Google's AI models.
+---
+
+## Setup
+
+```typescript
+import { GeminiProvider } from "noumen";
+
+const provider = new GeminiProvider({
+  apiKey: "...",                // Google AI Studio API key
+  model: "gemini-2.5-flash",   // default
+});
+```
+
+## Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `apiKey` | `string` | required | Google AI Studio API key |
+| `model` | `string` | `"gemini-2.5-flash"` | Default model |
+
+## Streaming
+
+The Gemini provider uses `generateContentStream` from the `@google/genai` SDK. It maps Gemini's response format to noumen's OpenAI-compatible chunks:
+
+- Text parts become `content` deltas
+- `functionCall` parts become `tool_calls` deltas
+- `usageMetadata` on chunks is captured for token usage
+
+## Message conversion
+
+Gemini has a unique message format. The provider handles the mapping:
+
+- System messages become the `systemInstruction` config parameter
+- OpenAI-style `tool` messages are converted to `functionResponse` parts
+- Tool call ID to function name resolution is handled automatically
+- Multiple tool results are batched into a single `user` turn
+
+## Models
+
+- `gemini-2.5-flash` -- fast, good default for coding tasks
+- `gemini-2.5-pro` -- higher capability for complex tasks
+- `gemini-2.0-flash` -- previous generation, still capable

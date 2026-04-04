@@ -1,0 +1,105 @@
+---
+title: Custom Tools
+description: Add your own tools to extend what the agent can do.
+---
+
+noumen's `Tool` interface lets you define custom tools that the agent can call during its runs. Custom tools are passed through `Code` options and are available alongside the built-in tools.
+
+## The Tool interface
+
+```typescript
+interface Tool {
+  name: string;
+  description: string;
+  parameters: ToolParameters;
+  mcpInfo?: { serverName: string; toolName: string };
+  call(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult>;
+}
+```
+
+Where:
+
+- `parameters` follows JSON Schema format with `type: "object"`, `properties`, and `required`
+- `ToolContext` provides access to `fs` (VirtualFs), `computer` (VirtualComputer), and `cwd`
+- `ToolResult` has `content` (string) and optional `isError` (boolean)
+
+## Adding custom tools
+
+Pass tools in the `Code` options:
+
+```typescript
+import { Code, OpenAIProvider, LocalFs, LocalComputer } from "noumen";
+import type { Tool, ToolContext, ToolResult } from "noumen";
+
+const fetchUrlTool: Tool = {
+  name: "FetchURL",
+  description: "Fetch the contents of a URL",
+  parameters: {
+    type: "object",
+    properties: {
+      url: { type: "string", description: "The URL to fetch" },
+    },
+    required: ["url"],
+  },
+  async call(args: Record<string, unknown>): Promise<ToolResult> {
+    const url = args.url as string;
+    try {
+      const response = await fetch(url);
+      const text = await response.text();
+      return { content: text.slice(0, 10000) };
+    } catch (err) {
+      return { content: `Error: ${err}`, isError: true };
+    }
+  },
+};
+
+const code = new Code({
+  aiProvider: new OpenAIProvider({ apiKey: "..." }),
+  virtualFs: new LocalFs({ basePath: "." }),
+  virtualComputer: new LocalComputer({ defaultCwd: "." }),
+  options: {
+    tools: [fetchUrlTool],
+  },
+});
+```
+
+## Using ToolContext
+
+The `call` function receives a `ToolContext` with access to the agent's infrastructure:
+
+```typescript
+const myTool: Tool = {
+  name: "ListProjectFiles",
+  description: "List all TypeScript files in the project",
+  parameters: {
+    type: "object",
+    properties: {},
+  },
+  async call(_args, ctx: ToolContext) {
+    const entries = await ctx.fs.readdir(ctx.cwd, { recursive: true });
+    const tsFiles = entries
+      .filter((e) => e.isFile && e.name.endsWith(".ts"))
+      .map((e) => e.path);
+    return { content: tsFiles.join("\n") };
+  },
+};
+```
+
+## Error handling
+
+Return `isError: true` to signal that the tool call failed. The model will see the error message and can decide to retry or take a different approach.
+
+```typescript
+async call(args, ctx) {
+  try {
+    // ... do work
+    return { content: "Success" };
+  } catch (err) {
+    return { content: `Failed: ${err}`, isError: true };
+  }
+}
+```
+
+## MCP tools
+
+Tools discovered from MCP servers are automatically added with the same `Tool` interface. They have an `mcpInfo` field that identifies their origin server and original tool name. See [MCP](/docs/mcp) for details.

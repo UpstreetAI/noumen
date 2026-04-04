@@ -1,0 +1,113 @@
+---
+title: MCP
+description: Connect to external MCP servers for additional tools, or expose your agent's tools as an MCP server.
+---
+
+noumen supports the [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) for both consuming external tools and exposing internal tools. This enables interoperability with the growing ecosystem of MCP-compatible tools and clients.
+
+## MCP client
+
+Connect to external MCP servers to give your agent access to their tools:
+
+```typescript
+const code = new Code({
+  aiProvider,
+  virtualFs,
+  virtualComputer,
+  options: {
+    mcpServers: {
+      filesystem: {
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+      },
+      github: {
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-github"],
+        env: { GITHUB_TOKEN: process.env.GITHUB_TOKEN! },
+      },
+    },
+  },
+});
+
+await code.init(); // connects to MCP servers and discovers tools
+```
+
+After `init()`, tools from MCP servers are available to the agent alongside built-in tools.
+
+### Server config formats
+
+<Tabs items={["Stdio (default)", "HTTP"]}>
+  <Tab value="Stdio (default)">
+    ```typescript
+    {
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+      env: { SOME_VAR: "value" },
+    }
+    ```
+
+    Stdio servers are launched as child processes. The agent communicates with them over stdin/stdout using the MCP protocol.
+  </Tab>
+  <Tab value="HTTP">
+    ```typescript
+    {
+      type: "http",
+      url: "https://mcp.example.com/sse",
+      headers: { Authorization: "Bearer ..." },
+    }
+    ```
+
+    HTTP servers use the Streamable HTTP transport for remote MCP connections.
+  </Tab>
+</Tabs>
+
+### Tool naming
+
+MCP tools are named using the convention `mcp__serverName__toolName`. For example, a `read_file` tool from a server named `filesystem` becomes `mcp__filesystem__read_file`. Special characters in server and tool names are normalized to underscores.
+
+### Cleanup
+
+Always close MCP connections when done:
+
+```typescript
+await code.close(); // disconnects all MCP servers
+```
+
+## MCP server
+
+Expose your agent's tools (built-in + custom) as an MCP server so external clients can use them:
+
+```typescript
+import { createMcpServer, ToolRegistry } from "noumen";
+
+const registry = new ToolRegistry();
+
+await createMcpServer({
+  tools: registry.listTools(),
+  toolContext: {
+    fs: virtualFs,
+    computer: virtualComputer,
+    cwd: "/working/dir",
+  },
+});
+```
+
+This starts a stdio-based MCP server that handles `tools/list` and `tools/call` requests. Any MCP client (Claude Desktop, other agents, etc.) can connect and use the tools.
+
+## McpClientManager API
+
+For advanced usage, you can use `McpClientManager` directly:
+
+```typescript
+import { McpClientManager } from "noumen";
+
+const manager = new McpClientManager({
+  mcpServers: {
+    myServer: { command: "node", args: ["server.js"] },
+  },
+});
+
+await manager.connect();
+const tools = await manager.getTools(); // Tool[] compatible with noumen
+await manager.close();
+```

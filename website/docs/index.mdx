@@ -1,0 +1,79 @@
+---
+title: Introduction
+description: noumen is a headless, provider-agnostic coding agent library for Node.js with pluggable AI providers and virtual infrastructure.
+---
+
+A programmatic AI coding agent that can read, write, and edit files, run shell commands, and search codebases -- all backed by swappable AI providers (OpenAI, Anthropic, Google Gemini) and virtual filesystems (local Node.js or remote containers).
+
+## Install
+
+<Callout type="info" title="One-line install">
+  noumen is published on npm and works with any Node.js package manager.
+</Callout>
+
+```bash
+pnpm add noumen
+```
+
+## Quick start
+
+```typescript
+import { Code, OpenAIProvider, LocalFs, LocalComputer } from "noumen";
+
+const code = new Code({
+  aiProvider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY }),
+  virtualFs: new LocalFs({ basePath: "/my/project" }),
+  virtualComputer: new LocalComputer({ defaultCwd: "/my/project" }),
+});
+
+const thread = code.createThread();
+
+for await (const event of thread.run("Add a health-check endpoint to server.ts")) {
+  switch (event.type) {
+    case "text_delta":
+      process.stdout.write(event.text);
+      break;
+    case "tool_use_start":
+      console.log(`\n[tool] ${event.toolName}`);
+      break;
+    case "tool_result":
+      console.log(`[result] ${event.result.content.slice(0, 200)}`);
+      break;
+    case "turn_complete":
+      console.log(`\n[tokens] ${event.usage.total_tokens} total`);
+      break;
+  }
+}
+```
+
+## Key features
+
+<Cards>
+  <Card title="Provider-agnostic" href="/docs/providers">
+    Swap between OpenAI, Anthropic, and Google Gemini without changing your application code.
+  </Card>
+  <Card title="Virtual infrastructure" href="/docs/virtual">
+    Run on local Node.js filesystems or remote sprites.dev containers with the same API.
+  </Card>
+  <Card title="Built-in coding tools" href="/docs/tools">
+    ReadFile, WriteFile, EditFile, Bash, Glob, and Grep -- everything an agent needs to code.
+  </Card>
+  <Card title="MCP support" href="/docs/mcp">
+    Connect to external MCP servers for additional tools, or expose your agent's tools as an MCP server.
+  </Card>
+  <Card title="Skills system" href="/docs/skills">
+    Inject domain-specific instructions via markdown SKILL.md files with frontmatter metadata.
+  </Card>
+  <Card title="Session persistence" href="/docs/sessions">
+    JSONL-based conversation storage with automatic compaction and resume support.
+  </Card>
+</Cards>
+
+## Next steps
+
+<Cards>
+  <Card title="Getting Started" description="Install, configure, and run your first agent" href="/docs/getting-started" />
+  <Card title="Providers" description="Configure OpenAI, Anthropic, or Gemini" href="/docs/providers" />
+  <Card title="Tools" description="Built-in tools and custom tool authoring" href="/docs/tools" />
+  <Card title="Stream Events" description="All event types emitted during agent runs" href="/docs/stream-events" />
+</Cards>

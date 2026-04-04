@@ -1,0 +1,99 @@
+---
+title: Sessions
+description: Conversation persistence, resume, and automatic compaction.
+---
+
+noumen persists conversations as JSONL files on the virtual filesystem. This enables resuming conversations, reviewing history, and managing long-running agent sessions.
+
+## How sessions work
+
+Each thread has a `sessionId`. Messages are appended to a JSONL file at `{sessionDir}/{sessionId}.jsonl` as they're sent and received. Each line is a serialized entry containing the message, a UUID, parent UUID, and timestamp.
+
+## Creating and resuming threads
+
+```typescript
+// New thread (generates a random sessionId)
+const thread = code.createThread();
+
+// New thread with a specific sessionId
+const thread = code.createThread({ sessionId: "my-session" });
+
+// Resume an existing session
+const thread = code.createThread({ sessionId: "my-session", resume: true });
+```
+
+When `resume: true`, the thread loads existing messages from the JSONL file before the first `run()` call.
+
+## Accessing messages
+
+```typescript
+const messages = await thread.getMessages();
+// Returns ChatMessage[] -- the full conversation history
+```
+
+## Listing sessions
+
+```typescript
+const sessions = await code.listSessions();
+// Returns SessionInfo[]
+```
+
+Each `SessionInfo` includes:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `sessionId` | `string` | Unique session identifier |
+| `createdAt` | `string` | ISO timestamp of first message |
+| `lastMessageAt` | `string` | ISO timestamp of last message |
+| `title` | `string?` | Optional custom title |
+| `messageCount` | `number` | Total message count |
+
+## Compaction
+
+Long conversations accumulate tokens. Compaction summarizes older messages to reduce context size while preserving the essential information.
+
+### Manual compaction
+
+```typescript
+await thread.compact();
+
+// With custom instructions for the summary
+await thread.compact({
+  instructions: "Focus on the database schema changes",
+});
+```
+
+### Automatic compaction
+
+Enable auto-compaction to automatically summarize when the conversation exceeds a token threshold:
+
+```typescript
+const code = new Code({
+  aiProvider,
+  virtualFs,
+  virtualComputer,
+  options: {
+    autoCompact: true,
+    autoCompactThreshold: 100_000, // tokens (default)
+  },
+});
+```
+
+When auto-compaction triggers, the thread emits `compact_start` and `compact_complete` stream events.
+
+### How compaction works
+
+1. A compaction boundary marker is written to the JSONL file
+2. The AI provider generates a summary of all messages before the boundary
+3. The summary replaces the old messages in the thread's memory
+4. On resume, only messages after the last boundary are loaded
+
+## JSONL format
+
+Each line in the session file is a JSON object with a `type` field:
+
+- `message` -- a chat message (user, assistant, tool, or system)
+- `compact-boundary` -- marks where compaction occurred
+- `summary` -- the compacted summary message
+- `custom-title` -- an optional session title
+- `metadata` -- arbitrary key-value metadata

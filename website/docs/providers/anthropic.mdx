@@ -1,0 +1,46 @@
+---
+title: Anthropic
+description: Configure the Anthropic provider for Claude models.
+---
+
+## Setup
+
+```typescript
+import { AnthropicProvider } from "noumen";
+
+const provider = new AnthropicProvider({
+  apiKey: "sk-ant-...",
+  model: "claude-sonnet-4-20250514", // default
+});
+```
+
+## Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `apiKey` | `string` | required | Anthropic API key |
+| `model` | `string` | `"claude-sonnet-4-20250514"` | Default model |
+| `baseURL` | `string` | — | Override the API base URL |
+
+## Streaming
+
+The Anthropic provider uses the `messages.stream()` API. It internally maps Anthropic's event types to noumen's OpenAI-compatible chunk format:
+
+- `content_block_start` / `content_block_delta` for text and tool calls
+- `message_start` for initial token counts
+- `message_delta` for final output token count
+- `message_stop` for the finish signal with usage
+
+## Message conversion
+
+Anthropic uses a different message format than OpenAI. The provider handles this automatically:
+
+- System messages become the `system` parameter
+- Tool results are wrapped in `tool_result` content blocks within `user` messages
+- Tool calls use Anthropic's `tool_use` content block format
+
+## Models
+
+- `claude-sonnet-4-20250514` -- balanced speed and capability
+- `claude-opus-4-20250514` -- highest capability
+- `claude-haiku-3-20250307` -- fastest, most affordable

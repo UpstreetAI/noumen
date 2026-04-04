@@ -1,0 +1,158 @@
+---
+title: Getting Started
+description: Install noumen, configure a provider, and run your first coding agent.
+---
+
+## Installation
+
+```bash
+pnpm add noumen
+```
+
+noumen requires Node.js 18 or later.
+
+## Setup
+
+Every noumen agent needs three things: an **AI provider**, a **virtual filesystem**, and a **virtual computer**.
+
+<Steps>
+  <Step>
+    ### Choose a provider
+
+    Pick one of the three built-in providers. Each takes an API key and an optional default model.
+
+    <Tabs items={["OpenAI", "Anthropic", "Gemini"]}>
+      <Tab value="OpenAI">
+        ```typescript
+        import { OpenAIProvider } from "noumen";
+
+        const provider = new OpenAIProvider({
+          apiKey: process.env.OPENAI_API_KEY!,
+          model: "gpt-4o", // default
+        });
+        ```
+      </Tab>
+      <Tab value="Anthropic">
+        ```typescript
+        import { AnthropicProvider } from "noumen";
+
+        const provider = new AnthropicProvider({
+          apiKey: process.env.ANTHROPIC_API_KEY!,
+          model: "claude-sonnet-4-20250514", // default
+        });
+        ```
+      </Tab>
+      <Tab value="Gemini">
+        ```typescript
+        import { GeminiProvider } from "noumen";
+
+        const provider = new GeminiProvider({
+          apiKey: process.env.GEMINI_API_KEY!,
+          model: "gemini-2.5-flash", // default
+        });
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step>
+    ### Configure virtual infrastructure
+
+    For local development, use the Node.js-backed implementations:
+
+    ```typescript
+    import { LocalFs, LocalComputer } from "noumen";
+
+    const fs = new LocalFs({ basePath: "/path/to/your/project" });
+    const computer = new LocalComputer({ defaultCwd: "/path/to/your/project" });
+    ```
+
+    For remote sandboxed execution, see [Virtual Infrastructure](/docs/virtual).
+  </Step>
+
+  <Step>
+    ### Create a Code instance
+
+    The `Code` class wires everything together:
+
+    ```typescript
+    import { Code } from "noumen";
+
+    const code = new Code({
+      aiProvider: provider,
+      virtualFs: fs,
+      virtualComputer: computer,
+      options: {
+        sessionDir: ".noumen/sessions",
+        model: "gpt-4o",
+        maxTokens: 8192,
+        autoCompact: true,
+      },
+    });
+    ```
+  </Step>
+
+  <Step>
+    ### Run a prompt
+
+    Create a thread and iterate over the stream events:
+
+    ```typescript
+    const thread = code.createThread();
+
+    for await (const event of thread.run("Fix the failing test in utils.test.ts")) {
+      switch (event.type) {
+        case "text_delta":
+          process.stdout.write(event.text);
+          break;
+        case "tool_use_start":
+          console.log(`\nUsing tool: ${event.toolName}`);
+          break;
+        case "tool_result":
+          console.log(`Result: ${event.result.content.slice(0, 100)}`);
+          break;
+        case "message_complete":
+          console.log("\n--- Done ---");
+          break;
+        case "turn_complete":
+          console.log(`Tokens used: ${event.usage.total_tokens}`);
+          break;
+      }
+    }
+    ```
+  </Step>
+</Steps>
+
+## Full example
+
+```typescript
+import {
+  Code,
+  OpenAIProvider,
+  LocalFs,
+  LocalComputer,
+} from "noumen";
+
+const code = new Code({
+  aiProvider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY! }),
+  virtualFs: new LocalFs({ basePath: process.cwd() }),
+  virtualComputer: new LocalComputer({ defaultCwd: process.cwd() }),
+  options: {
+    sessionDir: ".noumen/sessions",
+    autoCompact: true,
+  },
+});
+
+const thread = code.createThread();
+
+for await (const event of thread.run("Add input validation to the signup handler")) {
+  if (event.type === "text_delta") process.stdout.write(event.text);
+  if (event.type === "tool_use_start") console.log(`\n[${event.toolName}]`);
+}
+```
+
+## What's next
+
+- [Providers](/docs/providers) -- detailed configuration for each AI provider
+- [Tools](/docs/tools) -- the six built-in coding tools and how to add your own
+- [Stream Events](/docs/stream-events) -- every event type your app can handle
