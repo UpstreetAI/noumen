@@ -74,6 +74,8 @@ export class GeminiProvider implements AIProvider {
     if (params.outputFormat?.type === "json_schema") {
       config.responseSchema = params.outputFormat.schema;
       config.responseMimeType = "application/json";
+    } else if (params.outputFormat?.type === "json_object") {
+      config.responseMimeType = "application/json";
     }
 
     const stream = await this.client.models.generateContentStream({

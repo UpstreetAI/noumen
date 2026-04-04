@@ -1,11 +1,22 @@
 import type { Tool, ToolResult, ToolContext } from "./types.js";
+import type { ContentPart } from "../session/types.js";
 import { READ_PROMPT } from "./prompts/read.js";
+import {
+  IMAGE_EXTENSIONS,
+  maybeResizeAndDownsampleImageBuffer,
+  compressImageBufferWithTokenLimit,
+  createImageMetadataText,
+} from "../utils/image-resizer.js";
+import * as path from "node:path";
+
+const DEFAULT_MAX_IMAGE_TOKENS = 1600;
 
 export const readFileTool: Tool = {
   name: "ReadFile",
   description:
     "Read a file from the filesystem. Returns the file content with line numbers. " +
-    "Use offset and limit to read specific portions of large files.",
+    "For image files (.png, .jpg, .jpeg, .gif, .webp), returns the image data directly. " +
+    "Use offset and limit to read specific portions of large text files.",
   prompt: READ_PROMPT,
   isReadOnly: true,
   isConcurrencySafe: true,
@@ -39,6 +50,12 @@ export const readFileTool: Tool = {
     const limit = args.limit as number | undefined;
 
     try {
+      // Check if this is an image file
+      const ext = path.extname(filePath).toLowerCase();
+      if (IMAGE_EXTENSIONS.has(ext) && ctx.fs.readFileBytes) {
+        return readImageFile(filePath, ext, ctx);
+      }
+
       // Dedup: if cache has same path/offset/limit and mtime is unchanged, skip re-read
       if (ctx.fileStateCache) {
         const cached = ctx.fileStateCache.get(filePath);
@@ -103,3 +120,55 @@ export const readFileTool: Tool = {
     }
   },
 };
+
+async function readImageFile(
+  filePath: string,
+  ext: string,
+  ctx: ToolContext,
+): Promise<ToolResult> {
+  const imageBuffer = await ctx.fs.readFileBytes!(filePath);
+  const originalSize = imageBuffer.length;
+  const formatExt = ext.replace(/^\./, "");
+
+  const resized = await maybeResizeAndDownsampleImageBuffer(
+    imageBuffer,
+    originalSize,
+    formatExt,
+  );
+
+  // Check token budget
+  let base64 = resized.buffer.toString("base64");
+  let mediaType = resized.mediaType;
+  const estimatedTokens = Math.ceil(base64.length * 0.125);
+
+  if (estimatedTokens > DEFAULT_MAX_IMAGE_TOKENS) {
+    try {
+      const compressed = await compressImageBufferWithTokenLimit(
+        imageBuffer,
+        DEFAULT_MAX_IMAGE_TOKENS,
+        `image/${formatExt}`,
+      );
+      base64 = compressed.base64;
+      mediaType = compressed.mediaType;
+    } catch {
+      // Use the resized version as-is
+    }
+  }
+
+  const parts: ContentPart[] = [
+    {
+      type: "image",
+      data: base64,
+      media_type: `image/${mediaType}`,
+    },
+  ];
+
+  if (resized.dimensions) {
+    parts.push({
+      type: "text",
+      text: createImageMetadataText(resized.dimensions),
+    });
+  }
+
+  return { content: parts };
+}

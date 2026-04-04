@@ -68,6 +68,25 @@ export class SpritesFs implements VirtualFs {
     return res.text();
   }
 
+  async readFileBytes(filePath: string, maxBytes?: number): Promise<Buffer> {
+    const url = this.fsUrl("/read", {
+      path: this.resolvePath(filePath),
+      binary: "true",
+    });
+    const res = await fetch(url, { headers: this.headers() });
+    if (!res.ok) {
+      throw new Error(
+        `SpritesFs readFileBytes failed (${res.status}): ${await res.text()}`,
+      );
+    }
+    const arrayBuf = await res.arrayBuffer();
+    const buf = Buffer.from(arrayBuf);
+    if (maxBytes !== undefined && buf.length > maxBytes) {
+      return buf.subarray(0, maxBytes);
+    }
+    return buf;
+  }
+
   async writeFile(filePath: string, content: string): Promise<void> {
     const url = this.fsUrl("/write");
     const res = await fetch(url, {

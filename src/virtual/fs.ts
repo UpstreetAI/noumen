@@ -32,6 +32,14 @@ export interface ReadOptions {
  */
 export interface VirtualFs {
   readFile(path: string, opts?: ReadOptions): Promise<string>;
+  /**
+   * Read raw bytes from a file. Used for binary content (images, PDFs).
+   * Implementations SHOULD cap the read at `maxBytes` to prevent OOM on
+   * very large files. When `maxBytes` is omitted, the entire file is read.
+   *
+   * Returns a Buffer (Node.js) or Uint8Array.
+   */
+  readFileBytes?(path: string, maxBytes?: number): Promise<Buffer>;
   writeFile(path: string, content: string): Promise<void>;
   appendFile(path: string, content: string): Promise<void>;
   deleteFile(path: string, opts?: { recursive?: boolean }): Promise<void>;

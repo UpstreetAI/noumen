@@ -1,4 +1,4 @@
-import type { AIProvider } from "./providers/types.js";
+import type { AIProvider, OutputFormat } from "./providers/types.js";
 import type { VirtualFs } from "./virtual/fs.js";
 import type { VirtualComputer } from "./virtual/computer.js";
 import type { Sandbox } from "./virtual/sandbox.js";
@@ -120,6 +120,10 @@ export interface CodeOptions {
     historySnip?: SnipConfig;
     /** Project context loading (NOUMEN.md / CLAUDE.md). Pass true for defaults or a config object. */
     projectContext?: ProjectContextConfig | boolean;
+    /** Default structured output format for all threads. */
+    outputFormat?: OutputFormat;
+    /** Default structured output mode for all threads. */
+    structuredOutputMode?: "alongside_tools" | "final_response";
   };
 }
 
@@ -176,6 +180,8 @@ export class Code {
   private fileStateCacheConfig: FileStateCacheConfig | undefined;
   private toolResultStorageConfig: ToolResultStorageConfig | undefined;
   private historySnipConfig: SnipConfig | undefined;
+  private outputFormat: OutputFormat | undefined;
+  private structuredOutputMode: "alongside_tools" | "final_response" | undefined;
 
   constructor(opts: CodeOptions) {
     this.aiProvider = opts.aiProvider;
@@ -256,6 +262,8 @@ export class Code {
     this.fileStateCacheConfig = opts.options?.fileStateCache;
     this.toolResultStorageConfig = opts.options?.toolResultStorage;
     this.historySnipConfig = opts.options?.historySnip;
+    this.outputFormat = opts.options?.outputFormat;
+    this.structuredOutputMode = opts.options?.structuredOutputMode;
 
     if (opts.options?.checkpoint?.enabled) {
       this.checkpointManager = new FileCheckpointManager(
@@ -398,6 +406,8 @@ export class Code {
         promptCachingEnabled: this.promptCachingConfig?.enabled ?? false,
         mcpToolNames: this.mcpToolNames.size > 0 ? this.mcpToolNames : undefined,
         projectContext: this.resolvedProjectContext ?? undefined,
+        outputFormat: this.outputFormat,
+        structuredOutputMode: this.structuredOutputMode,
       },
       {
         ...opts,

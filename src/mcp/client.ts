@@ -7,6 +7,8 @@ import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { Tool as McpSdkTool } from "@modelcontextprotocol/sdk/types.js";
 import type { Tool, ToolResult } from "../tools/types.js";
+import type { ContentPart } from "../session/types.js";
+import { maybeResizeAndDownsampleImageBuffer } from "../utils/image-resizer.js";
 import type {
   McpServerConfig,
   McpHttpServerConfig,
@@ -252,14 +254,83 @@ export class McpClientManager {
         arguments: args,
       });
 
-      const content = (result.content as Array<{ type: string; text?: string }>)
-        ?.map((c) => (c.type === "text" ? c.text ?? "" : JSON.stringify(c)))
-        .join("\n") ?? JSON.stringify(result);
+      const contentBlocks = result.content as Array<{
+        type: string;
+        text?: string;
+        data?: string;
+        mimeType?: string;
+        blob?: string;
+      }> | undefined;
 
-      return {
-        content,
-        isError: result.isError === true,
-      };
+      if (!contentBlocks) {
+        return { content: JSON.stringify(result), isError: result.isError === true };
+      }
+
+      const parts: ContentPart[] = [];
+      for (const block of contentBlocks) {
+        if (block.type === "text") {
+          parts.push({ type: "text", text: block.text ?? "" });
+        } else if (block.type === "image" && block.data) {
+          const imageBuffer = Buffer.from(block.data, "base64");
+          const ext = block.mimeType?.split("/")[1] || "png";
+          try {
+            const resized = await maybeResizeAndDownsampleImageBuffer(
+              imageBuffer,
+              imageBuffer.length,
+              ext,
+            );
+            parts.push({
+              type: "image",
+              data: resized.buffer.toString("base64"),
+              media_type: `image/${resized.mediaType}`,
+            });
+          } catch {
+            parts.push({
+              type: "image",
+              data: block.data,
+              media_type: block.mimeType ?? "image/png",
+            });
+          }
+        } else if (block.type === "resource" && block.blob) {
+          const isImage = block.mimeType?.startsWith("image/") ?? false;
+          if (isImage) {
+            const imageBuffer = Buffer.from(block.blob, "base64");
+            const ext = block.mimeType?.split("/")[1] || "png";
+            try {
+              const resized = await maybeResizeAndDownsampleImageBuffer(
+                imageBuffer,
+                imageBuffer.length,
+                ext,
+              );
+              parts.push({
+                type: "image",
+                data: resized.buffer.toString("base64"),
+                media_type: `image/${resized.mediaType}`,
+              });
+            } catch {
+              parts.push({
+                type: "image",
+                data: block.blob,
+                media_type: block.mimeType ?? "image/png",
+              });
+            }
+          } else {
+            parts.push({ type: "text", text: JSON.stringify(block) });
+          }
+        } else {
+          parts.push({ type: "text", text: JSON.stringify(block) });
+        }
+      }
+
+      // If all parts are text, flatten to a single string for simpler downstream handling
+      if (parts.every((p) => p.type === "text")) {
+        const text = parts
+          .map((p) => (p as { text: string }).text)
+          .join("\n");
+        return { content: text, isError: result.isError === true };
+      }
+
+      return { content: parts, isError: result.isError === true };
     } catch (err) {
       return {
         content: err instanceof Error ? err.message : String(err),

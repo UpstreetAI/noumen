@@ -30,6 +30,21 @@ export class LocalFs implements VirtualFs {
     return fs.readFile(this.resolve(filePath), { encoding });
   }
 
+  async readFileBytes(filePath: string, maxBytes?: number): Promise<Buffer> {
+    const resolved = this.resolve(filePath);
+    if (maxBytes === undefined) {
+      return fs.readFile(resolved);
+    }
+    const fh = await fs.open(resolved, "r");
+    try {
+      const buf = Buffer.alloc(maxBytes);
+      const { bytesRead } = await fh.read(buf, 0, maxBytes, 0);
+      return buf.subarray(0, bytesRead);
+    } finally {
+      await fh.close();
+    }
+  }
+
   async writeFile(filePath: string, content: string): Promise<void> {
     const resolved = this.resolve(filePath);
     await fs.mkdir(path.dirname(resolved), { recursive: true });

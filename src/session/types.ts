@@ -1,5 +1,5 @@
 import type { UUID } from "../utils/uuid.js";
-import type { ChatCompletionUsage } from "../providers/types.js";
+import type { ChatCompletionUsage, OutputFormat } from "../providers/types.js";
 import type { CostSummary } from "../cost/types.js";
 import type { MemoryEntry } from "../memory/types.js";
 import type { FileCheckpointSnapshot } from "../checkpoint/types.js";
@@ -278,8 +278,35 @@ export type StreamEvent =
       type: "git_operation";
       operation: "commit" | "push" | "pr_create" | "merge" | "rebase";
       details: string;
+    }
+  | {
+      type: "structured_output";
+      data: unknown;
+      schema: OutputFormat;
     };
 
 export interface RunOptions {
   signal?: AbortSignal;
+  /**
+   * Constrain the model to produce structured output.
+   *
+   * In `"alongside_tools"` mode (default), the outputFormat is passed
+   * directly to the provider on every model call — the model may still
+   * use tools alongside its structured response.
+   *
+   * In `"final_response"` mode, a synthetic `StructuredOutput` tool is
+   * injected. The agent loop continues using tools normally until the
+   * model calls StructuredOutput with the schema-conforming data. This
+   * is the recommended mode when the agent needs to reason and use
+   * tools before producing the final structured answer.
+   */
+  outputFormat?: OutputFormat;
+  /**
+   * Controls how structured output interacts with the tool loop.
+   * - `"alongside_tools"` (default): pass outputFormat to the provider;
+   *   the model response itself is structured JSON.
+   * - `"final_response"`: inject a synthetic StructuredOutput tool; the
+   *   model calls it to signal completion with structured data.
+   */
+  structuredOutputMode?: "alongside_tools" | "final_response";
 }

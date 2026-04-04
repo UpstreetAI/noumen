@@ -59,6 +59,10 @@ export class OpenAIProvider implements AIProvider {
           strict: params.outputFormat.strict ?? false,
         },
       };
+    } else if (params.outputFormat?.type === "json_object") {
+      (createParams as unknown as Record<string, unknown>).response_format = {
+        type: "json_object",
+      };
     }
 
     const stream = await this.client.chat.completions.create(createParams);

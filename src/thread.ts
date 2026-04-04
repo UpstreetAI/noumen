@@ -1,4 +1,4 @@
-import type { AIProvider, ChatCompletionUsage } from "./providers/types.js";
+import type { AIProvider, ChatCompletionUsage, OutputFormat } from "./providers/types.js";
 import { truncateHeadForPTLRetry } from "./utils/tokens.js";
 import type { VirtualFs } from "./virtual/fs.js";
 import type { VirtualComputer } from "./virtual/computer.js";
@@ -97,6 +97,10 @@ import { resolvePermission, type ResolvePermissionOptions } from "./permissions/
 import { DenialTracker } from "./permissions/denial-tracking.js";
 import { withRetry, CannotRetryError, FallbackTriggeredError } from "./retry/engine.js";
 import { classifyError } from "./retry/classify.js";
+import {
+  createStructuredOutputTool,
+  STRUCTURED_OUTPUT_TOOL_NAME,
+} from "./tools/structured-output.js";
 
 const FILE_TOOLS = new Set(["ReadFile", "WriteFile", "EditFile"]);
 
@@ -153,6 +157,10 @@ export interface ThreadConfig {
   mcpToolNames?: ReadonlySet<string>;
   /** Loaded project context files (NOUMEN.md / CLAUDE.md) for system prompt injection. */
   projectContext?: ContextFile[];
+  /** Default structured output format for all runs on this thread. */
+  outputFormat?: OutputFormat;
+  /** Default structured output mode for all runs on this thread. */
+  structuredOutputMode?: "alongside_tools" | "final_response";
 }
 
 export class Thread {
@@ -337,6 +345,19 @@ export class Thread {
       const allSkills = this.config.skills ?? [];
       let systemPrompt = await this.buildCurrentSystemPromptAsync(allSkills);
 
+      // Structured output configuration: RunOptions override ThreadConfig defaults
+      const runOutputFormat = opts?.outputFormat ?? this.config.outputFormat;
+      const runOutputMode = opts?.structuredOutputMode ?? this.config.structuredOutputMode ?? "alongside_tools";
+      const isFinalResponseMode = runOutputFormat?.type === "json_schema" && runOutputMode === "final_response";
+
+      if (isFinalResponseMode) {
+        const soTool = createStructuredOutputTool(runOutputFormat);
+        if (!this.toolRegistry.get(STRUCTURED_OUTPUT_TOOL_NAME)) {
+          this.toolRegistry.register(soTool);
+        }
+        systemPrompt += "\n\nWhen you have gathered all necessary information and are ready to give your final answer, call the StructuredOutput tool with your response data.";
+      }
+
       let toolDefs = this.config.toolSearchEnabled
         ? this.toolRegistry.getActiveToolDefinitions()
         : this.toolRegistry.toToolDefinitions();
@@ -459,6 +480,7 @@ export class Thread {
           max_tokens: currentMaxTokens,
           thinking: this.config.thinking,
           skipCacheWrite: this.config.skipCacheWrite,
+          ...(runOutputFormat && !isFinalResponseMode ? { outputFormat: runOutputFormat } : {}),
         };
 
         let stream: AsyncIterable<import("./providers/types.js").ChatStreamChunk>;
@@ -1120,8 +1142,46 @@ export class Thread {
             toolDefs = this.toolRegistry.getActiveToolDefinitions();
           }
 
+          // Detect StructuredOutput tool call in final_response mode
+          if (isFinalResponseMode) {
+            for (const tc of toolCalls) {
+              if (tc.function.name === STRUCTURED_OUTPUT_TOOL_NAME) {
+                try {
+                  const parsed = JSON.parse(tc.function.arguments);
+                  yield {
+                    type: "structured_output",
+                    data: parsed.data ?? parsed,
+                    schema: runOutputFormat,
+                  };
+                } catch {
+                  yield {
+                    type: "structured_output",
+                    data: tc.function.arguments,
+                    schema: runOutputFormat,
+                  };
+                }
+                preventContinuation = true;
+                break;
+              }
+            }
+          }
+
           if (preventContinuation) break;
           continue;
+        }
+
+        // For alongside_tools mode, emit structured_output when the model produces text
+        if (runOutputFormat && !isFinalResponseMode && textContent) {
+          try {
+            const parsed = JSON.parse(textContent);
+            yield {
+              type: "structured_output",
+              data: parsed,
+              schema: runOutputFormat,
+            };
+          } catch {
+            // Model text wasn't valid JSON — still emit message_complete below
+          }
         }
 
         yield { type: "message_complete", message: assistantMsg };

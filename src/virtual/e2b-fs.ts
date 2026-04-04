@@ -38,6 +38,17 @@ export class E2BFs implements VirtualFs {
     });
   }
 
+  async readFileBytes(path: string, maxBytes?: number): Promise<Buffer> {
+    const data = await this.sandbox.files.read(this.resolvePath(path), {
+      format: "bytes",
+    } as Record<string, unknown>);
+    const buf = Buffer.from(data as unknown as ArrayBuffer);
+    if (maxBytes !== undefined && buf.length > maxBytes) {
+      return buf.subarray(0, maxBytes);
+    }
+    return buf;
+  }
+
   async writeFile(path: string, content: string): Promise<void> {
     await this.sandbox.files.write(this.resolvePath(path), content);
   }

@@ -72,8 +72,13 @@ export interface ChatCompletionUsage {
 /**
  * Structured output format. When provided, the model is constrained to
  * produce a response matching the given JSON schema.
+ *
+ * - `json_schema`: the model must produce JSON conforming to the given schema.
+ * - `json_object`: the model must produce valid JSON (no specific schema).
  */
-export interface OutputFormat {
+export type OutputFormat = JsonSchemaOutputFormat | JsonObjectOutputFormat;
+
+export interface JsonSchemaOutputFormat {
   type: "json_schema";
   /** JSON Schema object describing the expected output shape. */
   schema: Record<string, unknown>;
@@ -81,6 +86,10 @@ export interface OutputFormat {
   name?: string;
   /** When true, the provider enforces strict schema adherence. */
   strict?: boolean;
+}
+
+export interface JsonObjectOutputFormat {
+  type: "json_object";
 }
 
 export interface ChatParams {

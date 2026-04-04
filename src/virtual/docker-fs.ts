@@ -62,6 +62,21 @@ export class DockerFs implements VirtualFs {
     return stdout;
   }
 
+  async readFileBytes(path: string, maxBytes?: number): Promise<Buffer> {
+    const resolved = this.resolvePath(path);
+    const cmd = maxBytes !== undefined
+      ? ["head", "-c", String(maxBytes), resolved]
+      : ["cat", resolved];
+    const { exitCode, stdout, stderr } = await this.exec([
+      "bash", "-c",
+      `${cmd.map(shellEscape).join(" ")} | base64`,
+    ]);
+    if (exitCode !== 0) {
+      throw new Error(`DockerFs readFileBytes failed: ${stderr.trim() || `exit code ${exitCode}`}`);
+    }
+    return Buffer.from(stdout.trim(), "base64");
+  }
+
   async writeFile(path: string, content: string): Promise<void> {
     const resolved = this.resolvePath(path);
     const dir = resolved.substring(0, resolved.lastIndexOf("/"));

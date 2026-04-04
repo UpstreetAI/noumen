@@ -50,6 +50,18 @@
     "./client": {
       "import": "./dist/client/index.js",
       "types": "./dist/client/index.d.ts"
+    },
+    "./acp": {
+      "import": "./dist/acp/index.js",
+      "types": "./dist/acp/index.d.ts"
+    },
+    "./a2a": {
+      "import": "./dist/a2a/index.js",
+      "types": "./dist/a2a/index.d.ts"
+    },
+    "./jsonrpc": {
+      "import": "./dist/jsonrpc/index.js",
+      "types": "./dist/jsonrpc/index.d.ts"
     }
   },
   "files": [
@@ -83,7 +95,8 @@
     "google-auth-library": ">=9.0.0",
     "dockerode": ">=4.0.0",
     "e2b": ">=2.0.0",
-    "ws": ">=8.0.0"
+    "ws": ">=8.0.0",
+    "sharp": ">=0.33.0"
   },
   "peerDependenciesMeta": {
     "@anthropic-ai/sdk": {
@@ -120,6 +133,9 @@
       "optional": true
     },
     "ws": {
+      "optional": true
+    },
+    "sharp": {
       "optional": true
     }
   },

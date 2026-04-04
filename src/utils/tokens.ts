@@ -1,10 +1,10 @@
-import type { ChatMessage, ContentPart } from "../session/types.js";
+import type { ChatMessage, ContentPart, ImageContent } from "../session/types.js";
 import type { ChatCompletionUsage } from "../providers/types.js";
 
 const CHARS_PER_TOKEN = 4;
 const OVERHEAD_PER_MESSAGE = 4;
-/** Approximate token cost per image at low detail. */
-const TOKENS_PER_IMAGE = 85;
+/** Minimum token cost for an image (URL-only images with no base64 data). */
+const MIN_TOKENS_PER_IMAGE = 85;
 
 /**
  * Rough token estimation: ~4 chars per token for English text.
@@ -26,8 +26,14 @@ export function estimateMessageTokens(
     for (const part of msg.content as ContentPart[]) {
       if (part.type === "text") {
         tokens += estimateTokens(part.text);
+      } else if (part.type === "image" && (part as ImageContent).data) {
+        // base64 chars × 0.125 gives accurate token estimate
+        tokens += Math.max(
+          MIN_TOKENS_PER_IMAGE,
+          Math.ceil((part as ImageContent).data.length * 0.125),
+        );
       } else {
-        tokens += TOKENS_PER_IMAGE;
+        tokens += MIN_TOKENS_PER_IMAGE;
       }
     }
   } else if (msg.content != null) {

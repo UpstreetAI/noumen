@@ -19,6 +19,8 @@ export type {
   ToolParameterProperty as ToolDefParameterProperty,
   ChatCompletionUsage,
   OutputFormat,
+  JsonSchemaOutputFormat,
+  JsonObjectOutputFormat,
 } from "./providers/types.js";
 export { ChatStreamError } from "./providers/types.js";
 export type { OpenAIProviderOptions } from "./providers/openai.js";
@@ -547,3 +549,52 @@ export type { TurnInterruption, SanitizeResult } from "./session/recovery.js";
 
 // New session types
 export type { FileCheckpointEntry } from "./session/types.js";
+
+// Structured Output tool
+export {
+  createStructuredOutputTool,
+  STRUCTURED_OUTPUT_TOOL_NAME,
+} from "./tools/structured-output.js";
+
+// Image utilities
+export {
+  maybeResizeAndDownsampleImageBuffer,
+  maybeResizeAndDownsampleImageBlock,
+  compressImageBufferWithTokenLimit,
+  createImageMetadataText,
+  IMAGE_EXTENSIONS,
+  IMAGE_MAX_WIDTH,
+  IMAGE_MAX_HEIGHT,
+  API_IMAGE_MAX_BASE64_SIZE,
+  type ResizedImage,
+  type CompressedImageResult,
+  type ImageDimensions,
+} from "./utils/image-resizer.js";
+
+// JSON-RPC (runtime exports are subpath: import { ... } from "noumen/jsonrpc")
+export type {
+  JsonRpcRequest,
+  JsonRpcNotification,
+  JsonRpcResponse,
+  JsonRpcMessage,
+  JsonRpcErrorObject,
+} from "./jsonrpc/index.js";
+
+// ACP types (runtime exports are subpath: import { ... } from "noumen/acp")
+export type {
+  AcpTransport,
+  AcpCapabilities,
+  AcpInitializeParams,
+  AcpInitializeResult,
+} from "./acp/types.js";
+
+// A2A types (runtime exports are subpath: import { ... } from "noumen/a2a")
+export type {
+  AgentCard,
+  AgentSkill,
+  Task as A2ATask,
+  TaskStatus as A2ATaskStatus,
+  Message as A2AMessage,
+  Part as A2APart,
+  Artifact as A2AArtifact,
+} from "./a2a/types.js";

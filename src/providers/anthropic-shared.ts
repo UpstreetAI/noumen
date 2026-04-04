@@ -262,6 +262,23 @@ export async function* streamAnthropicChat(
       betas.push("structured-outputs-2025-12-15");
     }
     streamParams.betas = betas;
+  } else if (params.outputFormat?.type === "json_object") {
+    // Anthropic has no native json_object mode. Prepend a system-level hint
+    // so the model knows to produce valid JSON.
+    const hint = "\n\nYou MUST respond with valid JSON only. No markdown, no explanation — just a single JSON object.";
+    if (typeof streamParams.system === "string") {
+      streamParams.system = streamParams.system + hint;
+    } else if (Array.isArray(streamParams.system)) {
+      const blocks = streamParams.system as Array<Record<string, unknown>>;
+      if (blocks.length > 0) {
+        const last = blocks[blocks.length - 1];
+        if (last.type === "text" && typeof last.text === "string") {
+          last.text = last.text + hint;
+        }
+      }
+    } else if (!streamParams.system) {
+      streamParams.system = hint.trim();
+    }
   }
 
   const stream = client.messages.stream(streamParams);
