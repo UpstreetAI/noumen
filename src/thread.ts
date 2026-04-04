@@ -6,6 +6,7 @@ import type {
   ChatMessage,
   AssistantMessage,
   ToolCallContent,
+  ContentPart,
   StreamEvent,
   RunOptions,
 } from "./session/types.js";
@@ -72,6 +73,7 @@ import {
   tryReactiveCompact,
   type ReactiveCompactConfig,
 } from "./compact/reactive-compact.js";
+import { contentToString } from "./utils/content.js";
 import { generateUUID } from "./utils/uuid.js";
 import { activateSkillsForPaths, getActiveSkills } from "./skills/activation.js";
 import { createSkillTool } from "./tools/skill.js";
@@ -200,7 +202,7 @@ export class Thread {
   }
 
   async *run(
-    prompt: string,
+    prompt: string | ContentPart[],
     opts?: RunOptions,
   ): AsyncGenerator<StreamEvent, void, unknown> {
     this.abortController = new AbortController();
@@ -806,7 +808,8 @@ export class Thread {
               currentArgs,
               toolCtx,
             );
-            toolSpan.setStatus(result.isError ? SpanStatusCode.ERROR : SpanStatusCode.OK, result.isError ? result.content : undefined);
+            const resultText = contentToString(result.content);
+            toolSpan.setStatus(result.isError ? SpanStatusCode.ERROR : SpanStatusCode.OK, result.isError ? resultText : undefined);
             toolSpan.end();
 
             // --- PostToolUse hooks ---
@@ -816,7 +819,7 @@ export class Thread {
                 toolName: tc.function.name,
                 toolInput: currentArgs,
                 toolUseId: tc.id,
-                toolOutput: result.content,
+                toolOutput: resultText,
                 isError: result.isError ?? false,
                 sessionId,
               });
@@ -1108,12 +1111,13 @@ export class Thread {
         attributes: { "tool.name": tc.function.name, "tool.id": tc.id },
       });
       let result = await registry.execute(tc.function.name, currentArgs, toolCtx);
-      toolSpan.setStatus(result.isError ? SpanStatusCode.ERROR : SpanStatusCode.OK, result.isError ? result.content : undefined);
+      const streamResultText = contentToString(result.content);
+      toolSpan.setStatus(result.isError ? SpanStatusCode.ERROR : SpanStatusCode.OK, result.isError ? streamResultText : undefined);
       toolSpan.end();
 
       if (hooks.length > 0) {
         const postOutput = await runPostToolUseHooks(hooks, {
-          event: "PostToolUse", toolName: tc.function.name, toolInput: currentArgs, toolUseId: tc.id, toolOutput: result.content, isError: result.isError ?? false, sessionId,
+          event: "PostToolUse", toolName: tc.function.name, toolInput: currentArgs, toolUseId: tc.id, toolOutput: streamResultText, isError: result.isError ?? false, sessionId,
         });
         if (postOutput.updatedOutput !== undefined) {
           result = { ...result, content: postOutput.updatedOutput };

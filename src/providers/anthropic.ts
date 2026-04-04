@@ -4,7 +4,7 @@ import type {
   ChatParams,
   ChatStreamChunk,
 } from "./types.js";
-import type { ChatMessage } from "../session/types.js";
+import type { ChatMessage, ContentPart } from "../session/types.js";
 import type { CacheControlConfig } from "./cache.js";
 import { getMessageCacheBreakpointIndex } from "./cache.js";
 
@@ -267,6 +267,31 @@ export class AnthropicProvider implements AIProvider {
     return [block as unknown as Anthropic.Messages.TextBlockParam];
   }
 
+  private contentPartsToAnthropic(
+    parts: ContentPart[],
+  ): Anthropic.Messages.ContentBlockParam[] {
+    return parts.map((part) => {
+      if (part.type === "text") {
+        return { type: "text" as const, text: part.text };
+      }
+      if (part.type === "image") {
+        return {
+          type: "image" as const,
+          source: {
+            type: "base64" as const,
+            media_type: part.media_type as "image/png" | "image/jpeg" | "image/gif" | "image/webp",
+            data: part.data,
+          },
+        };
+      }
+      // image_url
+      return {
+        type: "image" as const,
+        source: { type: "url" as const, url: part.url },
+      };
+    }) as Anthropic.Messages.ContentBlockParam[];
+  }
+
   private convertMessages(
     systemPrompt: string | undefined,
     messages: ChatMessage[],
@@ -290,19 +315,24 @@ export class AnthropicProvider implements AIProvider {
       }
 
       if (msg.role === "user") {
+        const isMultipart = Array.isArray(msg.content);
         if (addCache && this.cachingEnabled) {
+          const blocks = isMultipart
+            ? this.contentPartsToAnthropic(msg.content as ContentPart[])
+            : [{ type: "text" as const, text: msg.content as string }];
+          const lastBlock = blocks[blocks.length - 1] as unknown as Record<string, unknown>;
+          lastBlock.cache_control = this.buildCacheControl();
           result.push({
             role: "user",
-            content: [
-              {
-                type: "text",
-                text: msg.content,
-                cache_control: this.buildCacheControl(),
-              } as Anthropic.Messages.TextBlockParam,
-            ],
+            content: blocks as Anthropic.Messages.ContentBlockParam[],
+          });
+        } else if (isMultipart) {
+          result.push({
+            role: "user",
+            content: this.contentPartsToAnthropic(msg.content as ContentPart[]),
           });
         } else {
-          result.push({ role: "user", content: msg.content });
+          result.push({ role: "user", content: msg.content as string });
         }
       } else if (msg.role === "assistant") {
         const content: Anthropic.Messages.ContentBlockParam[] = [];
@@ -327,10 +357,15 @@ export class AnthropicProvider implements AIProvider {
 
         result.push({ role: "assistant", content });
       } else if (msg.role === "tool") {
+        const isMultipart = Array.isArray(msg.content);
+        const toolContent = isMultipart
+          ? this.contentPartsToAnthropic(msg.content as ContentPart[])
+          : (msg.content as string);
+
         const toolResultBlock = {
           type: "tool_result" as const,
           tool_use_id: msg.tool_call_id,
-          content: msg.content,
+          content: toolContent,
           ...(addCache && this.cachingEnabled
             ? { cache_control: this.buildCacheControl() }
             : {}),

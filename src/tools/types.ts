@@ -7,7 +7,7 @@ import type { LspServerManager } from "../lsp/manager.js";
 import type { FileCheckpointManager } from "../checkpoint/manager.js";
 
 export interface ToolResult {
-  content: string;
+  content: string | import("../session/types.js").ContentPart[];
   isError?: boolean;
 }
 

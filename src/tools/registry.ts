@@ -1,4 +1,4 @@
-import type { Tool, ToolContext } from "./types.js";
+import type { Tool, ToolContext, ToolResult } from "./types.js";
 import type { ToolDefinition } from "../providers/types.js";
 import { formatZodValidationError } from "../utils/zod.js";
 import { isDeferredTool } from "./tool-search.js";
@@ -71,7 +71,7 @@ export class ToolRegistry {
     name: string,
     args: Record<string, unknown>,
     ctx: ToolContext,
-  ): Promise<{ content: string; isError?: boolean }> {
+  ): Promise<ToolResult> {
     const tool = this.tools.get(name);
     if (!tool) {
       return {

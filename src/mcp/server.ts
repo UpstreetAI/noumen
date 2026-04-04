@@ -9,6 +9,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import type { Tool, ToolContext } from "../tools/types.js";
 import { ToolRegistry } from "../tools/registry.js";
+import { contentToString } from "../utils/content.js";
 
 export interface McpServerOptions {
   /** Additional tools beyond the 6 built-ins */
@@ -73,7 +74,7 @@ export async function createMcpServer(opts: McpServerOptions): Promise<void> {
         );
         return {
           isError: result.isError,
-          content: [{ type: "text", text: result.content }],
+          content: [{ type: "text", text: contentToString(result.content) }],
         };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

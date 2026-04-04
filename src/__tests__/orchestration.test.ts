@@ -198,7 +198,7 @@ describe("Thread parallel tool execution", () => {
     expect(toolResults).toHaveLength(2);
 
     if (toolResults[0].type === "tool_result" && toolResults[1].type === "tool_result") {
-      const contents = [toolResults[0].result.content, toolResults[1].result.content];
+      const contents = [String(toolResults[0].result.content), String(toolResults[1].result.content)];
       expect(contents.some((c) => c.includes("content-a"))).toBe(true);
       expect(contents.some((c) => c.includes("content-b"))).toBe(true);
     }

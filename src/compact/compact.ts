@@ -1,7 +1,8 @@
 import type { AIProvider, ChatParams } from "../providers/types.js";
-import type { ChatMessage } from "../session/types.js";
+import type { ChatMessage, ContentPart } from "../session/types.js";
 import type { SessionStorage } from "../session/storage.js";
 import { estimateMessagesTokens } from "../utils/tokens.js";
+import { contentToString, hasImageContent, stripImageContent } from "../utils/content.js";
 
 const COMPACT_SYSTEM_PROMPT = `You are a helpful AI assistant tasked with summarizing conversations. 
 Create a concise but comprehensive summary of the conversation so far. 
@@ -105,18 +106,27 @@ const LONG_HEX_PATTERN = /^[0-9a-f]{256,}$/i;
 
 function stripBinaryFromMessages(messages: ChatMessage[]): ChatMessage[] {
   return messages.map((msg) => {
-    if (typeof msg.content !== "string") return msg;
-    if (BINARY_PATTERN.test(msg.content) || LONG_HEX_PATTERN.test(msg.content)) {
-      return { ...msg, content: "[binary content removed for summarization]" };
+    if (hasImageContent(msg.content as string | ContentPart[])) {
+      return {
+        ...msg,
+        content: stripImageContent(
+          msg.content as string | ContentPart[],
+          "[image removed for summarization]",
+        ),
+      } as ChatMessage;
     }
-    if (msg.content.length > 50_000) {
+    const text = contentToString(msg.content as string | ContentPart[]);
+    if (BINARY_PATTERN.test(text) || LONG_HEX_PATTERN.test(text)) {
+      return { ...msg, content: "[binary content removed for summarization]" } as ChatMessage;
+    }
+    if (text.length > 50_000) {
       return {
         ...msg,
         content:
-          msg.content.slice(0, 25_000) +
+          text.slice(0, 25_000) +
           "\n...[content truncated for summarization]...\n" +
-          msg.content.slice(-5_000),
-      };
+          text.slice(-5_000),
+      } as ChatMessage;
     }
     return msg;
   });

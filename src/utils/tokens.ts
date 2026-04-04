@@ -1,8 +1,10 @@
-import type { ChatMessage } from "../session/types.js";
+import type { ChatMessage, ContentPart } from "../session/types.js";
 import type { ChatCompletionUsage } from "../providers/types.js";
 
 const CHARS_PER_TOKEN = 4;
 const OVERHEAD_PER_MESSAGE = 4;
+/** Approximate token cost per image at low detail. */
+const TOKENS_PER_IMAGE = 85;
 
 /**
  * Rough token estimation: ~4 chars per token for English text.
@@ -15,11 +17,19 @@ export function estimateTokens(text: string): number {
  * Estimate tokens for a single message, including role overhead.
  */
 export function estimateMessageTokens(
-  msg: { role: string; content: string | unknown; tool_calls?: unknown },
+  msg: { role: string; content: string | ContentPart[] | unknown; tool_calls?: unknown },
 ): number {
   let tokens = OVERHEAD_PER_MESSAGE;
   if (typeof msg.content === "string") {
     tokens += estimateTokens(msg.content);
+  } else if (Array.isArray(msg.content)) {
+    for (const part of msg.content as ContentPart[]) {
+      if (part.type === "text") {
+        tokens += estimateTokens(part.text);
+      } else {
+        tokens += TOKENS_PER_IMAGE;
+      }
+    }
   } else if (msg.content != null) {
     tokens += estimateTokens(JSON.stringify(msg.content));
   }

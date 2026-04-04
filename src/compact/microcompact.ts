@@ -1,5 +1,6 @@
 import type { ChatMessage, AssistantMessage } from "../session/types.js";
 import { estimateTokens } from "../utils/tokens.js";
+import { contentToString } from "../utils/content.js";
 
 export interface MicrocompactConfig {
   enabled: boolean;
@@ -92,8 +93,8 @@ export function microcompactMessages(
   let tokensFreed = 0;
   const result = messages.map((msg, idx) => {
     if (!indicesToClear.has(idx)) return msg;
-    const original = (msg as { content: string }).content;
-    tokensFreed += estimateTokens(original) - estimateTokens(CLEARED_PLACEHOLDER);
+    const originalText = contentToString(msg.content as string);
+    tokensFreed += estimateTokens(originalText) - estimateTokens(CLEARED_PLACEHOLDER);
     return { ...msg, content: CLEARED_PLACEHOLDER };
   });
 

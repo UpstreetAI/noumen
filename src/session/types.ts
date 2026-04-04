@@ -11,6 +11,22 @@ export interface TextContent {
   text: string;
 }
 
+export interface ImageContent {
+  type: "image";
+  /** base64-encoded image data */
+  data: string;
+  /** MIME type: "image/png", "image/jpeg", "image/gif", "image/webp" */
+  media_type: string;
+}
+
+export interface ImageUrlContent {
+  type: "image_url";
+  /** URL pointing to an image */
+  url: string;
+}
+
+export type ContentPart = TextContent | ImageContent | ImageUrlContent;
+
 export interface ToolCallContent {
   id: string;
   type: "function";
@@ -22,7 +38,7 @@ export interface ToolCallContent {
 
 export interface UserMessage {
   role: "user";
-  content: string;
+  content: string | ContentPart[];
 }
 
 export interface AssistantMessage {
@@ -34,7 +50,7 @@ export interface AssistantMessage {
 export interface ToolResultMessage {
   role: "tool";
   tool_call_id: string;
-  content: string;
+  content: string | ContentPart[];
 }
 
 export interface SystemMessage {
@@ -143,7 +159,7 @@ export interface SessionInfo {
 // --- Stream event types ---
 
 export interface ToolResult {
-  content: string;
+  content: string | ContentPart[];
   isError?: boolean;
 }
 

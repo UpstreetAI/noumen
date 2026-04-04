@@ -4,7 +4,7 @@ import type {
   ChatParams,
   ChatStreamChunk,
 } from "./types.js";
-import type { ChatMessage } from "../session/types.js";
+import type { ChatMessage, ContentPart } from "../session/types.js";
 
 export interface GeminiProviderOptions {
   apiKey: string;
@@ -19,6 +19,7 @@ interface GeminiContent {
 interface GeminiPart {
   text?: string;
   thought?: boolean;
+  inlineData?: { mimeType: string; data: string };
   functionCall?: { name: string; args: Record<string, unknown> };
   functionResponse?: {
     name: string;
@@ -189,6 +190,20 @@ export class GeminiProvider implements AIProvider {
     }
   }
 
+  private static contentPartsToGemini(parts: ContentPart[]): GeminiPart[] {
+    return parts.map((part) => {
+      if (part.type === "text") {
+        return { text: part.text };
+      }
+      if (part.type === "image") {
+        return { inlineData: { mimeType: part.media_type, data: part.data } };
+      }
+      // image_url — Gemini doesn't natively support URL references as inlineData;
+      // pass it as text with the URL. Consumers should prefer base64 ImageContent.
+      return { text: `[image: ${part.url}]` };
+    });
+  }
+
   private convertMessages(
     systemPrompt: string | undefined,
     messages: ChatMessage[],
@@ -216,7 +231,12 @@ export class GeminiProvider implements AIProvider {
           contents.push({ role: "user", parts: pendingFunctionResponses });
           pendingFunctionResponses = [];
         }
-        contents.push({ role: "user", parts: [{ text: msg.content }] });
+        if (Array.isArray(msg.content)) {
+          const parts = GeminiProvider.contentPartsToGemini(msg.content as ContentPart[]);
+          contents.push({ role: "user", parts });
+        } else {
+          contents.push({ role: "user", parts: [{ text: msg.content as string }] });
+        }
       } else if (msg.role === "assistant") {
         const parts: GeminiPart[] = [];
         if (msg.content) {
@@ -241,10 +261,16 @@ export class GeminiProvider implements AIProvider {
       } else if (msg.role === "tool") {
         const fnName =
           toolCallIdToName.get(msg.tool_call_id) ?? msg.tool_call_id;
+        const resultValue = Array.isArray(msg.content)
+          ? (msg.content as ContentPart[])
+              .filter((p): p is Extract<ContentPart, { type: "text" }> => p.type === "text")
+              .map((p) => p.text)
+              .join("")
+          : msg.content;
         pendingFunctionResponses.push({
           functionResponse: {
             name: fnName,
-            response: { result: msg.content },
+            response: { result: resultValue },
           },
         });
       }

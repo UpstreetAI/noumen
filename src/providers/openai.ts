@@ -4,7 +4,7 @@ import type {
   ChatParams,
   ChatStreamChunk,
 } from "./types.js";
-import type { ChatMessage } from "../session/types.js";
+import type { ChatMessage, ContentPart } from "../session/types.js";
 
 export interface OpenAIProviderOptions {
   apiKey: string;
@@ -106,6 +106,24 @@ export class OpenAIProvider implements AIProvider {
     }
   }
 
+  private static contentPartsToOpenAI(
+    parts: ContentPart[],
+  ): Array<Record<string, unknown>> {
+    return parts.map((part) => {
+      if (part.type === "text") {
+        return { type: "text", text: part.text };
+      }
+      if (part.type === "image") {
+        return {
+          type: "image_url",
+          image_url: { url: `data:${part.media_type};base64,${part.data}` },
+        };
+      }
+      // image_url
+      return { type: "image_url", image_url: { url: part.url } };
+    });
+  }
+
   private buildMessages(
     system: string | undefined,
     messages: ChatMessage[],
@@ -116,10 +134,13 @@ export class OpenAIProvider implements AIProvider {
     }
     for (const msg of messages) {
       if (msg.role === "tool") {
+        const content = Array.isArray(msg.content)
+          ? OpenAIProvider.contentPartsToOpenAI(msg.content as ContentPart[])
+          : msg.content;
         result.push({
           role: "tool",
           tool_call_id: msg.tool_call_id,
-          content: msg.content,
+          content,
         });
       } else if (msg.role === "assistant") {
         const entry: Record<string, unknown> = {
@@ -130,6 +151,11 @@ export class OpenAIProvider implements AIProvider {
           entry.tool_calls = msg.tool_calls;
         }
         result.push(entry);
+      } else if (msg.role === "user") {
+        const content = Array.isArray(msg.content)
+          ? OpenAIProvider.contentPartsToOpenAI(msg.content as ContentPart[])
+          : msg.content;
+        result.push({ role: "user", content });
       } else {
         result.push({ role: msg.role, content: msg.content });
       }

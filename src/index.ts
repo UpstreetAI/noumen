@@ -64,6 +64,10 @@ export type {
   AssistantMessage,
   ToolResultMessage,
   SystemMessage,
+  TextContent,
+  ImageContent,
+  ImageUrlContent,
+  ContentPart,
   ToolCallContent,
   SerializedMessage,
   Entry,
@@ -176,6 +180,14 @@ export { SwarmManager } from "./swarm/manager.js";
 export { Mailbox } from "./swarm/mailbox.js";
 export type { SwarmBackend } from "./swarm/backends/types.js";
 export { InProcessBackend } from "./swarm/backends/in-process.js";
+
+// Content utilities (multimodal helpers)
+export {
+  normalizeContent,
+  contentToString,
+  hasImageContent,
+  stripImageContent,
+} from "./utils/content.js";
 
 // Utilities
 export { all } from "./utils/generators.js";

@@ -213,8 +213,8 @@ describe("Thread with streamingToolExecution", () => {
       if (r.type === "tool_result") return r.result.content;
       return "";
     });
-    expect(contents.some((c) => c.includes("AAA"))).toBe(true);
-    expect(contents.some((c) => c.includes("BBB"))).toBe(true);
+    expect(contents.some((c) => String(c).includes("AAA"))).toBe(true);
+    expect(contents.some((c) => String(c).includes("BBB"))).toBe(true);
   });
 
   it("still works without streaming execution (default)", async () => {

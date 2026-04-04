@@ -1,5 +1,6 @@
 import type { ChatMessage, AssistantMessage, ToolResultMessage } from "../session/types.js";
 import { estimateTokens } from "../utils/tokens.js";
+import { contentToString } from "../utils/content.js";
 
 export interface ToolResultBudgetConfig {
   enabled: boolean;
@@ -114,13 +115,14 @@ export function enforceToolResultBudget(
     for (const idx of group.toolResultIndices) {
       const msg = result[idx] as ToolResultMessage;
       if (budgetState.truncatedIds.has(msg.tool_call_id)) continue;
-      if (msg.content.length <= maxPerResult) continue;
+      const text = contentToString(msg.content);
+      if (text.length <= maxPerResult) continue;
 
-      const originalChars = msg.content.length;
-      const preview = buildPreview(msg.content, previewChars);
+      const originalChars = text.length;
+      const preview = buildPreview(text, previewChars);
       result[idx] = { ...msg, content: preview };
       budgetState.truncatedIds.add(msg.tool_call_id);
-      const freed = estimateTokens(msg.content) - estimateTokens(preview);
+      const freed = estimateTokens(text) - estimateTokens(preview);
       totalTokensFreed += Math.max(0, freed);
       allTruncated.push({
         toolCallId: msg.tool_call_id,
@@ -132,14 +134,14 @@ export function enforceToolResultBudget(
     // Phase 2: group budget — sort by size descending, truncate largest first
     let groupTotal = 0;
     for (const idx of group.toolResultIndices) {
-      groupTotal += (result[idx] as ToolResultMessage).content.length;
+      groupTotal += contentToString((result[idx] as ToolResultMessage).content).length;
     }
     if (groupTotal <= maxPerGroup) continue;
 
     const sortedBySize = [...group.toolResultIndices].sort((a, b) => {
       return (
-        (result[b] as ToolResultMessage).content.length -
-        (result[a] as ToolResultMessage).content.length
+        contentToString((result[b] as ToolResultMessage).content).length -
+        contentToString((result[a] as ToolResultMessage).content).length
       );
     });
 
@@ -147,11 +149,12 @@ export function enforceToolResultBudget(
       if (groupTotal <= maxPerGroup) break;
       const msg = result[idx] as ToolResultMessage;
       if (budgetState.truncatedIds.has(msg.tool_call_id)) continue;
-      if (msg.content.length <= previewChars + 50) continue;
+      const text = contentToString(msg.content);
+      if (text.length <= previewChars + 50) continue;
 
-      const originalChars = msg.content.length;
-      const preview = buildPreview(msg.content, previewChars);
-      const freed = estimateTokens(msg.content) - estimateTokens(preview);
+      const originalChars = text.length;
+      const preview = buildPreview(text, previewChars);
+      const freed = estimateTokens(text) - estimateTokens(preview);
       groupTotal -= originalChars - preview.length;
       totalTokensFreed += Math.max(0, freed);
 
