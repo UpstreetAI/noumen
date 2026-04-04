@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, beforeAll } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { MockFs, MockComputer, MockAIProvider, textResponse, toolCallResponse } from "./helpers.js";
 import { Code } from "../code.js";
 import { createServer, type NoumenServer } from "../server/index.js";

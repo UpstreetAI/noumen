@@ -1,4 +1,5 @@
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { randomUUID } from "node:crypto";
 import type { Code } from "../code.js";
 import type { StreamEvent } from "../session/types.js";
 import type { PermissionResponse } from "../permissions/types.js";
@@ -22,6 +23,8 @@ export interface ServerOptions {
   /** Called on every new connection; return overrides for the session. */
   onConnection?: (info: ConnectionInfo) => MaybePromise<ConnectionOverrides>;
   onError?: (err: Error) => void;
+  /** Enable CORS for browser clients (default true). */
+  cors?: boolean;
 }
 
 export type AuthConfig =
@@ -121,9 +124,8 @@ export class NoumenServer {
     }
 
     for (const session of this.sessions.values()) {
-      session.abortController.abort();
+      this.destroySession(session);
     }
-    this.sessions.clear();
 
     if (this.wss) {
       await new Promise<void>((resolve) => this.wss!.close(() => resolve()));
@@ -131,7 +133,6 @@ export class NoumenServer {
     }
 
     if (this.httpServer) {
-      // Force-close all open connections so close() doesn't hang
       if (typeof (this.httpServer as any).closeAllConnections === "function") {
         (this.httpServer as any).closeAllConnections();
       }
@@ -180,9 +181,22 @@ export class NoumenServer {
   // -------------------------------------------------------------------------
 
   private async handleHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (this.options.cors !== false) {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    }
+
+    const method = req.method ?? "GET";
+
+    if (method === "OPTIONS") {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
     const path = url.pathname;
-    const method = req.method ?? "GET";
 
     if (path === "/health" && method === "GET") {
       return jsonResponse(res, 200, { status: "ok", sessions: this.sessions.size });
@@ -254,7 +268,7 @@ export class NoumenServer {
     const overrides = await this.resolveConnectionOverrides(req);
     const session = this.createSessionState(requestedId, overrides);
 
-    this.runAgentSse(session, prompt);
+    this.runAgentSse(session, prompt, false);
 
     jsonResponse(res, 201, {
       sessionId: session.id,
@@ -457,19 +471,7 @@ export class NoumenServer {
     requestedId: string | undefined,
     overrides: ConnectionOverrides,
   ): SessionState {
-    const permissionHandler = (request: import("../permissions/types.js").PermissionRequest) =>
-      this.bridgePermission(sessionId, request);
-    const userInputHandler = (question: string) =>
-      this.bridgeUserInput(sessionId, question);
-
-    const thread = this.code.createThread({
-      sessionId: requestedId,
-      cwd: overrides.cwd,
-      permissionHandler,
-      userInputHandler,
-    });
-
-    const sessionId = thread.sessionId;
+    const sessionId = requestedId ?? randomUUID();
 
     const session: SessionState = {
       id: sessionId,
@@ -488,21 +490,20 @@ export class NoumenServer {
   }
 
   private makeThread(session: SessionState, resume: boolean) {
+    const handlers = {
+      cwd: session.cwd,
+      permissionHandler: (req: import("../permissions/types.js").PermissionRequest) =>
+        this.bridgePermission(session.id, req),
+      userInputHandler: (q: string) =>
+        this.bridgeUserInput(session.id, q),
+    };
+
     return resume
-      ? this.code.resumeThread(session.id, {
-          cwd: session.cwd,
-          permissionHandler: (req) => this.bridgePermission(session.id, req),
-          userInputHandler: (q) => this.bridgeUserInput(session.id, q),
-        })
-      : this.code.createThread({
-          sessionId: session.id,
-          cwd: session.cwd,
-          permissionHandler: (req) => this.bridgePermission(session.id, req),
-          userInputHandler: (q) => this.bridgeUserInput(session.id, q),
-        });
+      ? this.code.resumeThread(session.id, handlers)
+      : this.code.createThread({ sessionId: session.id, ...handlers });
   }
 
-  private runAgentSse(session: SessionState, prompt: string, resume = false): void {
+  private runAgentSse(session: SessionState, prompt: string, resume: boolean): void {
     const run = async () => {
       try {
         const thread = this.makeThread(session, resume);
@@ -529,7 +530,7 @@ export class NoumenServer {
       try {
         const thread = this.makeThread(session, resume);
         for await (const event of thread.run(prompt, { signal: session.abortController.signal })) {
-          wsSend(ws, { ...event, sessionId: session.id });
+          wsSend(ws, { ...serializeEvent(event), sessionId: session.id });
           session.lastActivity = Date.now();
         }
       } catch (err) {
@@ -626,8 +627,26 @@ function jsonResponse(res: ServerResponse, status: number, body: unknown): void 
   res.end(json);
 }
 
+/**
+ * Serialize a StreamEvent to a JSON-safe object. Error instances are
+ * converted to `{ message, name }` since `JSON.stringify(new Error())`
+ * produces `{}`.
+ */
+function serializeEvent(event: StreamEvent): Record<string, unknown> {
+  if (event.type === "error") {
+    return { type: "error", error: { message: event.error.message, name: event.error.name } };
+  }
+  if (event.type === "retry_exhausted") {
+    return { ...event, error: { message: event.error.message, name: event.error.name } };
+  }
+  if (event.type === "retry_attempt") {
+    return { ...event, error: { message: event.error.message, name: event.error.name } };
+  }
+  return event as unknown as Record<string, unknown>;
+}
+
 function writeSseEvent(res: ServerResponse, event: StreamEvent): void {
-  res.write(`data: ${JSON.stringify(event)}\n\n`);
+  res.write(`data: ${JSON.stringify(serializeEvent(event))}\n\n`);
 }
 
 function readBody(req: IncomingMessage): Promise<unknown> {

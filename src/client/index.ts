@@ -37,6 +37,10 @@ interface SessionCreatedResponse {
   eventsUrl: string;
 }
 
+// WS_OPEN = WebSocket.OPEN across all environments
+const WS_OPEN = 1;
+const WS_CONNECTING = 0;
+
 // ---------------------------------------------------------------------------
 // NoumenClient
 // ---------------------------------------------------------------------------
@@ -77,11 +81,11 @@ export class NoumenClient {
   }
 
   async abort(sessionId: string): Promise<void> {
-    await this.fetch(`/sessions/${sessionId}`, { method: "DELETE" });
+    await this.httpFetch(`/sessions/${sessionId}`, { method: "DELETE" });
   }
 
   async listSessions(): Promise<Array<{ id: string; lastActivity: number; done: boolean }>> {
-    const res = await this.fetch("/sessions", { method: "GET" });
+    const res = await this.httpFetch("/sessions", { method: "GET" });
     return res.json() as Promise<Array<{ id: string; lastActivity: number; done: boolean }>>;
   }
 
@@ -92,7 +96,6 @@ export class NoumenClient {
   private resolveTransport(): "ws" | "sse" {
     if (this.transport === "ws") return "ws";
     if (this.transport === "sse") return "sse";
-    // "auto": try WS if WebSocket is available globally
     if (typeof globalThis.WebSocket !== "undefined") return "ws";
     return "sse";
   }
@@ -102,8 +105,7 @@ export class NoumenClient {
   // -------------------------------------------------------------------------
 
   private async *runWs(prompt: string, opts?: ClientRunOptions): AsyncGenerator<StreamEvent> {
-    const wsUrl = this.buildWsUrl();
-    const ws = new globalThis.WebSocket(wsUrl);
+    const ws = new globalThis.WebSocket(this.buildWsUrl());
 
     yield* this.driveWs(ws, opts, () => {
       ws.send(JSON.stringify({
@@ -119,8 +121,7 @@ export class NoumenClient {
     prompt: string,
     opts?: Omit<ClientRunOptions, "sessionId">,
   ): AsyncGenerator<StreamEvent> {
-    const wsUrl = this.buildWsUrl();
-    const ws = new globalThis.WebSocket(wsUrl);
+    const ws = new globalThis.WebSocket(this.buildWsUrl());
 
     yield* this.driveWs(ws, opts, () => {
       ws.send(JSON.stringify({
@@ -238,7 +239,7 @@ export class NoumenClient {
       }
     } finally {
       opts?.signal?.removeEventListener("abort", handleAbort);
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+      if (ws.readyState === WS_OPEN || ws.readyState === WS_CONNECTING) {
         ws.close();
       }
     }
@@ -256,7 +257,7 @@ export class NoumenClient {
   // -------------------------------------------------------------------------
 
   private async *runSse(prompt: string, opts?: ClientRunOptions): AsyncGenerator<StreamEvent> {
-    const createRes = await this.fetch("/sessions", {
+    const createRes = await this.httpFetch("/sessions", {
       method: "POST",
       body: JSON.stringify({ prompt, sessionId: opts?.sessionId }),
     });
@@ -274,7 +275,7 @@ export class NoumenClient {
     prompt: string,
     opts?: Omit<ClientRunOptions, "sessionId">,
   ): AsyncGenerator<StreamEvent> {
-    const msgRes = await this.fetch(`/sessions/${sessionId}/messages`, {
+    const msgRes = await this.httpFetch(`/sessions/${sessionId}/messages`, {
       method: "POST",
       body: JSON.stringify({ prompt }),
     });
@@ -329,50 +330,52 @@ export class NoumenClient {
           const json = line.slice(6);
           if (!json) continue;
 
-          let event: StreamEvent & { sessionId?: string };
+          let parsed: Record<string, unknown>;
           try {
-            event = JSON.parse(json);
+            parsed = JSON.parse(json);
           } catch {
             continue;
           }
 
-          if (event.type === "permission_request" && opts && "onPermissionRequest" in opts && opts.onPermissionRequest) {
+          const eventType = parsed.type as string;
+
+          if (eventType === "permission_request" && opts && "onPermissionRequest" in opts && opts.onPermissionRequest) {
             try {
               const permResponse = await opts.onPermissionRequest({
-                toolName: (event as any).toolName,
-                input: (event as any).input,
-                message: (event as any).message,
+                toolName: parsed.toolName as string,
+                input: parsed.input as Record<string, unknown>,
+                message: parsed.message as string,
               });
-              await this.fetch(`/sessions/${sessionId}/permissions`, {
+              await this.httpFetch(`/sessions/${sessionId}/permissions`, {
                 method: "POST",
                 body: JSON.stringify(permResponse),
               });
             } catch {
-              await this.fetch(`/sessions/${sessionId}/permissions`, {
+              await this.httpFetch(`/sessions/${sessionId}/permissions`, {
                 method: "POST",
                 body: JSON.stringify({ allow: false }),
               });
             }
           }
 
-          if (event.type === "user_input_request" && opts?.onUserInput) {
+          if (eventType === "user_input_request" && opts?.onUserInput) {
             try {
-              const answer = await opts.onUserInput((event as any).question);
-              await this.fetch(`/sessions/${sessionId}/input`, {
+              const answer = await opts.onUserInput(parsed.question as string);
+              await this.httpFetch(`/sessions/${sessionId}/input`, {
                 method: "POST",
                 body: JSON.stringify({ answer }),
               });
             } catch {
-              await this.fetch(`/sessions/${sessionId}/input`, {
+              await this.httpFetch(`/sessions/${sessionId}/input`, {
                 method: "POST",
                 body: JSON.stringify({ answer: "" }),
               });
             }
           }
 
-          yield event as StreamEvent;
+          yield parsed as unknown as StreamEvent;
 
-          if (event.type === "turn_complete") {
+          if (eventType === "turn_complete") {
             ac.abort();
             return;
           }
@@ -390,7 +393,7 @@ export class NoumenClient {
   // HTTP helpers
   // -------------------------------------------------------------------------
 
-  private fetch(path: string, init?: RequestInit): Promise<Response> {
+  private httpFetch(path: string, init?: RequestInit): Promise<Response> {
     const url = `${this.baseUrl}${path}`;
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
