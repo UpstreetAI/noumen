@@ -18,7 +18,7 @@ interface AdapterRow {
 const ROWS: AdapterRow[] = [
   {
     label: "AI Provider",
-    field: "aiProvider",
+    field: "provider",
     options: [
       {
         id: "openai",
@@ -95,7 +95,7 @@ const ICONS: Record<string, React.ReactNode> = {
 
 const STATIC_LINES = [
   "",
-  "const thread = code.createThread();",
+  "const thread = agent.createThread();",
   'for await (const event of thread.run("Fix the auth bug")) {',
   "  // ...",
   "}",
@@ -167,7 +167,7 @@ export function AdapterStack() {
           <code>
             {/* Import line */}
             <span className="text-[var(--color-text-tertiary)]">
-              {"import { Code, "}
+              {"import { Agent, "}
             </span>
             <span key={`imports-${swapKey}`} className="adapter-swap text-[var(--color-accent-cyan)]">
               {imports.join(", ")}
@@ -178,7 +178,7 @@ export function AdapterStack() {
 
             {/* Constructor */}
             <span className="text-[var(--color-text-tertiary)]">
-              {"const code = new Code({\n"}
+              {"const agent = new Agent({\n"}
             </span>
             {ROWS.map((row, i) => (
               <span key={row.field}>

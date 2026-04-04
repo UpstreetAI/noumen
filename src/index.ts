@@ -2,9 +2,14 @@
 export {
   Agent,
   type AgentOptions,
+  type RunCallbacks,
+  type RunResult,
   type DiagnoseCheckResult,
   type DiagnoseResult,
 } from "./agent.js";
+
+// Provider resolution (string shorthand)
+export { resolveProvider, detectProvider, type ProviderName, type ResolveProviderOptions, SUPPORTED_PROVIDERS, DEFAULT_MODELS } from "./providers/resolve.js";
 
 // Presets
 export { codingAgent, planningAgent, reviewAgent, type PresetOptions } from "./presets.js";

@@ -4,7 +4,7 @@ import type { Agent } from "../agent.js";
 import type { Thread } from "../thread.js";
 import type { MergedConfig } from "./config.js";
 import { renderEvent, createRenderState, promptPermission, isVisibleEvent } from "./render.js";
-import { DEFAULT_MODELS, createProvider, SUPPORTED_PROVIDERS } from "./provider-factory.js";
+import { DEFAULT_MODELS, createProvider, SUPPORTED_PROVIDERS, type ProviderName } from "./provider-factory.js";
 import { startSpinner } from "./spinner.js";
 
 export async function startRepl(
@@ -196,16 +196,15 @@ async function handleSlashCommand(
         );
         return "continue";
       }
-      if (!SUPPORTED_PROVIDERS.includes(providerName)) {
+      if (!(SUPPORTED_PROVIDERS as readonly string[]).includes(providerName)) {
         process.stderr.write(chalk.red(`Unknown provider: ${providerName}. Available: ${SUPPORTED_PROVIDERS.join(", ")}\n`));
         return "continue";
       }
       try {
         const model = modelArg ?? DEFAULT_MODELS[providerName];
-        const provider = await createProvider(providerName, {
+        const provider = await createProvider(providerName as ProviderName, {
           apiKey: config.apiKey,
           model,
-          configApiKey: config.apiKey,
           baseURL: config.baseURL,
         });
         thread.setProvider(provider, model);

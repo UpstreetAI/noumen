@@ -1,8 +1,9 @@
-import type { AIProvider, OutputFormat } from "./providers/types.js";
+import type { AIProvider, OutputFormat, ChatCompletionUsage } from "./providers/types.js";
 import type { ProviderName } from "./providers/resolve.js";
 import type { VirtualFs } from "./virtual/fs.js";
 import type { VirtualComputer } from "./virtual/computer.js";
 import { LocalSandbox, type Sandbox } from "./virtual/sandbox.js";
+import type { StreamEvent, RunOptions, ToolResult, ContentPart } from "./session/types.js";
 import type { SkillDefinition } from "./skills/types.js";
 import type { Tool, SubagentConfig, SubagentRun } from "./tools/types.js";
 import type { CheckpointConfig } from "./checkpoint/types.js";
@@ -144,6 +145,22 @@ export interface AgentOptions {
     /** Default structured output mode for all threads. */
     structuredOutputMode?: "alongside_tools" | "final_response";
   };
+}
+
+export interface RunCallbacks {
+  onText?: (text: string) => void;
+  onThinking?: (text: string) => void;
+  onToolUse?: (toolName: string, args: Record<string, unknown>) => void;
+  onToolResult?: (toolName: string, result: ToolResult) => void;
+  onError?: (error: Error) => void;
+  onComplete?: (result: RunResult) => void;
+}
+
+export interface RunResult {
+  text: string;
+  toolCalls: number;
+  usage: ChatCompletionUsage;
+  sessionId: string;
 }
 
 export class Agent {
@@ -472,6 +489,91 @@ export class Agent {
       sessionId,
       resume: true,
     });
+  }
+
+  /**
+   * One-shot convenience: creates an ephemeral thread and streams events.
+   *
+   * Streaming usage:
+   * ```ts
+   * for await (const event of agent.run("Fix the bug")) { ... }
+   * ```
+   *
+   * Callback usage:
+   * ```ts
+   * await agent.run("Fix the bug", {
+   *   onText: (text) => process.stdout.write(text),
+   *   onToolUse: (name) => console.log(`Using ${name}`),
+   * });
+   * ```
+   */
+  run(
+    prompt: string | ContentPart[],
+    opts?: RunOptions & ThreadOptions & RunCallbacks,
+  ): AsyncGenerator<StreamEvent, void, unknown> | Promise<RunResult> {
+    const hasCallbacks = opts && (
+      "onText" in opts || "onThinking" in opts || "onToolUse" in opts ||
+      "onToolResult" in opts || "onError" in opts || "onComplete" in opts
+    );
+
+    if (hasCallbacks) {
+      return this._runWithCallbacks(prompt, opts!);
+    }
+
+    return this._runStreaming(prompt, opts);
+  }
+
+  private async *_runStreaming(
+    prompt: string | ContentPart[],
+    opts?: RunOptions & ThreadOptions,
+  ): AsyncGenerator<StreamEvent, void, unknown> {
+    const thread = this.createThread(opts);
+    yield* thread.run(prompt, opts);
+  }
+
+  private async _runWithCallbacks(
+    prompt: string | ContentPart[],
+    opts: RunOptions & ThreadOptions & RunCallbacks,
+  ): Promise<RunResult> {
+    const thread = this.createThread(opts);
+    let text = "";
+    let toolCalls = 0;
+    let lastUsage: ChatCompletionUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+
+    for await (const event of thread.run(prompt, opts)) {
+      switch (event.type) {
+        case "text_delta":
+          text += event.text;
+          opts.onText?.(event.text);
+          break;
+        case "thinking_delta":
+          opts.onThinking?.(event.text);
+          break;
+        case "tool_use_start":
+          toolCalls++;
+          opts.onToolUse?.(event.toolName, {});
+          break;
+        case "tool_result":
+          opts.onToolResult?.(event.toolName, event.result);
+          break;
+        case "error":
+          opts.onError?.(event.error);
+          break;
+        case "turn_complete":
+          lastUsage = event.usage;
+          break;
+      }
+    }
+
+    const result: RunResult = {
+      text,
+      toolCalls,
+      usage: lastUsage,
+      sessionId: thread.sessionId,
+    };
+
+    opts.onComplete?.(result);
+    return result;
   }
 
   /**

@@ -3,7 +3,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { loadCliConfig, mergeConfig, type MergedConfig } from "./config.js";
-import { createProvider, detectProvider } from "./provider-factory.js";
+import { createProvider, detectProvider, type ProviderName } from "./provider-factory.js";
 import { startRepl } from "./repl.js";
 import { renderEvent, createRenderState, promptPermission } from "./render.js";
 import { runInit } from "./init.js";
@@ -122,8 +122,8 @@ async function main(): Promise<void> {
 }
 
 async function runAgent(config: MergedConfig): Promise<void> {
-  const providerName =
-    config.provider ?? await detectProvider();
+  const providerName: ProviderName | undefined =
+    (config.provider as ProviderName | undefined) ?? await detectProvider();
 
   if (!providerName) {
     if (!process.stdin.isTTY) {
@@ -144,7 +144,7 @@ async function runAgent(config: MergedConfig): Promise<void> {
         `  Provider (${SUPPORTED_PROVIDERS.join(", ")}) [${chalk.bold("ollama")}]: `,
       );
       const picked = providerAnswer.trim() || "ollama";
-      if (!SUPPORTED_PROVIDERS.includes(picked)) {
+      if (!(SUPPORTED_PROVIDERS as readonly string[]).includes(picked)) {
         process.stderr.write(chalk.red(`Unknown provider: ${picked}\n`));
         process.exit(1);
       }
@@ -210,7 +210,6 @@ async function runAgent(config: MergedConfig): Promise<void> {
   const provider = await createProvider(providerName, {
     apiKey: config.apiKey,
     model: config.model,
-    configApiKey: config.apiKey,
     baseURL: config.baseURL,
   });
 
@@ -304,7 +303,7 @@ async function listSessions(): Promise<void> {
   const config = loadCliConfig(cwd);
   const merged = mergeConfig(config, { cwd });
 
-  const providerName = merged.provider ?? await detectProvider();
+  const providerName: ProviderName | undefined = (merged.provider as ProviderName | undefined) ?? await detectProvider();
   if (!providerName) {
     process.stderr.write(chalk.red("No provider configured. Run `noumen init` first.\n"));
     process.exit(1);
@@ -313,7 +312,6 @@ async function listSessions(): Promise<void> {
   const provider = await createProvider(providerName, {
     apiKey: merged.apiKey,
     model: merged.model,
-    configApiKey: merged.apiKey,
     baseURL: merged.baseURL,
   });
 
@@ -343,7 +341,7 @@ async function resumeSession(sessionId: string): Promise<void> {
   const config = loadCliConfig(cwd);
   const merged = mergeConfig(config, { cwd });
 
-  const providerName = merged.provider ?? await detectProvider();
+  const providerName: ProviderName | undefined = (merged.provider as ProviderName | undefined) ?? await detectProvider();
   if (!providerName) {
     process.stderr.write(chalk.red("No provider configured. Run `noumen init` first.\n"));
     process.exit(1);
@@ -352,7 +350,6 @@ async function resumeSession(sessionId: string): Promise<void> {
   const provider = await createProvider(providerName, {
     apiKey: merged.apiKey,
     model: merged.model,
-    configApiKey: merged.apiKey,
     baseURL: merged.baseURL,
   });
 
@@ -437,7 +434,7 @@ async function runDoctor(): Promise<void> {
   const config = loadCliConfig(cwd);
   const merged = mergeConfig(config, { cwd });
 
-  const providerName = merged.provider ?? await detectProvider();
+  const providerName: ProviderName | undefined = (merged.provider as ProviderName | undefined) ?? await detectProvider();
   if (!providerName) {
     process.stderr.write(chalk.red("No provider configured. Run `noumen init` first.\n"));
     process.exit(1);
@@ -446,7 +443,6 @@ async function runDoctor(): Promise<void> {
   const provider = await createProvider(providerName, {
     apiKey: merged.apiKey,
     model: merged.model,
-    configApiKey: merged.apiKey,
     baseURL: merged.baseURL,
   });
 

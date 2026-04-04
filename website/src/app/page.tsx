@@ -13,16 +13,16 @@ const FEATURES = [
       "ReadFile, WriteFile, EditFile, Bash, Glob, Grep, WebFetch, NotebookEdit, AskUser — the same tools shipping inside production coding agents, wired up and ready to go.",
   },
   {
-    icon: "🔌",
-    title: "Seven providers, one interface",
-    description:
-      "OpenAI, Anthropic, Google Gemini, OpenRouter, AWS Bedrock, Google Vertex AI, and Ollama. Same streaming interface, same tool dispatch, same results. Cloud or local.",
-  },
-  {
     icon: "💻",
     title: "Four sandbox backends",
     description:
       "Local Node.js, sprites.dev containers, Docker, or E2B cloud. Swap one line to move from zero isolation to a fully sandboxed remote environment.",
+  },
+  {
+    icon: "🔌",
+    title: "Seven providers, one interface",
+    description:
+      "OpenAI, Anthropic, Google Gemini, OpenRouter, AWS Bedrock, Google Vertex AI, and Ollama. Same streaming interface, same tool dispatch, same results. Cloud or local.",
   },
   {
     icon: "💾",
@@ -234,7 +234,7 @@ export default function Home() {
           </h2>
           <div className="mt-8 space-y-2 text-left">
             <TerminalBlock command="pnpm add noumen" />
-            <TerminalBlock command='import { Code } from "noumen"' />
+            <TerminalBlock command='import { Agent } from "noumen"' />
             <TerminalBlock command='import { OpenAIProvider } from "noumen/openai"' />
           </div>
           <Link
