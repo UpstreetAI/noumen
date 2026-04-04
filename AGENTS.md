@@ -15,9 +15,9 @@ This repository has **four documentation surfaces** that must stay in sync with 
 
 Run this checklist **every time** you modify any of the files listed below:
 
-### If you change `src/code.ts` (CodeOptions)
+### If you change `src/agent.ts` (AgentOptions)
 - Update `README.md` Options section
-- Update `website/docs/getting-started/index.mdx` Code constructor examples
+- Update `website/docs/getting-started/index.mdx` Agent constructor examples
 - Update the specific feature's docs page (e.g., if you add a new option for compaction, update `website/docs/compaction/index.mdx`)
 
 ### If you add/remove/rename a provider (`src/providers/*.ts`)
@@ -66,7 +66,7 @@ Run this checklist **every time** you modify any of the files listed below:
 - Update `README.md` CLI section (flags table, config example)
 - Update `website/docs/cli/index.mdx` (flags reference, config keys table)
 
-### If you change `DiagnoseResult` or `diagnose()` (`src/code.ts`)
+### If you change `DiagnoseResult` or `diagnose()` (`src/agent.ts`)
 - Update `README.md` health checks snippet (in Embedding section)
 - Update `website/docs/embedding/index.mdx` health checks section
 - Update `website/docs/cli/index.mdx` doctor command section
@@ -82,23 +82,26 @@ Run this checklist **every time** you modify any of the files listed below:
 
 ## Code example rules
 
-- **Always use the `sandbox` pattern** in documentation examples:
+- **Prefer the string provider shorthand** for simple examples:
   ```typescript
-  const code = new Code({
-    aiProvider,
+  const agent = new Agent({ provider: "anthropic", cwd: "." });
+  ```
+- **Use the `sandbox` pattern** when showing explicit sandbox configuration:
+  ```typescript
+  const agent = new Agent({
+    provider,
     sandbox: LocalSandbox({ cwd: "/my/project" }),
     options: { ... },
   });
   ```
-- **Never use the deprecated `virtualFs` / `virtualComputer` pattern** in any docs or README. These fields exist for backward compatibility only.
 - **Import providers from subpaths**, not from the main barrel:
   ```typescript
   import { OpenAIProvider } from "noumen/openai";     // correct
   import { OpenAIProvider } from "noumen";              // wrong — providers are not re-exported from main
   ```
-- **Import sandbox factories and Code from the main barrel**:
+- **Import sandbox factories and Agent from the main barrel**:
   ```typescript
-  import { Code, LocalSandbox } from "noumen";
+  import { Agent, LocalSandbox } from "noumen";
   ```
 
 ## Counts to keep accurate

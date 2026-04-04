@@ -26,17 +26,41 @@ pnpm add @google/genai      # for Gemini
 ## Quick Start
 
 ```typescript
-import { Code, LocalSandbox } from "noumen";
+import { Agent } from "noumen";
+
+const agent = new Agent({ provider: "anthropic", cwd: "." });
+
+for await (const event of agent.run("Add a health-check endpoint to server.ts")) {
+  if (event.type === "text_delta") process.stdout.write(event.text);
+}
+```
+
+Three lines to a working coding agent. The string provider auto-detects your `ANTHROPIC_API_KEY` from the environment, and `cwd` defaults to a local sandbox.
+
+### Callback style
+
+```typescript
+await agent.run("Fix the auth bug", {
+  onText: (text) => process.stdout.write(text),
+  onToolUse: (name) => console.log(`Using ${name}`),
+  onComplete: (result) => console.log(`Done — ${result.toolCalls} tool calls`),
+});
+```
+
+### Full control
+
+```typescript
+import { Agent, LocalSandbox } from "noumen";
 import { OpenAIProvider } from "noumen/openai";
 
-const code = new Code({
-  aiProvider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY }),
+const agent = new Agent({
+  provider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY }),
   sandbox: LocalSandbox({ cwd: "/my/project" }),
 });
 
-const thread = code.createThread();
+const thread = agent.createThread();
 
-for await (const event of thread.run("Add a health-check endpoint to server.ts")) {
+for await (const event of thread.run("Refactor the auth module")) {
   switch (event.type) {
     case "text_delta":
       process.stdout.write(event.text);
@@ -59,19 +83,19 @@ For zero-config setup, use a preset that configures everything for you:
 import { codingAgent } from "noumen";
 import { OpenAIProvider } from "noumen/openai";
 
-const code = codingAgent({
+const agent = codingAgent({
   provider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY! }),
   cwd: "/my/project",
 });
 
-await code.init();
-const thread = code.createThread();
+await agent.init();
+const thread = agent.createThread();
 
 for await (const event of thread.run("Refactor the auth module")) {
   if (event.type === "text_delta") process.stdout.write(event.text);
 }
 
-await code.close();
+await agent.close();
 ```
 
 Three presets are available:
@@ -158,10 +182,10 @@ Ollama, Bedrock, and Vertex do not require an API key.
 
 noumen is a library first. Six integration patterns:
 
-**In-process** — `Code` + `Thread.run()` async iterator, direct import:
+**In-process** — `Agent` + `Thread.run()` async iterator, direct import:
 
 ```typescript
-const thread = code.createThread();
+const thread = agent.createThread();
 for await (const event of thread.run("Fix the bug")) {
   if (event.type === "text_delta") process.stdout.write(event.text);
 }
@@ -171,7 +195,7 @@ for await (const event of thread.run("Fix the bug")) {
 
 ```typescript
 import { createServer } from "noumen/server";
-const server = createServer(code, { port: 3001, auth: { type: "bearer", token: "..." } });
+const server = createServer(agent, { port: 3001, auth: { type: "bearer", token: "..." } });
 await server.start();
 ```
 
@@ -179,7 +203,7 @@ await server.start();
 
 ```typescript
 import { createRequestHandler } from "noumen/server";
-app.use("/agent", createRequestHandler(code, { auth: { type: "bearer", token: "..." } }));
+app.use("/agent", createRequestHandler(agent, { auth: { type: "bearer", token: "..." } }));
 ```
 
 **WebSocket** — bidirectional with permission handling:
@@ -201,7 +225,7 @@ npx noumen --headless -p anthropic <<< '{"type":"prompt","text":"Fix the bug"}'
 **Health checks** — verify all integrations work before running:
 
 ```typescript
-const result = await code.diagnose();
+const result = await agent.diagnose();
 // {
 //   overall: true,
 //   provider: { ok: true, latencyMs: 342, model: "claude-sonnet-4" },
@@ -398,7 +422,7 @@ const sandbox = DockerSandbox({
 });
 
 // Use the sandbox normally — all commands/files run inside the container
-const code = new Code({ aiProvider, sandbox });
+const agent = new Agent({ provider, sandbox });
 
 // Clean up when done
 await container.stop();
@@ -426,7 +450,7 @@ const sandbox = E2BSandbox({
   cwd: "/home/user",
 });
 
-const code = new Code({ aiProvider, sandbox });
+const agent = new Agent({ provider, sandbox });
 
 // Clean up when done
 await e2b.close();
@@ -452,17 +476,16 @@ The interfaces are intentionally minimal (one method for shell, eight for filesy
 ## Options
 
 ```typescript
-const code = new Code({
-  aiProvider,
-  sandbox,
+const agent = new Agent({
+  provider: "anthropic",
+  cwd: "/my/project",
   options: {
     sessionDir: ".noumen/sessions", // JSONL transcript storage path
-    model: "gpt-4o",                   // default model
-    maxTokens: 8192,                   // max output tokens per turn
-    autoCompact: true,                 // auto-compact when context is large
-    autoCompactThreshold: 100_000,     // token threshold for auto-compact
-    systemPrompt: "...",               // override the built-in system prompt
-    cwd: "/working/dir",              // working directory for tools
+    model: "claude-sonnet-4",       // default model
+    maxTokens: 8192,                // max output tokens per turn
+    autoCompact: true,              // auto-compact when context is large
+    autoCompactThreshold: 100_000,  // token threshold for auto-compact
+    systemPrompt: "...",            // override the built-in system prompt
     skills: [{ name: "...", content: "..." }],
     skillsPaths: [".claude/skills"],   // paths to SKILL.md files on the sandbox filesystem
     projectContext: true,              // load NOUMEN.md / CLAUDE.md from project
@@ -483,10 +506,10 @@ const code = new Code({
 
 ```typescript
 // New thread
-const thread = code.createThread();
+const thread = agent.createThread();
 
 // Resume an existing session
-const thread = code.createThread({ sessionId: "abc-123", resume: true });
+const thread = agent.createThread({ sessionId: "abc-123", resume: true });
 
 // Run a prompt (returns an async iterable of stream events)
 for await (const event of thread.run("Fix the failing test")) {
@@ -559,7 +582,7 @@ See **[noumen.dev/docs/stream-events](https://noumen.dev/docs/stream-events)** f
 | **NotebookEdit** | Edit Jupyter notebook cells (replace, insert, delete) |
 | **AskUser** | Ask the user a question and wait for a response |
 
-### Optional tools (enabled via Code options)
+### Optional tools (enabled via Agent options)
 
 | Tool | Requires | Description |
 |------|----------|-------------|
@@ -586,9 +609,9 @@ Enable model reasoning/thinking for supported providers. Each provider maps the 
 - **Gemini**: Sets `thinkingConfig.thinkingBudget`
 
 ```typescript
-const code = new Code({
-  aiProvider,
-  sandbox,
+const agent = new Agent({
+  provider: "anthropic",
+  cwd: ".",
   options: {
     thinking: { type: "enabled", budgetTokens: 10000 },
   },
@@ -611,18 +634,18 @@ Disable explicitly with `{ type: "disabled" }`, or omit the option entirely for 
 Automatic retries with exponential backoff, Retry-After header support, context overflow recovery, and model fallback. Handles 429 (rate limit), 529 (overloaded), 500/502/503 (server errors), and connection failures.
 
 ```typescript
-const code = new Code({
-  aiProvider,
-  sandbox,
+const agent = new Agent({
+  provider: "anthropic",
+  cwd: ".",
   options: {
     retry: true, // use sensible defaults
   },
 });
 
 // Or customize:
-const code2 = new Code({
-  aiProvider,
-  sandbox,
+const agent2 = new Agent({
+  provider: "anthropic",
+  cwd: ".",
   options: {
     retry: {
       maxRetries: 10,
@@ -646,15 +669,15 @@ On context overflow (input + max_tokens > context limit), the engine automatical
 Track token usage and estimate USD costs across all model calls. Includes built-in pricing for Claude, GPT-4o, Gemini, and o-series models.
 
 ```typescript
-const code = new Code({
-  aiProvider,
-  sandbox,
+const agent = new Agent({
+  provider: "anthropic",
+  cwd: ".",
   options: {
     costTracking: { enabled: true },
   },
 });
 
-const thread = code.createThread();
+const thread = agent.createThread();
 
 for await (const event of thread.run("Refactor the auth module")) {
   if (event.type === "cost_update") {
@@ -663,7 +686,7 @@ for await (const event of thread.run("Refactor the auth module")) {
 }
 
 // Or get the summary at any time
-const summary = code.getCostSummary();
+const summary = agent.getCostSummary();
 console.log(`Total: $${summary.totalCostUSD.toFixed(4)}`);
 console.log(`Input tokens: ${summary.totalInputTokens}`);
 console.log(`Output tokens: ${summary.totalOutputTokens}`);
@@ -672,9 +695,9 @@ console.log(`Output tokens: ${summary.totalOutputTokens}`);
 Supply custom pricing for unlisted models:
 
 ```typescript
-const code = new Code({
-  aiProvider,
-  sandbox,
+const agent = new Agent({
+  provider: "anthropic",
+  cwd: ".",
   options: {
     costTracking: {
       enabled: true,
@@ -694,9 +717,9 @@ const code = new Code({
 Skills are markdown instructions injected into the system prompt. Provide them inline or load from `SKILL.md` files on the virtual filesystem:
 
 ```typescript
-const code = new Code({
-  aiProvider,
-  sandbox,
+const agent = new Agent({
+  provider: "anthropic",
+  cwd: ".",
   options: {
     skills: [
       { name: "Testing", content: "Always write vitest tests for new code." },
@@ -706,7 +729,7 @@ const code = new Code({
 });
 
 // If using skillsPaths, call init() to pre-load them
-await code.init();
+await agent.init();
 ```
 
 ## Project Context (NOUMEN.md / CLAUDE.md)
@@ -719,7 +742,7 @@ Drop a `NOUMEN.md` or `CLAUDE.md` in your project root to give the agent persist
 This is a TypeScript monorepo. Use strict mode. Write vitest tests for all new code.
 ```
 
-Enable it with `projectContext: true` in your `Code` options. The loader discovers context files from four layers — managed (enterprise), user (`~/.noumen/`), project (repo ancestors), and local (`.local.md`, gitignored) — so you can scope instructions at any level.
+Enable it with `projectContext: true` in your `Agent` options. The loader discovers context files from four layers — managed (enterprise), user (`~/.noumen/`), project (repo ancestors), and local (`.local.md`, gitignored) — so you can scope instructions at any level.
 
 This is fully compatible with `CLAUDE.md`. If your project already has one, noumen picks it up automatically. Both `NOUMEN.md` and `CLAUDE.md` can coexist in the same directory. The format supports `@path` includes, conditional rules via `paths:` frontmatter in `.noumen/rules/` directories, and hierarchical overriding.
 
@@ -731,7 +754,7 @@ Conversations are persisted as JSONL files on the virtual filesystem. Each line 
 
 ```typescript
 // List all saved sessions
-const sessions = await code.listSessions();
+const sessions = await agent.listSessions();
 // [{ sessionId, createdAt, lastMessageAt, title?, messageCount }]
 ```
 
@@ -740,8 +763,8 @@ const sessions = await code.listSessions();
 18 hook events across six categories — intercept tool calls, session lifecycle, permissions, file writes, model switches, compaction, retry, memory, and errors:
 
 ```typescript
-const code = new Code({
-  aiProvider, sandbox,
+const agent = new Agent({
+  provider: "anthropic", cwd: ".",
   options: {
     hooks: [
       {
@@ -810,7 +833,7 @@ Run multiple agents in parallel with message passing:
 ```typescript
 import { SwarmManager, InProcessBackend } from "noumen";
 
-const backend = new InProcessBackend(code);
+const backend = new InProcessBackend(agent);
 const swarm = new SwarmManager(backend, { maxConcurrent: 3 });
 
 await swarm.spawn({ name: "researcher", prompt: "Find all TODOs" });
