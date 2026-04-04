@@ -17,7 +17,7 @@ export interface VertexAnthropicProviderOptions {
    * Requires `google-auth-library` as a peer dependency.
    */
   googleAuth?: unknown;
-  /** Model ID in Vertex format (default: claude-sonnet-4@20250514). */
+  /** Model ID in Vertex format (default: claude-opus-4.6). */
   model?: string;
   /** Cache control config (same as AnthropicProvider). */
   cacheControl?: CacheControlConfig;
@@ -83,7 +83,7 @@ export class VertexAnthropicProvider implements AIProvider {
       this.client = new AnthropicVertex(args) as unknown as AnthropicStreamClient;
     }
 
-    this.defaultModel = opts.model ?? "claude-sonnet-4@20250514";
+    this.defaultModel = opts.model ?? "claude-opus-4.6";
     this.cacheConfig = opts.cacheControl;
   }
 

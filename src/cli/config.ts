@@ -10,6 +10,7 @@ export interface CliConfig {
   provider?: string;
   model?: string;
   apiKey?: string;
+  baseURL?: string;
   permissions?: string;
   thinking?: string;
   sandbox?: string;
@@ -97,6 +98,7 @@ export function mergeConfig(
     ...(flags.provider !== undefined && { provider: flags.provider as string }),
     ...(flags.model !== undefined && { model: flags.model as string }),
     ...(flags.apiKey !== undefined && { apiKey: flags.apiKey as string }),
+    ...(flags.baseUrl !== undefined && { baseURL: flags.baseUrl as string }),
     ...(flags.permission !== undefined && { permissions: flags.permission as string }),
     ...(flags.thinking !== undefined && { thinking: flags.thinking as string }),
     ...(flags.maxTurns !== undefined && { maxTurns: flags.maxTurns as number }),

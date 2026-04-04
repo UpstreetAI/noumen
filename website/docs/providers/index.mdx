@@ -1,6 +1,6 @@
 ---
 title: Providers
-description: noumen supports OpenAI, Anthropic, Google Gemini, OpenRouter, AWS Bedrock, and Google Vertex AI as AI providers, all behind a unified interface.
+description: noumen supports OpenAI, Anthropic, Google Gemini, OpenRouter, AWS Bedrock, Google Vertex AI, and Ollama as AI providers, all behind a unified interface.
 ---
 
 noumen is provider-agnostic. Every provider implements the `AIProvider` interface, which accepts OpenAI-compatible chat parameters and returns an async iterable of streaming chunks. You can swap providers without changing any application code.
@@ -14,6 +14,7 @@ noumen is provider-agnostic. Every provider implements the `AIProvider` interfac
   <Card title="OpenRouter" description="Hundreds of models from every provider through a single API" href="/docs/providers/openrouter" />
   <Card title="AWS Bedrock" description="Route Anthropic models through AWS Bedrock" href="/docs/providers/bedrock" />
   <Card title="Google Vertex AI" description="Route Anthropic models through Google Cloud Vertex AI" href="/docs/providers/vertex" />
+  <Card title="Ollama" description="Run models locally — no API key, no cloud dependency" href="/docs/providers/ollama" />
 </Cards>
 
 ## The AIProvider interface

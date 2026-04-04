@@ -1,0 +1,73 @@
+---
+title: Ollama
+description: Run models locally with Ollama — no API key, no cloud dependency.
+---
+
+## Setup
+
+Install [Ollama](https://ollama.com), then pull a model with tool-calling support:
+
+```bash
+ollama pull qwen2.5-coder:32b
+ollama serve
+```
+
+No provider SDK is required — `OllamaProvider` uses the `openai` package under the hood (already a peer dependency).
+
+```bash
+pnpm add openai
+```
+
+```typescript
+import { OllamaProvider } from "noumen/ollama";
+
+const provider = new OllamaProvider({
+  model: "qwen2.5-coder:32b",  // default model
+});
+```
+
+## Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `baseURL` | `string` | `"http://localhost:11434/v1"` | Ollama server URL (OpenAI-compatible endpoint) |
+| `model` | `string` | `"qwen2.5-coder:32b"` | Default model for all calls |
+
+## Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `OLLAMA_HOST` | Override the Ollama server address (e.g. `http://192.168.1.10:11434`) |
+
+When `OLLAMA_HOST` is set, the CLI auto-detects Ollama as the provider and appends `/v1` to form the base URL.
+
+## CLI usage
+
+The CLI auto-detects a running Ollama server when no cloud API keys are configured:
+
+```bash
+# Ollama is detected automatically
+noumen "refactor this module"
+
+# Or be explicit
+noumen -p ollama -m llama3.1:70b "explain this code"
+```
+
+## Recommended models
+
+Ollama models must support OpenAI-compatible function calling for the full agent loop. Recommended models:
+
+- `qwen2.5-coder:32b` — strong coding and tool-calling (default)
+- `qwen2.5-coder:14b` — lighter alternative with good tool-calling
+- `llama3.1:70b` — general-purpose with function calling
+- `llama3.1:8b` — fast local option for simpler tasks
+- `mistral:7b` — compact with tool support
+- `command-r:35b` — Cohere's model with native tool use
+
+## How it works
+
+`OllamaProvider` extends `OpenAIProvider` — Ollama exposes an OpenAI-compatible API at `/v1`. The provider pre-configures the base URL and removes the API key requirement, so no additional setup is needed beyond having Ollama running.
+
+## Streaming
+
+Streaming works identically to the OpenAI provider. No additional configuration is needed.

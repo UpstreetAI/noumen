@@ -25,7 +25,7 @@ export class AnthropicProvider implements AIProvider {
       apiKey: opts.apiKey,
       baseURL: opts.baseURL,
     });
-    this.defaultModel = opts.model ?? "claude-sonnet-4-20250514";
+    this.defaultModel = opts.model ?? "claude-opus-4.6";
     this.cacheConfig = opts.cacheControl;
   }
 

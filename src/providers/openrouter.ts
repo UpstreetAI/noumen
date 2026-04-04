@@ -14,7 +14,7 @@ export class OpenRouterProvider extends OpenAIProvider {
     super({
       apiKey: opts.apiKey,
       baseURL: "https://openrouter.ai/api/v1",
-      model: opts.model ?? "anthropic/claude-sonnet-4",
+      model: opts.model ?? "anthropic/claude-opus-4.6",
       defaultHeaders: {
         ...(opts.appName ? { "X-Title": opts.appName } : {}),
         ...(opts.appUrl ? { "HTTP-Referer": opts.appUrl } : {}),

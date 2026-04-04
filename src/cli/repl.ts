@@ -5,6 +5,7 @@ import type { Thread } from "../thread.js";
 import type { MergedConfig } from "./config.js";
 import { renderEvent, createRenderState, promptPermission } from "./render.js";
 import { DEFAULT_MODELS } from "./provider-factory.js";
+import { startSpinner } from "./spinner.js";
 
 export async function startRepl(
   code: Code,
@@ -70,15 +71,14 @@ export async function startRepl(
       const state = createRenderState();
       const runOpts = config.maxTurns ? { maxTurns: config.maxTurns } : undefined;
 
-      if (!config.json && !config.quiet) {
-        process.stderr.write(chalk.dim("  Thinking...\r"));
-      }
+      const spinner =
+        !config.json && !config.quiet ? startSpinner("Thinking") : null;
 
       runningTurn = true;
       try {
         for await (const event of thread.run(input, runOpts)) {
-          if (!state.showedActivity && !config.json && !config.quiet) {
-            process.stderr.write("              \r");
+          if (!state.showedActivity && spinner) {
+            spinner.stop();
             state.showedActivity = true;
           }
           renderEvent(event, config, state);
@@ -90,6 +90,7 @@ export async function startRepl(
           throw err;
         }
       } finally {
+        spinner?.stop();
         runningTurn = false;
       }
 

@@ -9,6 +9,7 @@ export { Thread, type ThreadOptions, type ThreadConfig } from "./thread.js";
 //   import { OpenRouterProvider } from "noumen/openrouter"
 //   import { BedrockAnthropicProvider } from "noumen/bedrock"
 //   import { VertexAnthropicProvider } from "noumen/vertex"
+//   import { OllamaProvider } from "noumen/ollama"
 export type {
   AIProvider,
   ChatParams,
@@ -29,6 +30,7 @@ export type { GeminiProviderOptions } from "./providers/gemini.js";
 export type { OpenRouterProviderOptions } from "./providers/openrouter.js";
 export type { BedrockAnthropicProviderOptions } from "./providers/bedrock.js";
 export type { VertexAnthropicProviderOptions } from "./providers/vertex.js";
+export type { OllamaProviderOptions } from "./providers/ollama.js";
 
 // Sandbox (bundled VirtualFs + VirtualComputer)
 export {

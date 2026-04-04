@@ -7,7 +7,7 @@ import type {
 import type { ChatMessage, ContentPart } from "../session/types.js";
 
 export interface OpenAIProviderOptions {
-  apiKey: string;
+  apiKey?: string;
   baseURL?: string;
   model?: string;
   defaultHeaders?: Record<string, string | undefined>;
@@ -21,11 +21,11 @@ export class OpenAIProvider implements AIProvider {
 
   constructor(opts: OpenAIProviderOptions) {
     this.client = new OpenAI({
-      apiKey: opts.apiKey,
+      apiKey: opts.apiKey ?? "not-needed",
       baseURL: opts.baseURL,
       defaultHeaders: opts.defaultHeaders,
     });
-    this.defaultModel = opts.model ?? "gpt-4o";
+    this.defaultModel = opts.model ?? "gpt-5.4";
   }
 
   async *chat(params: ChatParams): AsyncIterable<ChatStreamChunk> {

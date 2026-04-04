@@ -82,7 +82,7 @@ Run this checklist **every time** you modify any of the files listed below:
 
 These numeric claims appear in multiple places. Grep for them when changing the relevant code:
 
-- **Provider count** — currently 6 (OpenAI, Anthropic, Gemini, OpenRouter, Bedrock, Vertex)
+- **Provider count** — currently 7 (OpenAI, Anthropic, Gemini, OpenRouter, Bedrock, Vertex, Ollama)
 - **Core tool count** — currently 9 (ReadFile, WriteFile, EditFile, Bash, Glob, Grep, WebFetch, NotebookEdit, AskUser)
 - **Sandbox backend count** — currently 4 (Local, Sprites, Docker, E2B)
 - **Hook event count** — currently 9 (PreToolUse, PostToolUse, TurnStart, TurnEnd, SubagentStart, SubagentStop, PreCompact, PostCompact, Error)

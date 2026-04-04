@@ -196,7 +196,7 @@ export class Thread {
     this.config = config;
     this.sessionId = opts?.sessionId ?? generateUUID();
     this.cwd = opts?.cwd ?? "/";
-    this.model = opts?.model ?? config.model ?? "gpt-4o";
+    this.model = opts?.model ?? config.model ?? "gpt-5.4";
     this.storage = new SessionStorage(config.fs, config.sessionDir);
 
     if (config.permissions) {

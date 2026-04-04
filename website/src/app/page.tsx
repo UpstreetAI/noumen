@@ -14,9 +14,9 @@ const FEATURES = [
   },
   {
     icon: "🔌",
-    title: "Six providers, one interface",
+    title: "Seven providers, one interface",
     description:
-      "OpenAI, Anthropic, Google Gemini, OpenRouter, AWS Bedrock, Google Vertex AI. Same streaming interface, same tool dispatch, same results. Bring your own keys.",
+      "OpenAI, Anthropic, Google Gemini, OpenRouter, AWS Bedrock, Google Vertex AI, and Ollama. Same streaming interface, same tool dispatch, same results. Cloud or local.",
   },
   {
     icon: "💻",

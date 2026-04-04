@@ -17,9 +17,10 @@ pnpm add noumen
 Then install the provider SDK you need:
 
 ```bash
-pnpm add openai           # for OpenAI / OpenRouter
+pnpm add openai           # for OpenAI / OpenRouter / Ollama
 pnpm add @anthropic-ai/sdk  # for Anthropic
 pnpm add @google/genai      # for Gemini
+# Ollama requires no SDK — just install https://ollama.com
 ```
 
 ## Quick Start
@@ -92,9 +93,10 @@ Place in `.noumen/config.json` at your project root. The CLI walks up from the w
 
 | Flag | Description |
 |------|-------------|
-| `-p, --provider` | `openai`, `anthropic`, `gemini`, `openrouter`, `bedrock`, `vertex` |
+| `-p, --provider` | `openai`, `anthropic`, `gemini`, `openrouter`, `bedrock`, `vertex`, `ollama` |
 | `-m, --model` | Model name (provider-specific default if omitted) |
 | `--api-key` | Override API key |
+| `--base-url` | Override provider base URL |
 | `-c, --prompt` | One-shot prompt (non-interactive) |
 | `--permission` | Permission mode: `default`, `plan`, `acceptEdits`, `auto`, `bypassPermissions` |
 | `--thinking` | Thinking level: `off`, `low`, `medium`, `high` |
@@ -110,6 +112,8 @@ Place in `.noumen/config.json` at your project root. The CLI walks up from the w
 2. Provider-specific env var (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`)
 3. `NOUMEN_API_KEY` generic env var
 4. `.noumen/config.json` `apiKey` field
+
+Ollama, Bedrock, and Vertex do not require an API key.
 
 ### Commands
 
@@ -222,6 +226,26 @@ const provider = new VertexAnthropicProvider({
   googleAuth: new GoogleAuth({ keyFile: "/path/to/service-account.json" }),
 });
 ```
+
+### Ollama (Local)
+
+Run models locally with [Ollama](https://ollama.com). No API key needed — just install Ollama and pull a model:
+
+```bash
+ollama pull qwen2.5-coder:32b
+ollama serve
+```
+
+```typescript
+import { OllamaProvider } from "noumen/ollama";
+
+const provider = new OllamaProvider({
+  model: "qwen2.5-coder:32b",   // default
+  baseURL: "http://localhost:11434/v1",  // default
+});
+```
+
+The CLI auto-detects a running Ollama server when no cloud API keys are set, so you can simply run `noumen` with Ollama serving in the background.
 
 ## Sandboxes
 

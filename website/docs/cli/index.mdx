@@ -84,9 +84,10 @@ All fields are optional. The full set of config keys:
 Usage: noumen [options] [prompt...]
 
 Options:
-  -p, --provider <name>    openai | anthropic | gemini | openrouter | bedrock | vertex
+  -p, --provider <name>    openai | anthropic | gemini | openrouter | bedrock | vertex | ollama
   -m, --model <model>      Model name
   --api-key <key>          API key (overrides env vars)
+  --base-url <url>         Override provider base URL
   --cwd <dir>              Working directory
   --permission <mode>      Permission mode
   --thinking <level>       off | low | medium | high
@@ -113,11 +114,11 @@ The CLI resolves API keys in this order:
 3. `NOUMEN_API_KEY` (generic fallback)
 4. `apiKey` in `.noumen/config.json`
 
-If no `--provider` is specified, the CLI auto-detects from whichever env var is set.
+If no `--provider` is specified, the CLI auto-detects from whichever env var is set. Ollama, Bedrock, and Vertex do not require an API key.
 
 ## Provider auto-detection
 
-When no provider is specified, the CLI checks environment variables in order:
+When no provider is specified, the CLI checks environment variables in order, then probes for a local Ollama server:
 
 1. `ANTHROPIC_API_KEY` → anthropic
 2. `OPENAI_API_KEY` → openai
@@ -125,6 +126,8 @@ When no provider is specified, the CLI checks environment variables in order:
 4. `OPENROUTER_API_KEY` → openrouter
 5. `AWS_ACCESS_KEY_ID` or `AWS_PROFILE` → bedrock
 6. `GOOGLE_APPLICATION_CREDENTIALS` or `GCLOUD_PROJECT` → vertex
+7. `OLLAMA_HOST` → ollama
+8. Probe `http://localhost:11434` → ollama (if reachable)
 
 ## Interactive mode
 

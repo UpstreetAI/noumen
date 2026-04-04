@@ -14,6 +14,19 @@ import type { PermissionMode } from "../permissions/types.js";
 
 const VERSION = "0.1.0";
 
+async function listLocalOllamaModels(baseURL: string): Promise<string[]> {
+  try {
+    const res = await fetch(`${baseURL}/api/tags`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { models?: Array<{ name: string }> };
+    return (data.models ?? []).map((m) => m.name);
+  } catch {
+    return [];
+  }
+}
+
 function parseThinking(level: string | undefined): ThinkingConfig | undefined {
   if (!level || level === "off") return { type: "disabled" };
   const budgets: Record<string, number> = {
@@ -38,9 +51,10 @@ async function main(): Promise<void> {
   const program = new Command("noumen")
     .version(VERSION)
     .description("AI coding agent — bring your own provider")
-    .option("-p, --provider <name>", "openai | anthropic | gemini | openrouter | bedrock | vertex")
+    .option("-p, --provider <name>", "openai | anthropic | gemini | openrouter | bedrock | vertex | ollama")
     .option("-m, --model <model>", "model name")
     .option("--api-key <key>", "API key (overrides env vars)")
+    .option("--base-url <url>", "override provider base URL")
     .option("--cwd <dir>", "working directory")
     .option("--permission <mode>", "permission mode (default, plan, acceptEdits, auto, bypassPermissions)")
     .option("--thinking <level>", "thinking level: off, low, medium, high")
@@ -101,7 +115,7 @@ async function main(): Promise<void> {
 
 async function runAgent(config: MergedConfig): Promise<void> {
   const providerName =
-    config.provider ?? detectProvider();
+    config.provider ?? await detectProvider();
 
   if (!providerName) {
     if (!process.stdin.isTTY) {
@@ -117,17 +131,41 @@ async function runAgent(config: MergedConfig): Promise<void> {
     const rl = createInterface({ input: process.stdin, output: process.stderr, terminal: true });
 
     try {
-      const { SUPPORTED_PROVIDERS } = await import("./provider-factory.js");
+      const { SUPPORTED_PROVIDERS, isOllamaRunning, ollamaBaseURL } = await import("./provider-factory.js");
       const providerAnswer = await rl.question(
-        `  Provider (${SUPPORTED_PROVIDERS.join(", ")}) [${chalk.bold("anthropic")}]: `,
+        `  Provider (${SUPPORTED_PROVIDERS.join(", ")}) [${chalk.bold("ollama")}]: `,
       );
-      const picked = providerAnswer.trim() || "anthropic";
+      const picked = providerAnswer.trim() || "ollama";
       if (!SUPPORTED_PROVIDERS.includes(picked)) {
         process.stderr.write(chalk.red(`Unknown provider: ${picked}\n`));
         process.exit(1);
       }
 
-      const needsKey = !["bedrock", "vertex"].includes(picked);
+      if (picked === "ollama") {
+        if (!(await isOllamaRunning())) {
+          process.stderr.write(
+            chalk.yellow(`\n  Ollama doesn't appear to be running at ${ollamaBaseURL()}.\n`) +
+            chalk.yellow(`  Install it from https://ollama.com, then run:\n\n`) +
+            `    ${chalk.cyan("ollama pull qwen2.5-coder:32b")}\n` +
+            `    ${chalk.cyan("ollama serve")}\n\n` +
+            chalk.yellow(`  Then re-run noumen.\n`),
+          );
+          rl.close();
+          process.exit(1);
+        }
+
+        const models = await listLocalOllamaModels(ollamaBaseURL());
+        if (models.length > 0) {
+          process.stderr.write(chalk.dim(`  Available models: ${models.join(", ")}\n`));
+          const defaultModel = models.includes("qwen2.5-coder:32b") ? "qwen2.5-coder:32b" : models[0];
+          const modelAnswer = await rl.question(
+            `  Model [${chalk.bold(defaultModel)}]: `,
+          );
+          config.model = modelAnswer.trim() || defaultModel;
+        }
+      }
+
+      const needsKey = !["bedrock", "vertex", "ollama"].includes(picked);
       let apiKey: string | undefined;
       if (needsKey) {
         const keyAnswer = await rl.question(`  API key: `);
@@ -149,10 +187,23 @@ async function runAgent(config: MergedConfig): Promise<void> {
     return runAgent(config);
   }
 
+  if (!config.model) {
+    const { DEFAULT_MODELS } = await import("./provider-factory.js");
+    if (providerName === "ollama") {
+      const { ollamaBaseURL } = await import("./provider-factory.js");
+      const models = await listLocalOllamaModels(ollamaBaseURL());
+      const preferred = DEFAULT_MODELS[providerName];
+      config.model = models.includes(preferred) ? preferred : models[0] ?? preferred;
+    } else {
+      config.model = DEFAULT_MODELS[providerName];
+    }
+  }
+
   const provider = await createProvider(providerName, {
     apiKey: config.apiKey,
     model: config.model,
     configApiKey: config.apiKey,
+    baseURL: config.baseURL,
   });
 
   const thinking = parseThinking(config.thinking);
@@ -203,12 +254,24 @@ async function runAgent(config: MergedConfig): Promise<void> {
 }
 
 async function runOneShot(code: Code, config: MergedConfig): Promise<void> {
+  const { startSpinner } = await import("./spinner.js");
   const thread = code.createThread();
   const state = createRenderState();
   const runOpts = config.maxTurns ? { maxTurns: config.maxTurns } : undefined;
 
-  for await (const event of thread.run(config.prompt!, runOpts)) {
-    renderEvent(event, config, state);
+  const spinner =
+    !config.json && !config.quiet ? startSpinner("Thinking") : null;
+
+  try {
+    for await (const event of thread.run(config.prompt!, runOpts)) {
+      if (!state.showedActivity && spinner) {
+        spinner.stop();
+        state.showedActivity = true;
+      }
+      renderEvent(event, config, state);
+    }
+  } finally {
+    spinner?.stop();
   }
 
   if (config.quiet && state.accumulatedText) {
@@ -226,7 +289,7 @@ async function listSessions(): Promise<void> {
   const config = loadCliConfig(cwd);
   const merged = mergeConfig(config, { cwd });
 
-  const providerName = merged.provider ?? detectProvider();
+  const providerName = merged.provider ?? await detectProvider();
   if (!providerName) {
     process.stderr.write(chalk.red("No provider configured. Run `noumen init` first.\n"));
     process.exit(1);
@@ -236,6 +299,7 @@ async function listSessions(): Promise<void> {
     apiKey: merged.apiKey,
     model: merged.model,
     configApiKey: merged.apiKey,
+    baseURL: merged.baseURL,
   });
 
   const code = new Code({
@@ -264,7 +328,7 @@ async function resumeSession(sessionId: string): Promise<void> {
   const config = loadCliConfig(cwd);
   const merged = mergeConfig(config, { cwd });
 
-  const providerName = merged.provider ?? detectProvider();
+  const providerName = merged.provider ?? await detectProvider();
   if (!providerName) {
     process.stderr.write(chalk.red("No provider configured. Run `noumen init` first.\n"));
     process.exit(1);
@@ -274,6 +338,7 @@ async function resumeSession(sessionId: string): Promise<void> {
     apiKey: merged.apiKey,
     model: merged.model,
     configApiKey: merged.apiKey,
+    baseURL: merged.baseURL,
   });
 
   const thinking = parseThinking(merged.thinking);

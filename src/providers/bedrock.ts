@@ -15,7 +15,7 @@ export interface BedrockAnthropicProviderOptions {
     secretAccessKey: string;
     sessionToken?: string;
   };
-  /** Model ID in Bedrock format (default: us.anthropic.claude-sonnet-4-20250514-v1:0). */
+  /** Model ID in Bedrock format (default: us.anthropic.claude-opus-4.6-v1:0). */
   model?: string;
   /** Custom base URL for a Bedrock-compatible endpoint. */
   baseURL?: string;
@@ -70,7 +70,7 @@ export class BedrockAnthropicProvider implements AIProvider {
     }
 
     this.defaultModel =
-      opts.model ?? "us.anthropic.claude-sonnet-4-20250514-v1:0";
+      opts.model ?? "us.anthropic.claude-opus-4.6-v1:0";
     this.cacheConfig = opts.cacheControl;
   }
 

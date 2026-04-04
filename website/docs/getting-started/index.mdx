@@ -19,9 +19,9 @@ Every noumen agent needs two things: an **AI provider** and a **sandbox**.
   <Step>
     ### Choose a provider
 
-    noumen ships six providers. Each takes an API key and an optional default model.
+    noumen ships seven providers. Cloud providers take an API key; Ollama runs locally with no key needed.
 
-    <Tabs items={["OpenAI", "Anthropic", "Gemini", "OpenRouter", "Bedrock", "Vertex"]}>
+    <Tabs items={["OpenAI", "Anthropic", "Gemini", "OpenRouter", "Bedrock", "Vertex", "Ollama"]}>
       <Tab value="OpenAI">
         ```bash
         pnpm add openai
@@ -102,6 +102,21 @@ Every noumen agent needs two things: an **AI provider** and a **sandbox**.
         const provider = new VertexAnthropicProvider({
           projectId: "my-gcp-project",
           region: "us-east5", // default
+        });
+        ```
+      </Tab>
+      <Tab value="Ollama">
+        Install [Ollama](https://ollama.com) and pull a model:
+
+        ```bash
+        ollama pull qwen2.5-coder:32b
+        ```
+
+        ```typescript
+        import { OllamaProvider } from "noumen/ollama";
+
+        const provider = new OllamaProvider({
+          model: "qwen2.5-coder:32b", // default
         });
         ```
       </Tab>

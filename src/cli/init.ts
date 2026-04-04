@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as readline from "node:readline/promises";
 import chalk from "chalk";
-import { SUPPORTED_PROVIDERS, DEFAULT_MODELS } from "./provider-factory.js";
+import { SUPPORTED_PROVIDERS, DEFAULT_MODELS, isOllamaRunning, ollamaBaseURL } from "./provider-factory.js";
 
 const PERMISSION_MODES = ["default", "plan", "acceptEdits", "auto", "bypassPermissions"];
 
@@ -22,7 +22,29 @@ export async function runInit(): Promise<void> {
       "anthropic",
     );
 
-    const defaultModel = DEFAULT_MODELS[provider] ?? "";
+    let defaultModel = DEFAULT_MODELS[provider] ?? "";
+
+    if (provider === "ollama") {
+      const ollamaModels = await listOllamaModels();
+      if (ollamaModels.length > 0) {
+        process.stdout.write(chalk.dim(`  Available models: ${ollamaModels.join(", ")}\n`));
+        if (ollamaModels.includes(defaultModel)) {
+          // keep the default
+        } else {
+          defaultModel = ollamaModels[0];
+        }
+      } else {
+        process.stdout.write(
+          chalk.yellow(
+            `\n  Ollama doesn't appear to be running at ${ollamaBaseURL()}.\n` +
+            `  Install it from https://ollama.com, then run:\n` +
+            `    ollama pull ${defaultModel}\n` +
+            `    ollama serve\n\n`,
+          ),
+        );
+      }
+    }
+
     const model = await askDefault(rl, "Model", defaultModel);
 
     const permissions = await askChoice(
@@ -57,6 +79,20 @@ export async function runInit(): Promise<void> {
     );
   } finally {
     rl.close();
+  }
+}
+
+async function listOllamaModels(): Promise<string[]> {
+  if (!(await isOllamaRunning())) return [];
+  try {
+    const res = await fetch(`${ollamaBaseURL()}/api/tags`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { models?: Array<{ name: string }> };
+    return (data.models ?? []).map((m) => m.name);
+  } catch {
+    return [];
   }
 }
 

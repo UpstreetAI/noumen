@@ -8,12 +8,13 @@ const ENV_KEY_MAP: Record<string, string> = {
 };
 
 const DEFAULT_MODELS: Record<string, string> = {
-  openai: "gpt-4o",
-  anthropic: "claude-sonnet-4-20250514",
+  openai: "gpt-5.4",
+  anthropic: "claude-opus-4.6",
   gemini: "gemini-2.5-flash",
-  openrouter: "anthropic/claude-sonnet-4",
-  bedrock: "us.anthropic.claude-sonnet-4-20250514-v1:0",
-  vertex: "claude-sonnet-4@20250514",
+  openrouter: "anthropic/claude-opus-4.6",
+  bedrock: "us.anthropic.claude-opus-4.6-v1:0",
+  vertex: "claude-opus-4.6",
+  ollama: "qwen2.5-coder:32b",
 };
 
 const SUPPORTED_PROVIDERS = Object.keys(DEFAULT_MODELS);
@@ -25,22 +26,44 @@ function getProviderEnvKey(name: string): string | undefined {
 
 /**
  * Auto-detect provider from available environment variables.
- * Checks in order: ANTHROPIC, OPENAI, GEMINI, OPENROUTER.
+ * Checks cloud providers first, then probes for a local Ollama server.
  */
-export function detectProvider(): string | undefined {
+export async function detectProvider(): Promise<string | undefined> {
   if (process.env.ANTHROPIC_API_KEY) return "anthropic";
   if (process.env.OPENAI_API_KEY) return "openai";
   if (process.env.GEMINI_API_KEY) return "gemini";
   if (process.env.OPENROUTER_API_KEY) return "openrouter";
   if (process.env.AWS_ACCESS_KEY_ID || process.env.AWS_PROFILE) return "bedrock";
   if (process.env.GOOGLE_APPLICATION_CREDENTIALS || process.env.GCLOUD_PROJECT) return "vertex";
+
+  if (process.env.OLLAMA_HOST) return "ollama";
+
+  if (await isOllamaRunning()) return "ollama";
+
   return undefined;
+}
+
+function ollamaBaseURL(): string {
+  const host = process.env.OLLAMA_HOST ?? "http://localhost:11434";
+  return host.replace(/\/+$/, "");
+}
+
+async function isOllamaRunning(): Promise<boolean> {
+  try {
+    const res = await fetch(`${ollamaBaseURL()}/api/tags`, {
+      signal: AbortSignal.timeout(500),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 export interface ProviderOptions {
   apiKey?: string;
   model?: string;
   configApiKey?: string;
+  baseURL?: string;
 }
 
 /**
@@ -70,7 +93,7 @@ export async function createProvider(
     case "openai": {
       if (!key) throw new Error("OpenAI requires an API key. Set OPENAI_API_KEY or use --api-key.");
       const { OpenAIProvider } = await import("../providers/openai.js");
-      return new OpenAIProvider({ apiKey: key, model: opts.model });
+      return new OpenAIProvider({ apiKey: key, model: opts.model, baseURL: opts.baseURL });
     }
     case "anthropic": {
       if (!key) throw new Error("Anthropic requires an API key. Set ANTHROPIC_API_KEY or use --api-key.");
@@ -95,9 +118,16 @@ export async function createProvider(
       const { VertexAnthropicProvider } = await import("../providers/vertex.js");
       return new VertexAnthropicProvider({ model: opts.model });
     }
+    case "ollama": {
+      const { OllamaProvider } = await import("../providers/ollama.js");
+      const base = opts.baseURL ?? (process.env.OLLAMA_HOST
+        ? `${process.env.OLLAMA_HOST.replace(/\/+$/, "")}/v1`
+        : undefined);
+      return new OllamaProvider({ model: opts.model, baseURL: base });
+    }
     default:
       throw new Error(`Unhandled provider: ${name}`);
   }
 }
 
-export { SUPPORTED_PROVIDERS, DEFAULT_MODELS };
+export { SUPPORTED_PROVIDERS, DEFAULT_MODELS, isOllamaRunning, ollamaBaseURL };
