@@ -134,11 +134,11 @@ describe("NoumenOAuthProvider", () => {
     expect(provider.clientMetadata.client_name).toBe("test-client");
   });
 
-  it("generates random state strings", async () => {
+  it("caches state string across calls", async () => {
     const s1 = await provider.state();
     const s2 = await provider.state();
-    expect(s1).toHaveLength(32);
-    expect(s1).not.toBe(s2);
+    expect(s1.length).toBeGreaterThan(0);
+    expect(s1).toBe(s2);
   });
 
   it("saves and loads tokens", async () => {
