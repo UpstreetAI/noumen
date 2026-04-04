@@ -10,21 +10,21 @@ const spaceGrotesk = Space_Grotesk({
 });
 
 export const metadata: Metadata = {
-  title: "noumen — the coding agent you npm install",
+  title: "noumen — coding agents are products. This is the library.",
   description:
-    "The missing layer between LLMs and codebases. Tool loop, file editing, shell execution, and session management in one TypeScript package.",
+    "The composable coding agent SDK for Node.js. Swap AI providers, filesystems, and compute backends. Same agent loop, any infrastructure. MIT licensed.",
   openGraph: {
-    title: "noumen — the coding agent you npm install",
+    title: "noumen — coding agents are products. This is the library.",
     description:
-      "The missing layer between LLMs and codebases. Tool loop, file editing, shell execution, and session management in one TypeScript package.",
+      "The composable coding agent SDK for Node.js. Swap AI providers, filesystems, and compute backends. Same agent loop, any infrastructure. MIT licensed.",
     images: [{ url: "/images/og-image.webp", width: 1536, height: 864 }],
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "noumen — the coding agent you npm install",
+    title: "noumen — coding agents are products. This is the library.",
     description:
-      "The missing layer between LLMs and codebases. Tool loop, file editing, shell execution, and session management in one TypeScript package.",
+      "The composable coding agent SDK for Node.js. Swap AI providers, filesystems, and compute backends. Same agent loop, any infrastructure. MIT licensed.",
     images: ["/images/og-image.webp"],
   },
 };

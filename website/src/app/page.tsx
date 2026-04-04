@@ -1,7 +1,7 @@
 import Link from "next/link";
-import Image from "next/image";
 import { TerminalBlock } from "@/components/TerminalBlock";
 import { HeroTerminal } from "@/components/HeroTerminal";
+import { AdapterStack } from "@/components/AdapterStack";
 import { Sparkles } from "@/components/Sparkles";
 import { EasterEggFooter } from "@/components/EasterEggFooter";
 
@@ -44,40 +44,6 @@ const FEATURES = [
   },
 ];
 
-const PROVIDERS = [
-  { name: "OpenAI", model: "gpt-4o" },
-  { name: "Anthropic", model: "claude-sonnet-4" },
-  { name: "Google Gemini", model: "gemini-2.5-flash" },
-];
-
-const CODE_EXAMPLE = `import {
-  Code,
-  OpenAIProvider,
-  LocalFs,
-  LocalComputer,
-} from "noumen";
-
-const code = new Code({
-  aiProvider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY }),
-  virtualFs: new LocalFs({ basePath: "/my/project" }),
-  virtualComputer: new LocalComputer({ defaultCwd: "/my/project" }),
-});
-
-const thread = code.createThread();
-
-for await (const event of thread.run("Add a health-check endpoint")) {
-  switch (event.type) {
-    case "text_delta":
-      process.stdout.write(event.text);
-      break;
-    case "tool_use_start":
-      console.log(\`\\n[tool] \${event.toolName}\`);
-      break;
-    case "tool_result":
-      console.log(\`[result] \${event.result.content.slice(0, 200)}\`);
-      break;
-  }
-}`;
 
 export default function Home() {
   return (
@@ -103,39 +69,18 @@ export default function Home() {
             </div>
 
             <h1 className="font-[family-name:var(--font-display)] text-4xl font-extrabold leading-[1.08] tracking-tight text-[var(--color-text-primary)] sm:text-5xl lg:text-6xl">
-              The coding agent
+              Coding agents are products.
               <br />
-              you{" "}
+              This is the{" "}
               <span className="bg-gradient-to-r from-[var(--color-accent-blue)] to-[var(--color-accent-cyan)] bg-clip-text text-transparent">
-                npm install.
+                library.
               </span>
             </h1>
             <p className="max-w-lg text-lg leading-relaxed text-[var(--color-text-secondary)]">
-              LLM SDKs give you chat. Sandbox providers give you containers.
-              noumen is everything in between — the tool loop, file editing,
-              shell execution, and session management that turn a language model
-              into a coding agent.
+              The tool loop, file editing, shell execution, and session
+              management that power coding agents &mdash; as a composable npm
+              package. Every layer is a swappable adapter.
             </p>
-
-            <div className="flex flex-col gap-1.5 text-xs font-medium tracking-wide text-[var(--color-text-tertiary)] uppercase sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4 sm:gap-y-1">
-              <div className="flex items-center gap-4">
-                <span>Provider-agnostic</span>
-                <span className="text-[var(--color-accent-blue-dim)]">
-                  ✦
-                </span>
-                <span>Full tool loop</span>
-              </div>
-              <span className="hidden sm:inline text-[var(--color-accent-blue-dim)]">
-                ✦
-              </span>
-              <div className="flex items-center gap-4">
-                <span>Virtual infra</span>
-                <span className="text-[var(--color-accent-blue-dim)]">
-                  ✦
-                </span>
-                <span>MIT licensed</span>
-              </div>
-            </div>
 
             <TerminalBlock command="pnpm add noumen" className="max-w-lg" />
 
@@ -163,21 +108,9 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Right: serpent illustration + animated terminal */}
-          <div className="relative hidden lg:block">
-            <div className="animate-float">
-              <Image
-                src="/images/hero-serpent.webp"
-                alt="A glitch-occult serpent ouroboros made of code and circuit traces"
-                width={640}
-                height={640}
-                className="rounded-2xl opacity-90"
-                priority
-              />
-            </div>
-            <div className="mt-4">
-              <HeroTerminal />
-            </div>
+          {/* Right: interactive adapter stack */}
+          <div className="min-w-0">
+            <AdapterStack />
           </div>
         </div>
       </section>
@@ -213,65 +146,22 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ── Code example ── */}
+      {/* ── See it run ── */}
       <section className="relative overflow-hidden py-24 sm:py-32">
         <div className="absolute inset-0 bg-[var(--color-base-surface)]" />
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-[var(--color-accent-blue-dim)] via-transparent to-[var(--color-accent-cyan-dim)] opacity-40" />
         <div className="relative mx-auto max-w-6xl px-6">
           <div className="mx-auto max-w-2xl text-center">
-            <div className="mb-4 inline-block rounded-full border border-[var(--color-accent-blue)] bg-[var(--color-accent-blue-dim)] px-3 py-1 text-xs font-medium text-[var(--color-accent-blue)]">
-              Quick Start
-            </div>
             <h2 className="font-[family-name:var(--font-display)] text-3xl font-bold tracking-tight sm:text-4xl bg-gradient-to-r from-[var(--color-accent-blue)] to-[var(--color-accent-cyan)] bg-clip-text text-transparent">
-              Up and running in 12 lines.
+              A real agent run.
             </h2>
             <p className="mt-4 text-[var(--color-text-secondary)]">
-              Pick a provider, point at a filesystem, and start streaming events.
-              The serpent handles the rest.
+              One prompt. The agent reads files, edits code, runs tests,
+              and reports back &mdash; all through the tool loop.
             </p>
           </div>
-
-          <div className="mx-auto mt-10 max-w-3xl rounded-xl border border-[var(--color-border-default)] bg-[var(--color-base-body)] p-5 font-mono text-sm leading-6 shadow-2xl overflow-x-auto">
-            <div className="mb-4 flex items-center gap-2">
-              <div className="h-3 w-3 rounded-full bg-[#ff5f57]" />
-              <div className="h-3 w-3 rounded-full bg-[#febc2e]" />
-              <div className="h-3 w-3 rounded-full bg-[#28c840]" />
-              <span className="ml-2 text-xs text-[var(--color-text-tertiary)]">
-                index.ts
-              </span>
-            </div>
-            <pre className="text-[var(--color-text-secondary)] whitespace-pre">
-              <code>{CODE_EXAMPLE}</code>
-            </pre>
-          </div>
-        </div>
-      </section>
-
-      {/* ── Provider strip ── */}
-      <section className="py-24 sm:py-32">
-        <div className="mx-auto max-w-6xl px-6">
-          <h2 className="font-[family-name:var(--font-display)] text-center text-3xl font-bold tracking-tight text-[var(--color-text-primary)] sm:text-4xl">
-            The agent loop stays the same. Swap the brain.
-          </h2>
-          <p className="mx-auto mt-4 max-w-lg text-center text-[var(--color-text-secondary)]">
-            One interface. Three providers. Same streaming, same tool dispatch,
-            same results. Pick the model that fits.
-          </p>
-
-          <div className="mx-auto mt-12 grid max-w-3xl gap-6 sm:grid-cols-3">
-            {PROVIDERS.map((p) => (
-              <div
-                key={p.name}
-                className="group flex flex-col items-center gap-3 rounded-xl border border-[var(--color-border-default)] bg-[var(--color-base-card)] p-8 text-center transition hover:border-[var(--color-accent-blue)] hover:shadow-lg hover:shadow-[var(--color-accent-blue-dim)]"
-              >
-                <h3 className="text-lg font-bold text-[var(--color-text-primary)]">
-                  {p.name}
-                </h3>
-                <code className="rounded-md bg-[var(--color-base-body)] px-3 py-1.5 font-mono text-xs text-[var(--color-accent-cyan)]">
-                  {p.model}
-                </code>
-              </div>
-            ))}
+          <div className="mx-auto mt-10 max-w-3xl">
+            <HeroTerminal />
           </div>
         </div>
       </section>
@@ -282,10 +172,10 @@ export default function Home() {
         <div className="relative mx-auto max-w-2xl px-6 text-center">
           <div className="mb-4 text-5xl">🐍</div>
           <h2 className="font-[family-name:var(--font-display)] text-3xl font-bold tracking-tight text-[var(--color-text-primary)] sm:text-4xl">
-            Stop building the plumbing.
+            Every layer plugs in.
             <br />
             <span className="bg-gradient-to-r from-[var(--color-accent-blue)] to-[var(--color-accent-cyan)] bg-clip-text text-transparent">
-              Ship the agent.
+              Ship yours.
             </span>
           </h2>
           <div className="mt-8 space-y-2 text-left">

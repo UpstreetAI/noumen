@@ -45,6 +45,15 @@ body {
   50% { opacity: 1; transform: scale(1.2); }
 }
 
+@keyframes adapterSwap {
+  0% { opacity: 0.3; filter: blur(2px); }
+  100% { opacity: 1; filter: blur(0); }
+}
+
+.adapter-swap {
+  animation: adapterSwap 150ms ease-out;
+}
+
 @keyframes fadeInOut {
   0% { opacity: 0; transform: translateY(4px); }
   15% { opacity: 1; transform: translateY(0); }
