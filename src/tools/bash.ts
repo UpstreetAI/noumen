@@ -7,6 +7,13 @@ export const bashTool: Tool = {
   description:
     "Execute a bash shell command. Use this for running scripts, " +
     "installing packages, git operations, and other system commands.",
+  checkPermissions(args) {
+    const command = args.command as string;
+    return {
+      behavior: "passthrough" as const,
+      message: `Execute: ${command}`,
+    };
+  },
   parameters: {
     type: "object",
     properties: {

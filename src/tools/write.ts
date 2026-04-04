@@ -5,6 +5,14 @@ export const writeFileTool: Tool = {
   description:
     "Create or overwrite a file with the given content. " +
     "Parent directories are created automatically if they don't exist.",
+  isReadOnly: false,
+  checkPermissions(args) {
+    const filePath = args.file_path as string;
+    return {
+      behavior: "passthrough" as const,
+      message: `Write to ${filePath}`,
+    };
+  },
   parameters: {
     type: "object",
     properties: {

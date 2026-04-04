@@ -1,5 +1,6 @@
 import type { VirtualFs } from "../virtual/fs.js";
 import type { VirtualComputer } from "../virtual/computer.js";
+import type { PermissionResult } from "../permissions/types.js";
 
 export interface ToolResult {
   content: string;
@@ -33,5 +34,31 @@ export interface Tool {
   parameters: ToolParameters;
   /** Present on tools sourced from an MCP server */
   mcpInfo?: { serverName: string; toolName: string };
+
+  /**
+   * Whether this tool only reads state and never mutates it.
+   * When `true`, the tool is auto-allowed in `default` mode for working directories
+   * and is permitted in `plan` mode. Can be a static boolean or a function of the input.
+   * Defaults to `false` when omitted.
+   */
+  isReadOnly?: boolean | ((args: Record<string, unknown>) => boolean);
+
+  /**
+   * Whether this tool performs irreversible/destructive operations.
+   * Used as metadata in permission requests so handlers can make informed decisions.
+   * Defaults to `false` when omitted.
+   */
+  isDestructive?: boolean | ((args: Record<string, unknown>) => boolean);
+
+  /**
+   * Tool-specific permission check, called by the permission pipeline before
+   * global rules and mode-based decisions. Return `passthrough` to delegate
+   * to the global pipeline, or `allow`/`deny`/`ask` for tool-specific logic.
+   */
+  checkPermissions?: (
+    args: Record<string, unknown>,
+    ctx: ToolContext,
+  ) => Promise<PermissionResult> | PermissionResult;
+
   call(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult>;
 }

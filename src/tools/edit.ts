@@ -6,6 +6,14 @@ export const editFileTool: Tool = {
     "Edit a file by replacing an exact string match with new content. " +
     "The old_string must match exactly (including whitespace and indentation). " +
     "Set replace_all to true to replace all occurrences.",
+  isReadOnly: false,
+  checkPermissions(args) {
+    const filePath = args.file_path as string;
+    return {
+      behavior: "passthrough" as const,
+      message: `Edit ${filePath}`,
+    };
+  },
   parameters: {
     type: "object",
     properties: {

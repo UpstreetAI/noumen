@@ -121,3 +121,30 @@ export {
 
 // System prompt
 export { buildSystemPrompt } from "./prompt/system.js";
+
+// Permissions
+export type {
+  PermissionMode,
+  PermissionBehavior,
+  PermissionRule,
+  PermissionAllowResult,
+  PermissionDenyResult,
+  PermissionAskResult,
+  PermissionPassthroughResult,
+  PermissionResult,
+  PermissionDecision,
+  PermissionRequest,
+  PermissionResponse,
+  PermissionHandler,
+  PermissionConfig,
+  PermissionContext,
+} from "./permissions/types.js";
+export {
+  toolMatchesRule,
+  contentMatchesRule,
+  matchSimpleGlob,
+  getMatchingRules,
+  isPathInWorkingDirectories,
+} from "./permissions/rules.js";
+export { resolvePermission } from "./permissions/pipeline.js";
+export { resolveToolFlag } from "./tools/registry.js";

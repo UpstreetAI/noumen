@@ -5,6 +5,7 @@ import type { SkillDefinition } from "./skills/types.js";
 import type { Tool } from "./tools/types.js";
 import type { SessionInfo } from "./session/types.js";
 import type { McpServerConfig } from "./mcp/types.js";
+import type { PermissionConfig } from "./permissions/types.js";
 import { McpClientManager } from "./mcp/client.js";
 import { SessionStorage } from "./session/storage.js";
 import { Thread, type ThreadOptions } from "./thread.js";
@@ -27,6 +28,7 @@ export interface CodeOptions {
     autoCompact?: boolean;
     autoCompactThreshold?: number;
     cwd?: string;
+    permissions?: PermissionConfig;
   };
 }
 
@@ -48,6 +50,7 @@ export class Code {
   private resolvedSkills: SkillDefinition[] | null = null;
   private mcpManager: McpClientManager | null = null;
   private mcpTools: Tool[] = [];
+  private permissions?: PermissionConfig;
 
   constructor(opts: CodeOptions) {
     this.aiProvider = opts.aiProvider;
@@ -64,6 +67,7 @@ export class Code {
     this.autoCompactThreshold = opts.options?.autoCompactThreshold;
     this.cwd = opts.options?.cwd ?? "/";
     this.storage = new SessionStorage(this.fs, this.sessionDir);
+    this.permissions = opts.options?.permissions;
 
     if (opts.options?.mcpServers && Object.keys(opts.options.mcpServers).length > 0) {
       this.mcpManager = new McpClientManager(opts.options.mcpServers);
@@ -107,6 +111,7 @@ export class Code {
         model: this.model,
         maxTokens: this.maxTokens,
         autoCompact,
+        permissions: this.permissions,
       },
       {
         ...opts,

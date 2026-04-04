@@ -7,6 +7,20 @@ import { bashTool } from "./bash.js";
 import { globTool } from "./glob.js";
 import { grepTool } from "./grep.js";
 
+/**
+ * Resolve a tool flag that can be a static boolean or a function of the input.
+ * Returns `defaultValue` when the flag is `undefined`.
+ */
+export function resolveToolFlag(
+  flag: boolean | ((args: Record<string, unknown>) => boolean) | undefined,
+  args: Record<string, unknown>,
+  defaultValue = false,
+): boolean {
+  if (flag === undefined) return defaultValue;
+  if (typeof flag === "function") return flag(args);
+  return flag;
+}
+
 export class ToolRegistry {
   private tools: Map<string, Tool> = new Map();
 

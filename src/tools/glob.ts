@@ -8,6 +8,7 @@ export const globTool: Tool = {
     "Find files matching a glob pattern. Uses ripgrep (rg --files --glob) " +
     "for fast, gitignore-aware file discovery. Returns matching file paths " +
     "sorted by modification time.",
+  isReadOnly: true,
   parameters: {
     type: "object",
     properties: {

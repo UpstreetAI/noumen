@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
+import { createPortal } from "react-dom";
 import Image from "next/image";
 
 const BACKRONYMS = [
@@ -14,6 +15,37 @@ const BACKRONYMS = [
 
 const REVEAL_THRESHOLD = 7;
 
+function MascotOverlay({
+  fading,
+  onDismiss,
+}: {
+  fading: boolean;
+  onDismiss: () => void;
+}) {
+  return createPortal(
+    <div
+      className={`fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-black/90 transition-opacity duration-500 ${fading ? "opacity-0" : "opacity-100"}`}
+      onClick={onDismiss}
+    >
+      <div className="relative animate-[glitchIn_0.6s_ease-out_forwards]">
+        <Image
+          src="/mascot.png"
+          alt="The noumen serpent reveals itself"
+          width={400}
+          height={400}
+          className="rounded-2xl shadow-2xl shadow-[var(--color-accent-blue-dim)]"
+          priority
+        />
+        <div className="absolute inset-0 rounded-2xl bg-gradient-to-t from-[var(--color-accent-blue-dim)] to-transparent opacity-40 mix-blend-overlay" />
+      </div>
+      <p className="mt-8 font-mono text-xs text-[var(--color-text-tertiary)] tracking-widest uppercase">
+        the serpent sees you
+      </p>
+    </div>,
+    document.body,
+  );
+}
+
 export function SnakeEasterEgg() {
   const [clickCount, setClickCount] = useState(0);
   const [visibleBackronym, setVisibleBackronym] = useState<string | null>(null);
@@ -26,22 +58,24 @@ export function SnakeEasterEgg() {
     return () => clearTimeout(timer);
   }, [visibleBackronym]);
 
+  const dismissMascot = useCallback(() => {
+    setShowMascot(false);
+    setMascotFading(false);
+    try {
+      localStorage.setItem("noumen-seen-serpent", "1");
+    } catch {}
+    window.dispatchEvent(new Event("noumen-serpent-seen"));
+  }, []);
+
   useEffect(() => {
     if (!showMascot) return;
     const glitchTimer = setTimeout(() => setMascotFading(true), 1800);
-    const hideTimer = setTimeout(() => {
-      setShowMascot(false);
-      setMascotFading(false);
-      try {
-        localStorage.setItem("noumen-seen-serpent", "1");
-      } catch {}
-      window.dispatchEvent(new Event("noumen-serpent-seen"));
-    }, 2400);
+    const hideTimer = setTimeout(dismissMascot, 2400);
     return () => {
       clearTimeout(glitchTimer);
       clearTimeout(hideTimer);
     };
-  }, [showMascot]);
+  }, [showMascot, dismissMascot]);
 
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
@@ -79,32 +113,7 @@ export function SnakeEasterEgg() {
       </span>
 
       {showMascot && (
-        <div
-          className={`fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 transition-opacity duration-500 ${mascotFading ? "opacity-0" : "opacity-100"}`}
-          onClick={() => {
-            setShowMascot(false);
-            setMascotFading(false);
-            try {
-              localStorage.setItem("noumen-seen-serpent", "1");
-            } catch {}
-            window.dispatchEvent(new Event("noumen-serpent-seen"));
-          }}
-        >
-          <div className="relative animate-[glitchIn_0.6s_ease-out_forwards]">
-            <Image
-              src="/mascot.png"
-              alt="The noumen serpent reveals itself"
-              width={400}
-              height={400}
-              className="rounded-2xl shadow-2xl shadow-[var(--color-accent-blue-dim)] mix-blend-screen"
-              priority
-            />
-            <div className="absolute inset-0 rounded-2xl bg-gradient-to-t from-[var(--color-accent-blue-dim)] to-transparent opacity-40 mix-blend-overlay" />
-          </div>
-          <p className="absolute bottom-12 font-mono text-xs text-[var(--color-text-tertiary)] tracking-widest uppercase">
-            the serpent sees you
-          </p>
-        </div>
+        <MascotOverlay fading={mascotFading} onDismiss={dismissMascot} />
       )}
     </>
   );

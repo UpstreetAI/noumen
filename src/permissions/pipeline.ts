@@ -1,0 +1,218 @@
+import type { Tool, ToolContext } from "../tools/types.js";
+import type {
+  PermissionContext,
+  PermissionDecision,
+  PermissionResult,
+} from "./types.js";
+import { getMatchingRules, isPathInWorkingDirectories } from "./rules.js";
+import { resolveToolFlag } from "../tools/registry.js";
+
+/**
+ * Resolve the permission decision for a tool invocation.
+ *
+ * Pipeline mirrors claude-code's `hasPermissionsToUseToolInner`:
+ *  1. Deny rules for the whole tool
+ *  2. Ask rules for the whole tool
+ *  3. Tool's own `checkPermissions` (if defined)
+ *  4. Mode-based bypass / enforcement
+ *  5. Content-specific allow rules
+ *  6. Fallback: passthrough → ask
+ */
+export async function resolvePermission(
+  tool: Tool,
+  input: Record<string, unknown>,
+  ctx: ToolContext,
+  permCtx: PermissionContext,
+): Promise<PermissionDecision> {
+  const toolName = tool.name;
+  const contentHint = extractContentHint(tool, input);
+
+  // 1. Deny rules for whole tool (no ruleContent)
+  const wholeDenyRules = getMatchingRules(
+    permCtx,
+    toolName,
+    "deny",
+    undefined,
+    tool.mcpInfo,
+  );
+  if (wholeDenyRules.length > 0) {
+    return {
+      behavior: "deny",
+      message: `Tool "${toolName}" is denied by rule.`,
+      reason: "rule",
+    };
+  }
+
+  // 1b. Content-specific deny rules
+  if (contentHint !== undefined) {
+    const contentDenyRules = getMatchingRules(
+      permCtx,
+      toolName,
+      "deny",
+      contentHint,
+      tool.mcpInfo,
+    );
+    if (contentDenyRules.length > 0) {
+      return {
+        behavior: "deny",
+        message: `Tool "${toolName}" with "${contentHint}" is denied by rule.`,
+        reason: "rule",
+      };
+    }
+  }
+
+  // 2. Ask rules for whole tool
+  const wholeAskRules = getMatchingRules(
+    permCtx,
+    toolName,
+    "ask",
+    undefined,
+    tool.mcpInfo,
+  );
+  if (wholeAskRules.length > 0) {
+    return {
+      behavior: "ask",
+      message: `Tool "${toolName}" requires approval.`,
+      reason: "rule",
+    };
+  }
+
+  // 3. Tool's own checkPermissions
+  let toolResult: PermissionResult | undefined;
+  if (tool.checkPermissions) {
+    toolResult = await tool.checkPermissions(input, ctx);
+
+    if (toolResult.behavior === "deny") {
+      return {
+        behavior: "deny",
+        message: toolResult.message,
+        reason: toolResult.reason ?? "tool",
+      };
+    }
+    if (toolResult.behavior === "ask") {
+      // Ask results from the tool are bypass-resistant (safety/interaction)
+      // when the mode is NOT bypassPermissions. When bypass is on, we skip
+      // to step 4 instead of returning early.
+      if (permCtx.mode !== "bypassPermissions") {
+        return {
+          behavior: "ask",
+          message: toolResult.message,
+          reason: toolResult.reason ?? "tool",
+          suggestions: toolResult.suggestions,
+        };
+      }
+    }
+    if (toolResult.behavior === "allow") {
+      return {
+        behavior: "allow",
+        updatedInput: toolResult.updatedInput,
+        reason: toolResult.reason ?? "tool",
+      };
+    }
+  }
+
+  // 4. Mode-based bypass / enforcement
+  if (permCtx.mode === "bypassPermissions") {
+    return {
+      behavior: "allow",
+      updatedInput: input,
+      reason: "mode",
+    };
+  }
+
+  const isReadOnly = resolveToolFlag(tool.isReadOnly, input);
+
+  if (permCtx.mode === "plan" && !isReadOnly) {
+    return {
+      behavior: "deny",
+      message: `Tool "${toolName}" is not allowed in plan mode (read-only).`,
+      reason: "mode",
+    };
+  }
+
+  // Read-only tools are auto-allowed in any mode (except when an ask/deny
+  // rule explicitly overrode them in steps 1-2 above).
+  if (isReadOnly) {
+    return {
+      behavior: "allow",
+      updatedInput: input,
+      reason: "readOnly",
+    };
+  }
+
+  // 5. Content-specific allow rules
+  if (contentHint !== undefined) {
+    const contentAllowRules = getMatchingRules(
+      permCtx,
+      toolName,
+      "allow",
+      contentHint,
+      tool.mcpInfo,
+    );
+    if (contentAllowRules.length > 0) {
+      return {
+        behavior: "allow",
+        updatedInput: input,
+        reason: "rule",
+      };
+    }
+  }
+
+  // Whole-tool allow rules
+  const wholeAllowRules = getMatchingRules(
+    permCtx,
+    toolName,
+    "allow",
+    undefined,
+    tool.mcpInfo,
+  );
+  if (wholeAllowRules.length > 0) {
+    return {
+      behavior: "allow",
+      updatedInput: input,
+      reason: "rule",
+    };
+  }
+
+  // dontAsk mode: deny anything that would prompt (reads already allowed above)
+  if (permCtx.mode === "dontAsk") {
+    return {
+      behavior: "deny",
+      message: `Tool "${toolName}" requires approval, but mode is "dontAsk".`,
+      reason: "mode",
+    };
+  }
+
+  // 6. Fallback: passthrough → ask
+  const message =
+    toolResult?.behavior === "passthrough"
+      ? toolResult.message
+      : `Tool "${toolName}" requires approval.`;
+  const suggestions =
+    toolResult?.behavior === "passthrough"
+      ? toolResult.suggestions
+      : undefined;
+
+  return {
+    behavior: "ask",
+    message,
+    reason: "default",
+    suggestions,
+  };
+}
+
+/**
+ * Extract a content string from tool input for rule matching.
+ *
+ * For file tools this is the `file_path`; for bash it's the `command`.
+ * Returns `undefined` if no meaningful content is available.
+ */
+function extractContentHint(
+  tool: Tool,
+  input: Record<string, unknown>,
+): string | undefined {
+  if (typeof input.file_path === "string") return input.file_path;
+  if (typeof input.command === "string") return input.command;
+  if (typeof input.path === "string") return input.path;
+  return undefined;
+}

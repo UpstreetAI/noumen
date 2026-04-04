@@ -144,7 +144,24 @@ export type StreamEvent =
     }
   | { type: "compact_start" }
   | { type: "compact_complete" }
-  | { type: "error"; error: Error };
+  | { type: "error"; error: Error }
+  | {
+      type: "permission_request";
+      toolName: string;
+      input: Record<string, unknown>;
+      message: string;
+    }
+  | {
+      type: "permission_granted";
+      toolName: string;
+      input: Record<string, unknown>;
+    }
+  | {
+      type: "permission_denied";
+      toolName: string;
+      input: Record<string, unknown>;
+      message: string;
+    };
 
 export interface RunOptions {
   signal?: AbortSignal;

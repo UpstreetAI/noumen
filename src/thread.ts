@@ -10,7 +10,13 @@ import type {
 } from "./session/types.js";
 import type { SkillDefinition } from "./skills/types.js";
 import type { Tool, ToolContext } from "./tools/types.js";
-import { ToolRegistry } from "./tools/registry.js";
+import type {
+  PermissionConfig,
+  PermissionContext,
+  PermissionHandler,
+  PermissionRequest,
+} from "./permissions/types.js";
+import { ToolRegistry, resolveToolFlag } from "./tools/registry.js";
 import { SessionStorage } from "./session/storage.js";
 import { buildSystemPrompt } from "./prompt/system.js";
 import { compactConversation } from "./compact/compact.js";
@@ -22,6 +28,7 @@ import {
 import { generateUUID } from "./utils/uuid.js";
 import { activateSkillsForPaths, getActiveSkills } from "./skills/activation.js";
 import { createSkillTool } from "./tools/skill.js";
+import { resolvePermission } from "./permissions/pipeline.js";
 
 const FILE_TOOLS = new Set(["ReadFile", "WriteFile", "EditFile"]);
 
@@ -43,6 +50,7 @@ export interface ThreadConfig {
   model?: string;
   maxTokens?: number;
   autoCompact?: AutoCompactConfig;
+  permissions?: PermissionConfig;
 }
 
 export class Thread {
@@ -57,6 +65,8 @@ export class Thread {
   private cwd: string;
   private model: string;
   private activatedSkills: Set<string> = new Set();
+  private permissionContext: PermissionContext | null = null;
+  private permissionHandler: PermissionHandler | null = null;
 
   constructor(config: ThreadConfig, opts?: ThreadOptions) {
     this.config = config;
@@ -64,6 +74,15 @@ export class Thread {
     this.cwd = opts?.cwd ?? "/";
     this.model = opts?.model ?? config.model ?? "gpt-4o";
     this.storage = new SessionStorage(config.fs, config.sessionDir);
+
+    if (config.permissions) {
+      this.permissionContext = {
+        mode: config.permissions.mode ?? "default",
+        rules: [...(config.permissions.rules ?? [])],
+        workingDirectories: [...(config.permissions.workingDirectories ?? [])],
+      };
+      this.permissionHandler = config.permissions.handler ?? null;
+    }
 
     const extraTools = [...(config.tools ?? [])];
 
@@ -231,6 +250,106 @@ export class Thread {
               parsedArgs = JSON.parse(tc.function.arguments);
             } catch {
               // malformed JSON from model
+            }
+
+            // --- Permission gate ---
+            if (this.permissionContext) {
+              const tool = this.toolRegistry.get(tc.function.name);
+              if (tool) {
+                const decision = await resolvePermission(
+                  tool,
+                  parsedArgs,
+                  toolCtx,
+                  this.permissionContext,
+                );
+
+                if (decision.behavior === "deny") {
+                  yield {
+                    type: "permission_denied",
+                    toolName: tc.function.name,
+                    input: parsedArgs,
+                    message: decision.message,
+                  };
+                  const denyMsg: ChatMessage = {
+                    role: "tool",
+                    tool_call_id: tc.id,
+                    content: `Permission denied: ${decision.message}`,
+                  };
+                  this.messages.push(denyMsg);
+                  await this.storage.appendMessage(this.sessionId, denyMsg);
+                  continue;
+                }
+
+                if (decision.behavior === "ask") {
+                  yield {
+                    type: "permission_request",
+                    toolName: tc.function.name,
+                    input: parsedArgs,
+                    message: decision.message,
+                  };
+
+                  if (this.permissionHandler) {
+                    const isReadOnly = resolveToolFlag(tool.isReadOnly, parsedArgs);
+                    const isDestructive = resolveToolFlag(tool.isDestructive, parsedArgs);
+                    const request: PermissionRequest = {
+                      toolName: tc.function.name,
+                      input: parsedArgs,
+                      message: decision.message,
+                      suggestions: decision.suggestions,
+                      isReadOnly,
+                      isDestructive,
+                    };
+                    const response = await this.permissionHandler(request);
+
+                    if (!response.allow) {
+                      const feedback = response.feedback ?? "User denied permission.";
+                      yield {
+                        type: "permission_denied",
+                        toolName: tc.function.name,
+                        input: parsedArgs,
+                        message: feedback,
+                      };
+                      const denyMsg: ChatMessage = {
+                        role: "tool",
+                        tool_call_id: tc.id,
+                        content: `Permission denied: ${feedback}`,
+                      };
+                      this.messages.push(denyMsg);
+                      await this.storage.appendMessage(this.sessionId, denyMsg);
+                      continue;
+                    }
+
+                    if (response.updatedInput) {
+                      parsedArgs = response.updatedInput;
+                    }
+                    if (response.addRules) {
+                      this.permissionContext.rules.push(...response.addRules);
+                    }
+                  } else {
+                    // No handler + ask = deny (fail-closed)
+                    yield {
+                      type: "permission_denied",
+                      toolName: tc.function.name,
+                      input: parsedArgs,
+                      message: "No permission handler configured.",
+                    };
+                    const denyMsg: ChatMessage = {
+                      role: "tool",
+                      tool_call_id: tc.id,
+                      content: "Permission denied: No permission handler configured.",
+                    };
+                    this.messages.push(denyMsg);
+                    await this.storage.appendMessage(this.sessionId, denyMsg);
+                    continue;
+                  }
+                }
+
+                yield {
+                  type: "permission_granted",
+                  toolName: tc.function.name,
+                  input: parsedArgs,
+                };
+              }
             }
 
             const result = await this.toolRegistry.execute(

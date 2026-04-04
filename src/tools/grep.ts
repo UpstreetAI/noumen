@@ -7,6 +7,7 @@ export const grepTool: Tool = {
   description:
     "Search file contents using ripgrep (rg). Supports regex patterns. " +
     "Returns matching lines with file paths and line numbers.",
+  isReadOnly: true,
   parameters: {
     type: "object",
     properties: {
