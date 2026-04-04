@@ -152,9 +152,12 @@ export function detectTurnInterruption(messages: ChatMessage[]): TurnInterruptio
       return { kind: "interrupted_tool" };
     }
     if (msg.role === "user") {
+      const text = typeof msg.content === "string" ? msg.content : "";
+      if (text.startsWith("[Conversation Summary]")) {
+        return { kind: "none" };
+      }
       return { kind: "interrupted_prompt" };
     }
-    // Last significant message is assistant — turn completed normally
     return { kind: "none" };
   }
   return { kind: "none" };

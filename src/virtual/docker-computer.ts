@@ -80,6 +80,7 @@ function collectStream(
   return new Promise((resolve, reject) => {
     const stdoutBufs: Buffer[] = [];
     const stderrBufs: Buffer[] = [];
+    let pending: Buffer = Buffer.alloc(0);
 
     const timer = setTimeout(() => {
       (stream as unknown as { destroy?: () => void }).destroy?.();
@@ -91,14 +92,13 @@ function collectStream(
     }, timeout);
 
     stream.on("data", (chunk: Buffer) => {
-      // Docker multiplexed stream: first 8 bytes are header
-      // byte 0: stream type (1=stdout, 2=stderr)
-      // bytes 4-7: payload length (big-endian uint32)
+      let buf = pending.length > 0 ? Buffer.concat([pending, chunk]) : chunk;
       let offset = 0;
-      while (offset + 8 <= chunk.length) {
-        const streamType = chunk[offset];
-        const payloadLen = chunk.readUInt32BE(offset + 4);
-        const payload = chunk.subarray(offset + 8, offset + 8 + payloadLen);
+      while (offset + 8 <= buf.length) {
+        const payloadLen = buf.readUInt32BE(offset + 4);
+        if (offset + 8 + payloadLen > buf.length) break;
+        const streamType = buf[offset];
+        const payload = buf.subarray(offset + 8, offset + 8 + payloadLen);
         if (streamType === 2) {
           stderrBufs.push(payload);
         } else {
@@ -106,6 +106,7 @@ function collectStream(
         }
         offset += 8 + payloadLen;
       }
+      pending = offset < buf.length ? buf.subarray(offset) : Buffer.alloc(0);
     });
 
     stream.on("end", () => {

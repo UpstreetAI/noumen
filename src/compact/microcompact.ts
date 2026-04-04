@@ -14,9 +14,10 @@ export interface MicrocompactResult {
 }
 
 /**
- * Tools whose results are large and safe to clear without losing critical
- * write context. Edit/Write results are small and document mutations the
- * model needs to remember, so they are excluded.
+ * Tools whose results can be safely cleared to free context tokens.
+ * Includes read-heavy tools (ReadFile, Grep, Glob, WebFetch, WebSearch,
+ * Bash) as well as mutation tools (EditFile, WriteFile) whose results
+ * are short confirmation strings the model can reconstruct from context.
  */
 export const COMPACTABLE_TOOLS = new Set([
   "ReadFile",

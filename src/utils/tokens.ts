@@ -82,21 +82,29 @@ export function tokenCountWithEstimation(
 }
 
 /**
- * Group messages into turn groups (user -> assistant -> tool_results).
- * Each group represents one logical exchange.
+ * Group messages into API-round groups. A new group starts when an
+ * assistant message follows a tool result (i.e. each model response
+ * round). This gives finer-grained groups than splitting on user
+ * messages, enabling PTL recovery in agentic sessions with many
+ * tool-use rounds under a single user prompt.
  */
 export function groupMessagesByTurn(
   messages: ChatMessage[],
 ): ChatMessage[][] {
   const groups: ChatMessage[][] = [];
   let current: ChatMessage[] = [];
+  let prevRole: string | undefined;
 
   for (const msg of messages) {
-    if (msg.role === "user" && current.length > 0) {
+    if (msg.role === "assistant" && prevRole === "tool" && current.length > 0) {
+      groups.push(current);
+      current = [];
+    } else if (msg.role === "user" && current.length > 0) {
       groups.push(current);
       current = [];
     }
     current.push(msg);
+    prevRole = msg.role;
   }
 
   if (current.length > 0) {
@@ -106,6 +114,9 @@ export function groupMessagesByTurn(
   return groups;
 }
 
+const PTL_RETRY_MARKER =
+  "[Earlier conversation history was truncated to fit context window.]";
+
 /**
  * Drop the oldest turn groups until estimated tokens drop below `targetTokens`.
  * Returns the trimmed message list. Used for prompt-too-long recovery.
@@ -114,10 +125,18 @@ export function truncateHeadForPTLRetry(
   messages: ChatMessage[],
   targetTokens: number,
 ): ChatMessage[] {
-  const groups = groupMessagesByTurn(messages);
+  const input =
+    messages.length > 0 &&
+    messages[0].role === "user" &&
+    typeof messages[0].content === "string" &&
+    messages[0].content === PTL_RETRY_MARKER
+      ? messages.slice(1)
+      : messages;
+
+  const groups = groupMessagesByTurn(input);
   if (groups.length <= 1) return messages;
 
-  let totalEstimate = estimateMessagesTokens(messages);
+  let totalEstimate = estimateMessagesTokens(input);
   let dropCount = 0;
 
   while (dropCount < groups.length - 1 && totalEstimate > targetTokens) {
@@ -132,8 +151,7 @@ export function truncateHeadForPTLRetry(
   if (remaining.length > 0 && remaining[0].role !== "user") {
     remaining.unshift({
       role: "user",
-      content:
-        "[Earlier conversation history was truncated to fit context window.]",
+      content: PTL_RETRY_MARKER,
     });
   }
 

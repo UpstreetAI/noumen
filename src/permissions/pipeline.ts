@@ -118,12 +118,11 @@ export async function resolvePermission(
       };
     }
     if (toolResult.behavior === "ask") {
-      // Bypass-immune guards: safety checks and interactive tools always prompt,
-      // even in bypassPermissions mode.
       const isSafetyCheck = toolResult.reason === "safetyCheck";
       const isInteractive = tool.requiresUserInteraction === true;
+      const isContentSpecificRule = toolResult.reason === "rule";
 
-      if (isSafetyCheck || isInteractive || permCtx.mode !== "bypassPermissions") {
+      if (isSafetyCheck || isInteractive || isContentSpecificRule || permCtx.mode !== "bypassPermissions") {
         return {
           behavior: "ask",
           message: toolResult.message,

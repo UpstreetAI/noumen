@@ -1,5 +1,4 @@
 import type { AIProvider, ChatCompletionUsage, OutputFormat } from "./providers/types.js";
-import { truncateHeadForPTLRetry } from "./utils/tokens.js";
 import type { VirtualFs } from "./virtual/fs.js";
 import type { VirtualComputer } from "./virtual/computer.js";
 import type {
@@ -96,7 +95,7 @@ import { createSkillTool } from "./tools/skill.js";
 import { resolvePermission, type ResolvePermissionOptions } from "./permissions/pipeline.js";
 import { isPathInWorkingDirectories } from "./permissions/rules.js";
 import { DenialTracker } from "./permissions/denial-tracking.js";
-import { withRetry, CannotRetryError, FallbackTriggeredError } from "./retry/engine.js";
+import { withRetry, CannotRetryError } from "./retry/engine.js";
 import { classifyError } from "./retry/classify.js";
 import {
   createStructuredOutputTool,
@@ -294,6 +293,18 @@ export class Thread {
             );
           }
 
+          if (this.config.toolResultStorage?.enabled && this.config.fs) {
+            const storageResult = await enforceToolResultStorageBudget(
+              this.messages,
+              this.config.toolResultStorage,
+              this.config.fs,
+              this.sessionId,
+              this.contentReplacementState,
+            );
+            this.messages = storageResult.messages;
+            this.contentReplacementState = storageResult.state;
+          }
+
           // Emit recovery diagnostics
           for (const [filterName, count] of Object.entries(payload.recoveryRemovals)) {
             if (count > 0) {
@@ -443,6 +454,59 @@ export class Thread {
             this.messages = mcResult.messages;
             this.microcompactTokensFreed += mcResult.tokensFreed;
             yield { type: "microcompact_complete", tokensFreed: mcResult.tokensFreed };
+          }
+        }
+
+        // --- Proactive auto-compact (inside loop, before each API call) ---
+        const loopAutoCompactConfig =
+          this.config.autoCompact ?? createAutoCompactConfig({ model: this.model });
+        if (
+          canAutoCompact(this.autoCompactTracking) &&
+          shouldAutoCompact(
+            this.messages,
+            loopAutoCompactConfig,
+            this.lastUsage,
+            this.anchorMessageIndex,
+            this.microcompactTokensFreed,
+          )
+        ) {
+          await runNotificationHooks(hooks, "PreCompact", {
+            event: "PreCompact",
+            sessionId: this.sessionId,
+          });
+          yield { type: "compact_start" };
+          try {
+            this.messages = await compactConversation(
+              this.config.aiProvider,
+              this.model,
+              this.messages,
+              this.storage,
+              this.sessionId,
+              {
+                tailMessagesToKeep: loopAutoCompactConfig.tailMessagesToKeep,
+                stripBinaryContent: true,
+              },
+            );
+            this.lastUsage = undefined;
+            this.anchorMessageIndex = undefined;
+            this.microcompactTokensFreed = 0;
+            recordAutoCompactSuccess(this.autoCompactTracking);
+            yield { type: "compact_complete" };
+            await runNotificationHooks(hooks, "PostCompact", {
+              event: "PostCompact",
+              sessionId: this.sessionId,
+            });
+          } catch (compactErr) {
+            recordAutoCompactFailure(this.autoCompactTracking);
+            const error = compactErr instanceof Error
+              ? compactErr
+              : new Error(`Compaction failed: ${String(compactErr)}`);
+            await runNotificationHooks(hooks, "Error", {
+              event: "Error",
+              sessionId: this.sessionId,
+              error,
+            });
+            yield { type: "error", error };
           }
         }
 
@@ -719,6 +783,7 @@ export class Thread {
           turnUsage.total_tokens += lastUsage.total_tokens;
           this.lastUsage = lastUsage;
           this.anchorMessageIndex = this.messages.length - 1;
+          this.microcompactTokensFreed = 0;
           yield { type: "usage", usage: lastUsage, model: this.model };
 
           if (this.config.costTracker) {
@@ -1247,81 +1312,6 @@ export class Thread {
           }
         } catch {
           // Memory extraction is best-effort; don't fail the turn.
-        }
-      }
-
-      // --- Compaction with hooks (model-aware + circuit breaker) ---
-      const autoCompactConfig =
-        this.config.autoCompact ?? createAutoCompactConfig({ model: this.model });
-      if (
-        canAutoCompact(this.autoCompactTracking) &&
-        shouldAutoCompact(
-          this.messages,
-          autoCompactConfig,
-          this.lastUsage,
-          this.anchorMessageIndex,
-          this.microcompactTokensFreed,
-        )
-      ) {
-        await runNotificationHooks(hooks, "PreCompact", {
-          event: "PreCompact",
-          sessionId: this.sessionId,
-        });
-
-        const compactSpanId = generateUUID();
-        const compactSpan = this.tracer.startSpan("noumen.compact", {
-          parent: interactionSpan,
-          attributes: { "messages.before": this.messages.length },
-        });
-        const compactStart = Date.now();
-        yield { type: "span_start", name: "noumen.compact", spanId: compactSpanId };
-
-        yield { type: "compact_start" };
-        try {
-          this.messages = await compactConversation(
-            this.config.aiProvider,
-            this.model,
-            this.messages,
-            this.storage,
-            this.sessionId,
-            {
-              tailMessagesToKeep: autoCompactConfig.tailMessagesToKeep,
-              stripBinaryContent: true,
-            },
-          );
-          this.lastUsage = undefined;
-          this.anchorMessageIndex = undefined;
-          recordAutoCompactSuccess(this.autoCompactTracking);
-
-          compactSpan.setAttribute("messages.after", this.messages.length);
-          compactSpan.setStatus(SpanStatusCode.OK);
-          compactSpan.end();
-          yield { type: "span_end", name: "noumen.compact", spanId: compactSpanId, durationMs: Date.now() - compactStart };
-
-          yield { type: "compact_complete" };
-
-          await runNotificationHooks(hooks, "PostCompact", {
-            event: "PostCompact",
-            sessionId: this.sessionId,
-          });
-        } catch (err) {
-          recordAutoCompactFailure(this.autoCompactTracking);
-
-          const error = err instanceof Error
-            ? err
-            : new Error(`Compaction failed: ${String(err)}`);
-
-          compactSpan.setStatus(SpanStatusCode.ERROR, error.message);
-          compactSpan.end();
-          yield { type: "span_end", name: "noumen.compact", spanId: compactSpanId, durationMs: Date.now() - compactStart, error: error.message };
-
-          await runNotificationHooks(hooks, "Error", {
-            event: "Error",
-            sessionId: this.sessionId,
-            error,
-          });
-
-          yield { type: "error", error };
         }
       }
 

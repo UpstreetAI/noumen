@@ -7,6 +7,7 @@
  */
 
 import type { CommandClassification, ShellSafetyConfig } from "./types.js";
+import { commandWritesGitInternals } from "./git-safety.js";
 
 // -- Read-only commands: always safe, never modify state --
 
@@ -23,11 +24,7 @@ const READ_ONLY_COMMANDS = new Set([
   "where",
   "whereis",
   "type",
-  "echo",
-  "printf",
   "pwd",
-  "env",
-  "printenv",
   "date",
   "uname",
   "hostname",
@@ -207,11 +204,20 @@ const DESTRUCTIVE_PATTERNS: RegExp[] = [
   /\bfind\s+\/\s+.*-exec\s+rm\b/,
 ];
 
+const SAFE_ECHO_RE = /^(?:echo|printf)(?:\s+(?:'[^']*'|[^|;&`$(){}><#\\!"'\s]+))*(?:\s+2>&1)?\s*$/;
+
+function hasTokenFlag(tokens: string[], ...flags: string[]): boolean {
+  return tokens.some((t) => flags.includes(t));
+}
+
 /**
  * Split a compound command into individual sub-commands.
  * Handles: `;`, `&&`, `||`, `|`
- * Does NOT handle quoted strings containing these operators — a conservative
- * approximation that biases toward classifying as non-read-only (safe default).
+ *
+ * LIMITATION: Does not respect quoted strings — `echo "hello && world"` will
+ * be split incorrectly. This is a conservative approximation: the resulting
+ * fragments will fail to match the read-only allowlist, so the bias is toward
+ * requiring permission (safe default). A proper fix would use a shell parser.
  */
 function splitCompoundCommand(command: string): string[] {
   return command
@@ -275,46 +281,58 @@ function classifyGitCommand(command: string): CommandClassification {
   const subcommand = match[1];
 
   if (GIT_READ_ONLY_SUBCOMMANDS.has(subcommand)) {
-    // Some "read-only" subcommands become mutating with certain args
-    if (subcommand === "branch" && !command.includes("--list") && !command.includes("-l")) {
-      if (command.includes("-d") || command.includes("-D") || command.includes("--delete")) {
+    const afterSubcmd = command.slice(command.indexOf(subcommand) + subcommand.length).trim();
+    const tokens = afterSubcmd.split(/\s+/).filter(Boolean);
+    const positional = tokens.filter((t) => !t.startsWith("-"));
+    const flags = tokens.filter((t) => t.startsWith("-"));
+
+    if (subcommand === "branch") {
+      if (hasTokenFlag(flags, "--list", "-l")) {
+        return { isReadOnly: true, isDestructive: false, reason: "git branch --list is read-only" };
+      }
+      if (hasTokenFlag(flags, "-d", "-D", "--delete")) {
         return { isReadOnly: false, isDestructive: true, reason: "git branch delete" };
       }
-      const afterBranch = command.slice(command.indexOf("branch") + 6).trim();
-      const tokens = afterBranch.split(/\s+/).filter((t) => t && !t.startsWith("-"));
-      if (tokens.length > 0) {
+      if (positional.length > 0) {
         return { isReadOnly: false, isDestructive: false, reason: "git branch create" };
       }
     }
-    if (subcommand === "tag" && !command.includes("-l") && !command.includes("--list")) {
-      if (command.includes("-d") || command.includes("-D") || command.includes("--delete")) {
+
+    if (subcommand === "tag") {
+      if (hasTokenFlag(flags, "-l", "--list")) {
+        return { isReadOnly: true, isDestructive: false, reason: "git tag --list is read-only" };
+      }
+      if (hasTokenFlag(flags, "-d", "-D", "--delete")) {
         return { isReadOnly: false, isDestructive: true, reason: "git tag delete" };
       }
-      const afterTag = command.slice(command.indexOf("tag") + 3).trim();
-      const tokens = afterTag.split(/\s+/).filter((t) => !t.startsWith("-"));
-      if (tokens.length > 0) {
+      if (positional.length > 0) {
         return { isReadOnly: false, isDestructive: false, reason: "git tag create" };
       }
     }
+
     if (subcommand === "stash") {
-      if (command.includes("pop") || command.includes("apply") || command.includes("drop") || command.includes("clear")) {
-        const isDestructive = command.includes("drop") || command.includes("clear");
-        return { isReadOnly: false, isDestructive, reason: "git stash mutating operation" };
+      const stashSubcmd = positional[0];
+      if (stashSubcmd === "list" || stashSubcmd === "show") {
+        return { isReadOnly: true, isDestructive: false, reason: `git stash ${stashSubcmd} is read-only` };
       }
+      if (stashSubcmd === "drop" || stashSubcmd === "clear") {
+        return { isReadOnly: false, isDestructive: true, reason: "git stash destructive operation" };
+      }
+      return { isReadOnly: false, isDestructive: false, reason: "git stash mutating operation" };
     }
+
     if (subcommand === "config") {
-      if (/(?:^|\s)(--set|--add|--unset|--unset-all|--replace-all|--rename-section|--remove-section)(?:\s|$)/.test(command)) {
+      if (hasTokenFlag(flags, "--set", "--add", "--unset", "--unset-all", "--replace-all", "--rename-section", "--remove-section")) {
         return { isReadOnly: false, isDestructive: false, reason: "git config write operation" };
       }
-      // config with a value argument (e.g. git config user.name "Foo")
-      const afterConfig = command.slice(command.indexOf("config") + 6).trim();
-      const configTokens = afterConfig.split(/\s+/).filter((t) => t && !t.startsWith("-"));
-      if (configTokens.length >= 2) {
+      if (positional.length >= 2) {
         return { isReadOnly: false, isDestructive: false, reason: "git config set key value" };
       }
     }
+
     if (subcommand === "remote") {
-      if (/\b(add|remove|rename|set-url|set-branches|prune)\b/.test(command)) {
+      const remoteSubcmd = positional[0];
+      if (remoteSubcmd && ["add", "remove", "rename", "set-url", "set-branches", "prune"].includes(remoteSubcmd)) {
         return { isReadOnly: false, isDestructive: false, reason: "git remote mutating operation" };
       }
     }
@@ -372,6 +390,10 @@ function classifySingleCommand(
     return classifyGitCommand(command);
   }
 
+  if ((name === "echo" || name === "printf") && SAFE_ECHO_RE.test(command.trim())) {
+    return { isReadOnly: true, isDestructive: false, reason: `${name} with safe arguments is read-only` };
+  }
+
   // Check against read-only allowlist
   const extraReadOnly = new Set(config?.extraReadOnlyCommands ?? []);
   if (READ_ONLY_COMMANDS.has(name) || extraReadOnly.has(name)) {
@@ -405,8 +427,6 @@ export function classifyCommand(
     return { isReadOnly: true, isDestructive: false, reason: "Empty command" };
   }
 
-  // cd/pushd + git compound: prevents bare-repo attacks where
-  // `cd /tmp/malicious-repo && git status` triggers malicious hooks
   if (subCommands.length > 1) {
     const hasCd = subCommands.some((s) => /^(cd|pushd)\s/.test(s.trim()));
     const hasGit = subCommands.some((s) => {
@@ -418,6 +438,14 @@ export function classifyCommand(
         isReadOnly: false,
         isDestructive: false,
         reason: "cd + git compound may escape working directory (bare-repo risk)",
+      };
+    }
+
+    if (hasGit && commandWritesGitInternals(command)) {
+      return {
+        isReadOnly: false,
+        isDestructive: true,
+        reason: "Compound command writes to git internal paths before running git",
       };
     }
   }

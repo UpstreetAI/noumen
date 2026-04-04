@@ -50,20 +50,24 @@ export async function runPreToolUseHooks(
   let merged: PreToolUseHookOutput = {};
 
   for (const hook of matching) {
-    const output = (await hook.handler(input)) as PreToolUseHookOutput | void;
-    if (!output) continue;
+    try {
+      const output = (await hook.handler(input)) as PreToolUseHookOutput | void;
+      if (!output) continue;
 
-    if (output.decision === "deny") {
-      return output;
-    }
-    if (output.updatedInput !== undefined) {
-      merged.updatedInput = output.updatedInput;
-      input = { ...input, toolInput: output.updatedInput };
-    }
-    if (output.decision !== undefined) merged.decision = output.decision;
-    if (output.message !== undefined) merged.message = output.message;
-    if (output.preventContinuation !== undefined) {
-      merged.preventContinuation = output.preventContinuation;
+      if (output.decision === "deny") {
+        return output;
+      }
+      if (output.updatedInput !== undefined) {
+        merged.updatedInput = output.updatedInput;
+        input = { ...input, toolInput: output.updatedInput };
+      }
+      if (output.decision !== undefined) merged.decision = output.decision;
+      if (output.message !== undefined) merged.message = output.message;
+      if (output.preventContinuation !== undefined) {
+        merged.preventContinuation = output.preventContinuation;
+      }
+    } catch {
+      // skip failing hooks — don't block tool execution
     }
   }
 
@@ -81,15 +85,19 @@ export async function runPostToolUseHooks(
   let merged: PostToolUseHookOutput = {};
 
   for (const hook of matching) {
-    const output = (await hook.handler(input)) as PostToolUseHookOutput | void;
-    if (!output) continue;
+    try {
+      const output = (await hook.handler(input)) as PostToolUseHookOutput | void;
+      if (!output) continue;
 
-    if (output.updatedOutput !== undefined) {
-      merged.updatedOutput = output.updatedOutput;
-      input = { ...input, toolOutput: output.updatedOutput };
-    }
-    if (output.preventContinuation !== undefined) {
-      merged.preventContinuation = output.preventContinuation;
+      if (output.updatedOutput !== undefined) {
+        merged.updatedOutput = output.updatedOutput;
+        input = { ...input, toolOutput: output.updatedOutput };
+      }
+      if (output.preventContinuation !== undefined) {
+        merged.preventContinuation = output.preventContinuation;
+      }
+    } catch {
+      // skip failing hooks — don't block tool execution
     }
   }
 

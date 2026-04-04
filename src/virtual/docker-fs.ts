@@ -85,13 +85,34 @@ export class DockerFs implements VirtualFs {
     }
 
     const encoded = Buffer.from(content, "utf-8").toString("base64");
-    const { exitCode, stderr } = await this.exec([
-      "bash",
-      "-c",
-      `echo '${encoded}' | base64 -d > ${shellEscape(resolved)}`,
-    ]);
-    if (exitCode !== 0) {
-      throw new Error(`DockerFs writeFile failed: ${stderr.trim()}`);
+
+    const MAX_INLINE_LEN = 100_000;
+    if (encoded.length <= MAX_INLINE_LEN) {
+      const { exitCode, stderr } = await this.exec([
+        "bash",
+        "-c",
+        `echo '${encoded}' | base64 -d > ${shellEscape(resolved)}`,
+      ]);
+      if (exitCode !== 0) {
+        throw new Error(`DockerFs writeFile failed: ${stderr.trim()}`);
+      }
+    } else {
+      const execInstance = await this.container.exec({
+        Cmd: ["bash", "-c", `base64 -d > ${shellEscape(resolved)}`],
+        AttachStdout: true,
+        AttachStderr: true,
+        AttachStdin: true,
+        Tty: false,
+      });
+      const stream = await execInstance.start({ hijack: true, stdin: true });
+      const writable = stream as unknown as NodeJS.WritableStream;
+      writable.write(encoded);
+      writable.end();
+      const result = await collectExecStream(stream as unknown as NodeJS.ReadableStream);
+      const inspection = await execInstance.inspect();
+      if (inspection.ExitCode !== 0) {
+        throw new Error(`DockerFs writeFile failed: ${result.stderr.trim()}`);
+      }
     }
   }
 
@@ -164,16 +185,16 @@ export class DockerFs implements VirtualFs {
     const { exitCode, stdout, stderr } = await this.exec([
       "stat",
       "-c",
-      "%s %F %W %Y",
+      "%s\t%F\t%W\t%Y",
       resolved,
     ]);
     if (exitCode !== 0) {
       throw new Error(`DockerFs stat failed: ${stderr.trim() || `exit code ${exitCode}`}`);
     }
 
-    const parts = stdout.trim().split(" ");
+    const parts = stdout.trim().split("\t");
     const size = parseInt(parts[0], 10);
-    const fileType = parts[1]; // "regular" or "directory" etc.
+    const fileType = parts[1];
     const createdEpoch = parseInt(parts[2], 10);
     const modifiedEpoch = parseInt(parts[3], 10);
 
@@ -197,13 +218,16 @@ function collectExecStream(
   return new Promise((resolve, reject) => {
     const stdoutBufs: Buffer[] = [];
     const stderrBufs: Buffer[] = [];
+    let pending: Buffer = Buffer.alloc(0);
 
     stream.on("data", (chunk: Buffer) => {
+      let buf = pending.length > 0 ? Buffer.concat([pending, chunk]) : chunk;
       let offset = 0;
-      while (offset + 8 <= chunk.length) {
-        const streamType = chunk[offset];
-        const payloadLen = chunk.readUInt32BE(offset + 4);
-        const payload = chunk.subarray(offset + 8, offset + 8 + payloadLen);
+      while (offset + 8 <= buf.length) {
+        const payloadLen = buf.readUInt32BE(offset + 4);
+        if (offset + 8 + payloadLen > buf.length) break;
+        const streamType = buf[offset];
+        const payload = buf.subarray(offset + 8, offset + 8 + payloadLen);
         if (streamType === 2) {
           stderrBufs.push(payload);
         } else {
@@ -211,6 +235,7 @@ function collectExecStream(
         }
         offset += 8 + payloadLen;
       }
+      pending = offset < buf.length ? buf.subarray(offset) : Buffer.alloc(0);
     });
 
     stream.on("end", () => {

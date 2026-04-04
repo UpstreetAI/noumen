@@ -10,6 +10,7 @@ import type { ChatParams, ChatStreamChunk } from "./types.js";
 import type { ChatMessage, ContentPart } from "../session/types.js";
 import type { CacheControlConfig } from "./cache.js";
 import { getMessageCacheBreakpointIndex } from "./cache.js";
+import { getMaxOutputTokensForModel } from "../utils/context.js";
 
 interface AnthropicToolUseBlock {
   type: "tool_use";
@@ -162,6 +163,9 @@ export function convertAnthropicMessages(
           });
         }
       }
+      if (content.length === 0) {
+        content.push({ type: "text", text: "" });
+      }
       if (addCache && caching && content.length > 0) {
         const lastBlock = content[content.length - 1] as Record<string, unknown>;
         lastBlock.cache_control = buildCacheControlBlock(cacheConfig);
@@ -244,11 +248,15 @@ export async function* streamAnthropicChat(
     ? (params.thinking as { type: "enabled"; budgetTokens: number }).budgetTokens
     : 0;
 
-  const maxOutputTokens = thinkingEnabled
-    ? budgetTokens + (params.max_tokens ?? 8192)
-    : (params.max_tokens ?? 8192);
-
   const model = params.model ?? defaultModel;
+
+  const modelMaxOutput = getMaxOutputTokensForModel(model);
+  const maxOutputTokens = thinkingEnabled
+    ? Math.min(budgetTokens + (params.max_tokens ?? 8192), modelMaxOutput)
+    : (params.max_tokens ?? 8192);
+  const clampedBudget = thinkingEnabled
+    ? Math.min(budgetTokens, maxOutputTokens - 1)
+    : 0;
 
   const streamParams: Record<string, unknown> = {
     model,
@@ -265,7 +273,7 @@ export async function* streamAnthropicChat(
   if (thinkingEnabled) {
     streamParams.thinking = {
       type: "enabled",
-      budget_tokens: budgetTokens,
+      budget_tokens: clampedBudget,
     };
   }
 
@@ -305,11 +313,13 @@ export async function* streamAnthropicChat(
   let chunkIndex = 0;
   const toolIndexMap = new Map<string, number>();
   const blockIndexToToolId = new Map<number, string>();
+  const blockIndexToType = new Map<number, string>();
   let nextToolIndex = 0;
   let inputTokens = 0;
   let outputTokens = 0;
   let cacheReadTokens = 0;
   let cacheCreationTokens = 0;
+  let stopReason: string | undefined;
 
   for await (const event of stream) {
     const ev = event as Record<string, unknown>;
@@ -328,6 +338,10 @@ export async function* streamAnthropicChat(
     }
 
     if (ev.type === "message_delta") {
+      const delta = (ev as Record<string, unknown>).delta as Record<string, unknown> | undefined;
+      if (delta?.stop_reason) {
+        stopReason = delta.stop_reason as string;
+      }
       const usage = (ev as Record<string, unknown>).usage as
         | Record<string, unknown>
         | undefined;
@@ -340,6 +354,9 @@ export async function* streamAnthropicChat(
     if (ev.type === "content_block_start") {
       const block = (ev.content_block as Record<string, unknown>) ?? {};
       const blockIndex = ev.index as number | undefined;
+      if (blockIndex !== undefined) {
+        blockIndexToType.set(blockIndex, block.type as string);
+      }
 
       if (block.type === "thinking") {
         yield makeChunk(chunkId, model, { thinking_content: "" });
@@ -376,6 +393,12 @@ export async function* streamAnthropicChat(
         yield makeChunk(chunkId, model, {
           content: delta.text as string,
         });
+      } else if (deltaType === "signature_delta") {
+        if (blockIndex !== undefined && blockIndexToType.get(blockIndex) === "thinking") {
+          yield makeChunk(chunkId, model, {
+            thinking_signature: delta.signature as string,
+          });
+        }
       } else if (deltaType === "input_json_delta") {
         let toolId: string | undefined;
         if (blockIndex !== undefined) {
@@ -397,6 +420,14 @@ export async function* streamAnthropicChat(
         }
       }
     } else if (ev.type === "message_stop") {
+      let finishReason: string;
+      switch (stopReason) {
+        case "end_turn": finishReason = "stop"; break;
+        case "tool_use": finishReason = "tool_calls"; break;
+        case "max_tokens": finishReason = "length"; break;
+        case "stop_sequence": finishReason = "stop"; break;
+        default: finishReason = toolIndexMap.size > 0 ? "tool_calls" : "stop"; break;
+      }
       yield {
         id: chunkId,
         model,
@@ -404,7 +435,7 @@ export async function* streamAnthropicChat(
           {
             index: 0,
             delta: {},
-            finish_reason: toolIndexMap.size > 0 ? "tool_calls" : "stop",
+            finish_reason: finishReason,
           },
         ],
         usage: {

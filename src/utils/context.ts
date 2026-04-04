@@ -28,6 +28,25 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   "gemini-1.5-flash": 1_048_576,
 };
 
+const MODEL_MAX_OUTPUT_TOKENS: Record<string, number> = {
+  "claude-sonnet-4-20250514": 16_384,
+  "claude-opus-4-20250514": 16_384,
+  "claude-haiku-3-5-20241022": 8_192,
+  "claude-3-5-sonnet-20241022": 8_192,
+  "claude-3-5-haiku-20241022": 8_192,
+  "gpt-4o": 16_384,
+  "gpt-4o-mini": 16_384,
+  "gpt-4-turbo": 4_096,
+  "o1": 100_000,
+  "o3": 100_000,
+  "o3-mini": 100_000,
+  "o4-mini": 100_000,
+  "gemini-2.5-pro": 65_536,
+  "gemini-2.5-flash": 65_536,
+  "gemini-2.0-flash": 8_192,
+};
+
+const DEFAULT_MAX_OUTPUT_TOKENS = 16_384;
 const DEFAULT_CONTEXT_WINDOW = 128_000;
 const AUTOCOMPACT_BUFFER_TOKENS = 13_000;
 const MAX_OUTPUT_RESERVE = 20_000;
@@ -84,4 +103,17 @@ export function getAutoCompactThreshold(
   maxOutputTokens?: number,
 ): number {
   return getEffectiveContextWindow(model, maxOutputTokens) - AUTOCOMPACT_BUFFER_TOKENS;
+}
+
+/**
+ * Get the maximum output tokens a model supports. Used to clamp
+ * max_tokens when extended thinking budgets are added.
+ */
+export function getMaxOutputTokensForModel(model: string): number {
+  if (MODEL_MAX_OUTPUT_TOKENS[model] !== undefined)
+    return MODEL_MAX_OUTPUT_TOKENS[model];
+  for (const [prefix, size] of Object.entries(MODEL_MAX_OUTPUT_TOKENS)) {
+    if (model.startsWith(prefix)) return size;
+  }
+  return DEFAULT_MAX_OUTPUT_TOKENS;
 }

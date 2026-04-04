@@ -160,7 +160,6 @@ export class SessionStorage {
     const content = await this.fs.readFile(path);
     const entries = parseJSONL<Entry>(content);
 
-    // Find the last compact boundary, if any
     let lastBoundaryIdx = -1;
     for (let i = entries.length - 1; i >= 0; i--) {
       if (entries[i].type === "compact-boundary") {
@@ -169,13 +168,23 @@ export class SessionStorage {
       }
     }
 
-    const messages: ChatMessage[] = [];
-    const startIdx = lastBoundaryIdx + 1;
+    const activeEntries = entries.slice(lastBoundaryIdx + 1);
 
-    for (let i = startIdx; i < entries.length; i++) {
-      const entry = entries[i];
+    const snippedUuids = new Set<string>();
+    for (const entry of activeEntries) {
+      if (entry.type === "snip-boundary") {
+        for (const uuid of entry.snipMetadata.removedUuids) {
+          snippedUuids.add(uuid);
+        }
+      }
+    }
+
+    const messages: ChatMessage[] = [];
+    for (const entry of activeEntries) {
       if (entry.type === "message" || entry.type === "summary") {
-        messages.push(entry.message);
+        if (!snippedUuids.has(entry.uuid)) {
+          messages.push(entry.message);
+        }
       }
     }
 

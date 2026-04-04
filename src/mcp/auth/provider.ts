@@ -26,6 +26,7 @@ export class NoumenOAuthProvider implements OAuthClientProvider {
   private _signal?: AbortSignal;
   private _preRegisteredClientId?: string;
   private _preRegisteredClientSecret?: string;
+  private _state: string | null = null;
 
   constructor(serverKey: string, options: OAuthProviderOptions) {
     this.serverKey = serverKey;
@@ -47,7 +48,10 @@ export class NoumenOAuthProvider implements OAuthClientProvider {
   }
 
   async state(): Promise<string> {
-    return randomBytes(16).toString("hex");
+    if (!this._state) {
+      this._state = randomBytes(32).toString("base64url");
+    }
+    return this._state;
   }
 
   async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
@@ -76,7 +80,17 @@ export class NoumenOAuthProvider implements OAuthClientProvider {
 
   async tokens(): Promise<OAuthTokens | undefined> {
     const data = await this.storage.load(this.serverKey);
-    return data?.tokens;
+    if (!data?.tokens) return undefined;
+
+    const REFRESH_BUFFER_MS = 5 * 60 * 1000;
+    if (
+      data.expiresAt &&
+      data.tokens.refresh_token &&
+      Date.now() >= data.expiresAt - REFRESH_BUFFER_MS
+    ) {
+      return undefined;
+    }
+    return data.tokens;
   }
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
@@ -114,6 +128,7 @@ export class NoumenOAuthProvider implements OAuthClientProvider {
     scope: "all" | "client" | "tokens" | "verifier" | "discovery",
   ): Promise<void> {
     if (scope === "all") {
+      this._state = null;
       await this.storage.delete(this.serverKey);
       return;
     }

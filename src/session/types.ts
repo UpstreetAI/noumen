@@ -80,7 +80,10 @@ export type EntryType =
   | "summary"
   | "custom-title"
   | "metadata"
-  | "file-checkpoint";
+  | "file-checkpoint"
+  | "tool-result-overflow"
+  | "content-replacement"
+  | "snip-boundary";
 
 export interface MessageEntry {
   type: "message";

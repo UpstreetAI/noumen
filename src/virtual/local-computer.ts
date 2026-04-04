@@ -33,7 +33,7 @@ export class LocalComputer implements VirtualComputer {
             ? { ...process.env, ...opts.env }
             : process.env,
           maxBuffer: 10 * 1024 * 1024,
-          shell: "/bin/bash",
+          shell: process.env.SHELL || "/bin/sh",
         },
         (error, stdout, stderr) => {
           resolve({

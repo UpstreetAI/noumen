@@ -29,6 +29,7 @@ export interface ChatStreamDelta {
   role?: "assistant";
   content?: string | null;
   thinking_content?: string | null;
+  thinking_signature?: string | null;
   tool_calls?: Array<{
     index: number;
     id?: string;
