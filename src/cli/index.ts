@@ -49,7 +49,28 @@ async function main(): Promise<void> {
     .option("--verbose", "show tool calls and thinking")
     .option("-c, --prompt <text>", "one-shot prompt (non-interactive)")
     .argument("[prompt...]", "inline prompt")
-    .allowExcessArguments(true);
+    .allowExcessArguments(true)
+    .action(async (args: string[]) => {
+      const opts = program.opts();
+
+      if (args.length > 0 && !opts.prompt) {
+        opts.prompt = args.join(" ");
+      }
+
+      if (!process.stdin.isTTY && !opts.prompt) {
+        opts.prompt = await readStdin();
+        if (!opts.prompt) {
+          process.stderr.write(chalk.red("No input provided.\n"));
+          process.exit(1);
+        }
+      }
+
+      const cwd = opts.cwd ?? process.cwd();
+      const config = loadCliConfig(cwd);
+      const merged = mergeConfig(config, opts);
+
+      await runAgent(merged);
+    });
 
   program
     .command("init")
@@ -74,30 +95,7 @@ async function main(): Promise<void> {
       await resumeSession(sessionId);
     });
 
-  program.parse(process.argv);
-
-  const opts = program.opts();
-  const args = program.args;
-
-  // Collect inline prompt from positional args
-  if (args.length > 0 && !opts.prompt) {
-    opts.prompt = args.join(" ");
-  }
-
-  // Detect piped stdin
-  if (!process.stdin.isTTY && !opts.prompt) {
-    opts.prompt = await readStdin();
-    if (!opts.prompt) {
-      process.stderr.write(chalk.red("No input provided.\n"));
-      process.exit(1);
-    }
-  }
-
-  const cwd = opts.cwd ?? process.cwd();
-  const config = loadCliConfig(cwd);
-  const merged = mergeConfig(config, opts);
-
-  await runAgent(merged);
+  await program.parseAsync(process.argv);
 }
 
 async function runAgent(config: MergedConfig): Promise<void> {
