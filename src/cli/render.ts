@@ -32,12 +32,14 @@ export function renderEvent(
 export interface RenderState {
   accumulatedText: string;
   activeTools: Map<string, string>;
+  showedActivity: boolean;
 }
 
 export function createRenderState(): RenderState {
   return {
     accumulatedText: "",
     activeTools: new Map(),
+    showedActivity: false,
   };
 }
 
@@ -71,10 +73,9 @@ function renderPretty(
 
     case "tool_use_start":
       state.activeTools.set(event.toolUseId, event.toolName);
+      process.stderr.write(chalk.dim(`  [${event.toolName}] `));
       if (config.verbose) {
-        process.stderr.write(
-          chalk.dim(`\n  [${event.toolName}] `) + chalk.dim("running..."),
-        );
+        process.stderr.write(chalk.dim("running..."));
       }
       break;
 
@@ -87,11 +88,9 @@ function renderPretty(
             : JSON.stringify(event.result),
           120,
         );
-        process.stderr.write(
-          chalk.dim(`\n  [${event.toolName}] `) +
-            chalk.dim(preview) +
-            "\n",
-        );
+        process.stderr.write(chalk.dim(preview) + "\n");
+      } else {
+        process.stderr.write(chalk.dim("done\n"));
       }
       break;
     }
@@ -126,15 +125,11 @@ function renderPretty(
       break;
 
     case "compact_start":
-      if (config.verbose) {
-        process.stderr.write(chalk.dim("\n  Compacting conversation..."));
-      }
+      process.stderr.write(chalk.dim("  Compacting conversation..."));
       break;
 
     case "compact_complete":
-      if (config.verbose) {
-        process.stderr.write(chalk.dim(" done\n"));
-      }
+      process.stderr.write(chalk.dim(" done\n"));
       break;
 
     case "cost_update":
@@ -163,17 +158,14 @@ function renderPretty(
       );
       break;
 
-    case "subagent_start":
-      if (config.verbose) {
-        const preview = event.prompt.slice(0, 80);
-        process.stderr.write(chalk.dim(`\n  [subagent] ${preview}...\n`));
-      }
+    case "subagent_start": {
+      const preview = event.prompt.slice(0, 60);
+      process.stderr.write(chalk.dim(`  [subagent] ${preview}...\n`));
       break;
+    }
 
     case "subagent_end":
-      if (config.verbose) {
-        process.stderr.write(chalk.dim("  [subagent] complete\n"));
-      }
+      process.stderr.write(chalk.dim("  [subagent] complete\n"));
       break;
 
     case "session_resumed":

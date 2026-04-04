@@ -20,6 +20,22 @@ export async function startRepl(
     userInputHandler: (q) => promptPermission(rl, "agent", q).then((ok) => ok ? "yes" : "no"),
   });
 
+  let runningTurn = false;
+  let currentThread: Thread = thread;
+
+  const sigintHandler = () => {
+    if (runningTurn) {
+      currentThread.abort();
+      runningTurn = false;
+      process.stderr.write(chalk.yellow("\n  Cancelled.\n\n"));
+    } else {
+      process.stderr.write(chalk.dim("\nGoodbye.\n"));
+      rl.close();
+      process.exit(0);
+    }
+  };
+  process.on("SIGINT", sigintHandler);
+
   printWelcome(config);
 
   try {
@@ -34,18 +50,19 @@ export async function startRepl(
       if (!input.trim()) continue;
 
       if (input.startsWith("/")) {
-        const shouldContinue = await handleSlashCommand(
+        const result = await handleSlashCommand(
           input,
           thread,
           code,
           config,
           rl,
         );
-        if (!shouldContinue) break;
-        if (input.startsWith("/new")) {
+        if (result === "quit") break;
+        if (result === "new") {
           thread = code.createThread({
             userInputHandler: (q) => promptPermission(rl, "agent", q).then((ok) => ok ? "yes" : "no"),
           });
+          currentThread = thread;
         }
         continue;
       }
@@ -53,8 +70,27 @@ export async function startRepl(
       const state = createRenderState();
       const runOpts = config.maxTurns ? { maxTurns: config.maxTurns } : undefined;
 
-      for await (const event of thread.run(input, runOpts)) {
-        renderEvent(event, config, state);
+      if (!config.json && !config.quiet) {
+        process.stderr.write(chalk.dim("  Thinking...\r"));
+      }
+
+      runningTurn = true;
+      try {
+        for await (const event of thread.run(input, runOpts)) {
+          if (!state.showedActivity && !config.json && !config.quiet) {
+            process.stderr.write("              \r");
+            state.showedActivity = true;
+          }
+          renderEvent(event, config, state);
+        }
+      } catch (err) {
+        if ((err as Error)?.name === "AbortError") {
+          // already handled by SIGINT handler
+        } else {
+          throw err;
+        }
+      } finally {
+        runningTurn = false;
       }
 
       if (state.accumulatedText && !state.accumulatedText.endsWith("\n")) {
@@ -62,6 +98,7 @@ export async function startRepl(
       }
     }
   } finally {
+    process.removeListener("SIGINT", sigintHandler);
     rl.close();
   }
 }
@@ -73,10 +110,12 @@ function printWelcome(config: MergedConfig): void {
     chalk.bold("noumen") +
       chalk.dim(` — ${provider}/${model}`) +
       "\n" +
-      chalk.dim("Type a message to begin. /help for commands, /quit to exit.") +
+      chalk.dim("Type a message to begin. /help for commands, Ctrl+C to cancel.") +
       "\n\n",
   );
 }
+
+type SlashResult = "continue" | "quit" | "new";
 
 async function handleSlashCommand(
   input: string,
@@ -84,23 +123,23 @@ async function handleSlashCommand(
   code: Code,
   config: MergedConfig,
   _rl: readline.Interface,
-): Promise<boolean> {
-  const [cmd, ...args] = input.trim().split(/\s+/);
+): Promise<SlashResult> {
+  const [cmd] = input.trim().split(/\s+/);
 
   switch (cmd) {
     case "/quit":
     case "/exit":
     case "/q":
       process.stderr.write(chalk.dim("Goodbye.\n"));
-      return false;
+      return "quit";
 
     case "/new":
       process.stderr.write(chalk.dim("Starting new conversation.\n\n"));
-      return true;
+      return "new";
 
     case "/session":
       process.stderr.write(chalk.dim(`Session: ${thread.sessionId}\n`));
-      return true;
+      return "continue";
 
     case "/cost": {
       const summary = code.getCostSummary();
@@ -115,7 +154,7 @@ async function handleSlashCommand(
       } else {
         process.stderr.write(chalk.dim("Cost tracking not enabled.\n"));
       }
-      return true;
+      return "continue";
     }
 
     case "/sessions": {
@@ -131,7 +170,7 @@ async function handleSlashCommand(
           );
         }
       }
-      return true;
+      return "continue";
     }
 
     case "/verbose":
@@ -139,7 +178,7 @@ async function handleSlashCommand(
       process.stderr.write(
         chalk.dim(`Verbose mode: ${config.verbose ? "on" : "off"}\n`),
       );
-      return true;
+      return "continue";
 
     case "/help":
       process.stderr.write(
@@ -154,15 +193,18 @@ async function handleSlashCommand(
             "  /verbose        Toggle verbose output",
             "  /help           Show this help",
             "",
+            "Shortcuts:",
+            "  Ctrl+C          Cancel current turn / exit when idle",
+            "",
           ].join("\n"),
         ),
       );
-      return true;
+      return "continue";
 
     default:
       process.stderr.write(
         chalk.yellow(`Unknown command: ${cmd}. Try /help\n`),
       );
-      return true;
+      return "continue";
   }
 }

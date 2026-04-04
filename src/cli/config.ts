@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as os from "node:os";
 import type { McpServerConfig } from "../mcp/types.js";
 import type { LspServerConfig } from "../lsp/types.js";
 import type { HookDefinition } from "../hooks/types.js";
@@ -28,10 +29,24 @@ export interface CliConfig {
 }
 
 /**
+ * Load global config from ~/.noumen/config.json.
+ * Returns empty object if not found or invalid.
+ */
+export function loadGlobalConfig(): CliConfig {
+  const globalPath = path.join(os.homedir(), ".noumen", "config.json");
+  try {
+    const raw = fs.readFileSync(globalPath, "utf-8");
+    return JSON.parse(raw) as CliConfig;
+  } catch {
+    return {};
+  }
+}
+
+/**
  * Walk up from `cwd` looking for `.noumen/config.json`.
  * Returns parsed config or empty object if none found.
  */
-export function loadCliConfig(cwd: string): CliConfig {
+function loadProjectConfig(cwd: string): CliConfig {
   let dir = path.resolve(cwd);
   const root = path.parse(dir).root;
 
@@ -49,6 +64,16 @@ export function loadCliConfig(cwd: string): CliConfig {
   }
 
   return {};
+}
+
+/**
+ * Load config with layering: global (~/.noumen/config.json) < project < flags.
+ * Project-level values override global values.
+ */
+export function loadCliConfig(cwd: string): CliConfig {
+  const global = loadGlobalConfig();
+  const project = loadProjectConfig(cwd);
+  return { ...global, ...project };
 }
 
 export interface MergedConfig extends CliConfig {

@@ -7,6 +7,7 @@ import { createProvider, detectProvider } from "./provider-factory.js";
 import { startRepl } from "./repl.js";
 import { renderEvent, createRenderState, promptPermission } from "./render.js";
 import { runInit } from "./init.js";
+import * as os from "node:os";
 import { Code, LocalSandbox } from "../index.js";
 import type { ThinkingConfig } from "../thinking/types.js";
 import type { PermissionMode } from "../permissions/types.js";
@@ -178,7 +179,7 @@ async function runAgent(config: MergedConfig): Promise<void> {
       hooks: config.hooks,
       webSearch: config.webSearch,
       sessionDir: config.sessionDir ?? ".noumen/sessions",
-      projectContext: true,
+      projectContext: { cwd: config.cwd, homeDir: os.homedir() },
       costTracking: { enabled: true },
       retry: true,
     },
@@ -293,7 +294,7 @@ async function resumeSession(sessionId: string): Promise<void> {
       lsp: merged.lsp,
       hooks: merged.hooks,
       sessionDir: merged.sessionDir ?? ".noumen/sessions",
-      projectContext: true,
+      projectContext: { cwd, homeDir: os.homedir() },
       costTracking: { enabled: true },
       retry: true,
     },
