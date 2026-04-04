@@ -103,14 +103,49 @@ async function runAgent(config: MergedConfig): Promise<void> {
     config.provider ?? detectProvider();
 
   if (!providerName) {
+    if (!process.stdin.isTTY) {
+      process.stderr.write(chalk.red("No provider specified.\n"));
+      process.exit(1);
+    }
     process.stderr.write(
-      chalk.red("No provider specified.\n") +
-        chalk.dim(
-          "Set --provider, add to .noumen/config.json, or set a provider API key env var.\n" +
-            "Run `noumen init` to create a config file.\n",
-        ),
+      chalk.bold("Welcome to noumen!\n\n") +
+        chalk.dim("No provider detected. Let's set one up.\n\n"),
     );
-    process.exit(1);
+
+    const { createInterface } = await import("node:readline/promises");
+    const rl = createInterface({ input: process.stdin, output: process.stderr, terminal: true });
+
+    try {
+      const { SUPPORTED_PROVIDERS } = await import("./provider-factory.js");
+      const providerAnswer = await rl.question(
+        `  Provider (${SUPPORTED_PROVIDERS.join(", ")}) [${chalk.bold("anthropic")}]: `,
+      );
+      const picked = providerAnswer.trim() || "anthropic";
+      if (!SUPPORTED_PROVIDERS.includes(picked)) {
+        process.stderr.write(chalk.red(`Unknown provider: ${picked}\n`));
+        process.exit(1);
+      }
+
+      const needsKey = !["bedrock", "vertex"].includes(picked);
+      let apiKey: string | undefined;
+      if (needsKey) {
+        const keyAnswer = await rl.question(`  API key: `);
+        apiKey = keyAnswer.trim();
+        if (!apiKey) {
+          process.stderr.write(chalk.red("API key is required.\n"));
+          process.exit(1);
+        }
+      }
+
+      rl.close();
+      config.provider = picked;
+      if (apiKey) config.apiKey = apiKey;
+    } catch {
+      rl.close();
+      process.exit(1);
+    }
+
+    return runAgent(config);
   }
 
   const provider = await createProvider(providerName, {
