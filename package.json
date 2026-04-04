@@ -75,6 +75,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "dev": "concurrently -n lib,web -c blue,magenta \"tsup --watch\" \"pnpm --filter noumen-docs dev\"",
+    "cli": "node dist/cli/index.js",
     "prepublishOnly": "pnpm run build",
     "publish:lib": "pnpm publish --access public --no-git-checks"
   },
