@@ -2,6 +2,20 @@ import type { StreamEvent } from "../session/types.js";
 import type { PermissionResponse } from "../permissions/types.js";
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const RECONNECT_BASE_DELAY_MS = 1000;
+const RECONNECT_MAX_DELAY_MS = 30_000;
+const RECONNECT_GIVE_UP_MS = 600_000; // 10 minutes
+const LIVENESS_TIMEOUT_MS = 45_000;
+const PERMANENT_HTTP_CODES = new Set([401, 403, 404]);
+
+// WS_OPEN = WebSocket.OPEN across all environments
+const WS_OPEN = 1;
+const WS_CONNECTING = 0;
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
@@ -36,10 +50,6 @@ interface SessionCreatedResponse {
   sessionId: string;
   eventsUrl: string;
 }
-
-// WS_OPEN = WebSocket.OPEN across all environments
-const WS_OPEN = 1;
-const WS_CONNECTING = 0;
 
 // ---------------------------------------------------------------------------
 // NoumenClient
@@ -267,7 +277,7 @@ export class NoumenClient {
     }
 
     const { sessionId, eventsUrl } = (await createRes.json()) as SessionCreatedResponse;
-    yield* this.consumeSseStream(sessionId, eventsUrl, opts);
+    yield* this.consumeSseStreamWithReconnect(sessionId, eventsUrl, opts);
   }
 
   private async *sendMessageSse(
@@ -284,51 +294,156 @@ export class NoumenClient {
       throw new Error(`Failed to send message: ${msgRes.status} ${await msgRes.text()}`);
     }
 
-    yield* this.consumeSseStream(sessionId, `/sessions/${sessionId}/events`, opts);
+    yield* this.consumeSseStreamWithReconnect(sessionId, `/sessions/${sessionId}/events`, opts);
   }
 
-  private async *consumeSseStream(
+  /**
+   * SSE stream consumer with automatic reconnection, liveness detection,
+   * and event deduplication via sequence numbers.
+   */
+  private async *consumeSseStreamWithReconnect(
     sessionId: string,
     eventsPath: string,
     opts?: ClientRunOptions | Omit<ClientRunOptions, "sessionId">,
   ): AsyncGenerator<StreamEvent> {
+    const state = { lastSeqNum: 0 };
+    let reconnectAttempts = 0;
+    let reconnectStartTime: number | null = null;
+    let turnComplete = false;
+
+    while (!turnComplete) {
+      if (opts?.signal?.aborted) return;
+
+      try {
+        for await (const event of this.consumeSseStream(sessionId, eventsPath, opts, state)) {
+          yield event;
+
+          if (event.type === "turn_complete") {
+            turnComplete = true;
+            return;
+          }
+        }
+
+        if (turnComplete) return;
+      } catch (err) {
+        if (opts?.signal?.aborted) return;
+        if ((err as Error).name === "AbortError") return;
+
+        // Permanent HTTP errors — don't reconnect
+        const msg = (err as Error).message ?? "";
+        const statusMatch = msg.match(/SSE connection failed: (\d+)/);
+        if (statusMatch && PERMANENT_HTTP_CODES.has(parseInt(statusMatch[1], 10))) {
+          throw err;
+        }
+      }
+
+      // Reconnection logic
+      if (opts?.signal?.aborted) return;
+      const now = Date.now();
+      if (!reconnectStartTime) reconnectStartTime = now;
+
+      const elapsed = now - reconnectStartTime;
+      if (elapsed >= RECONNECT_GIVE_UP_MS) {
+        throw new Error(`SSE reconnection failed after ${Math.round(elapsed / 1000)}s`);
+      }
+
+      reconnectAttempts++;
+      const baseDelay = Math.min(
+        RECONNECT_BASE_DELAY_MS * Math.pow(2, reconnectAttempts - 1),
+        RECONNECT_MAX_DELAY_MS,
+      );
+      const delay = Math.max(0, baseDelay + baseDelay * 0.25 * (2 * Math.random() - 1));
+      await sleep(delay, opts?.signal);
+      if (opts?.signal?.aborted) return;
+    }
+  }
+
+  /**
+   * Single SSE connection attempt. Yields events and returns when the stream
+   * ends (either gracefully via turn_complete or from a dropped connection).
+   * The liveness timer triggers an AbortError if no frames arrive within
+   * LIVENESS_TIMEOUT_MS.
+   */
+  private async *consumeSseStream(
+    sessionId: string,
+    eventsPath: string,
+    opts: ClientRunOptions | Omit<ClientRunOptions, "sessionId"> | undefined,
+    state: { lastSeqNum: number },
+  ): AsyncGenerator<StreamEvent> {
     const url = `${this.baseUrl}${eventsPath}`;
     const headers: Record<string, string> = { ...this.headers };
     if (this.token) headers["Authorization"] = `Bearer ${this.token}`;
+    if (state.lastSeqNum > 0) headers["Last-Event-ID"] = String(state.lastSeqNum);
 
     const ac = new AbortController();
     if (opts?.signal) {
+      if (opts.signal.aborted) { ac.abort(); return; }
       opts.signal.addEventListener("abort", () => ac.abort(), { once: true });
     }
 
-    const response = await globalThis.fetch(url, {
-      headers,
-      signal: ac.signal,
-    });
+    // Liveness timeout — abort if no data for 45s
+    let livenessTimer: ReturnType<typeof setTimeout> | null = null;
+    const resetLiveness = () => {
+      if (livenessTimer) clearTimeout(livenessTimer);
+      livenessTimer = setTimeout(() => ac.abort(), LIVENESS_TIMEOUT_MS);
+    };
+    const clearLiveness = () => {
+      if (livenessTimer) { clearTimeout(livenessTimer); livenessTimer = null; }
+    };
+
+    const response = await globalThis.fetch(url, { headers, signal: ac.signal });
 
     if (!response.ok) {
+      clearLiveness();
       throw new Error(`SSE connection failed: ${response.status}`);
     }
 
     const reader = response.body?.getReader();
-    if (!reader) throw new Error("No response body");
+    if (!reader) { clearLiveness(); throw new Error("No response body"); }
 
     const decoder = new TextDecoder();
     let buffer = "";
+    resetLiveness();
+
+    let currentEventId = 0;
 
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        resetLiveness();
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
         buffer = lines.pop() ?? "";
 
         for (const line of lines) {
+          // SSE comments (like :keepalive) reset liveness but carry no data
+          if (line.startsWith(":")) {
+            resetLiveness();
+            continue;
+          }
+
+          // Track SSE id: field for sequence-based dedup
+          if (line.startsWith("id: ")) {
+            const seqNum = parseInt(line.slice(4), 10);
+            if (!isNaN(seqNum)) currentEventId = seqNum;
+            continue;
+          }
+
           if (!line.startsWith("data: ")) continue;
+
           const json = line.slice(6);
           if (!json) continue;
+
+          // Dedup: skip events already seen before reconnect
+          if (currentEventId > 0 && currentEventId <= state.lastSeqNum) {
+            currentEventId = 0;
+            continue;
+          }
+          if (currentEventId > state.lastSeqNum) {
+            state.lastSeqNum = currentEventId;
+          }
 
           let parsed: Record<string, unknown>;
           try {
@@ -337,6 +452,7 @@ export class NoumenClient {
             continue;
           }
 
+          currentEventId = 0;
           const eventType = parsed.type as string;
 
           if (eventType === "permission_request" && opts && "onPermissionRequest" in opts && opts.onPermissionRequest) {
@@ -384,6 +500,7 @@ export class NoumenClient {
     } catch (err) {
       if ((err as Error).name !== "AbortError") throw err;
     } finally {
+      clearLiveness();
       try { reader.releaseLock(); } catch { /* already released */ }
       if (!ac.signal.aborted) ac.abort();
     }
@@ -403,4 +520,16 @@ export class NoumenClient {
 
     return globalThis.fetch(url, { ...init, headers: { ...headers, ...init?.headers as Record<string, string> } });
   }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (signal?.aborted) { resolve(); return; }
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
+  });
 }

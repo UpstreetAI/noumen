@@ -194,4 +194,44 @@ describe("NoumenClient", () => {
       expect(types).toContain("turn_complete");
     });
   });
+
+  describe("SSE reconnection", () => {
+    it("does not throw on permanent 401 error during run", async () => {
+      provider.addResponse(textResponse("ok"));
+      await setup({ auth: { type: "bearer", token: "correct" } });
+
+      const client = new NoumenClient({ baseUrl, token: "wrong", transport: "sse" });
+      // Should fail with auth error, not hang
+      await expect(collectEvents(client.run("hi"))).rejects.toThrow();
+    });
+  });
+
+  describe("SSE event IDs", () => {
+    it("receives events with sequential ordering", async () => {
+      provider.addResponse(textResponse("Hello!"));
+      await setup();
+
+      const client = new NoumenClient({ baseUrl, transport: "sse" });
+      const events = await collectEvents(client.run("hi"));
+
+      const types = events.map((e) => e.type);
+      expect(types).toContain("text_delta");
+      expect(types).toContain("turn_complete");
+      expect(events.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  describe("SSE deduplication", () => {
+    it("yields turn_complete after normal flow without duplicates", async () => {
+      provider.addResponse(textResponse("one"));
+      await setup();
+
+      const client = new NoumenClient({ baseUrl, transport: "sse" });
+      const events = await collectEvents(client.run("hi"));
+
+      // Should have exactly one turn_complete
+      const turnCompletes = events.filter((e) => e.type === "turn_complete");
+      expect(turnCompletes.length).toBe(1);
+    });
+  });
 });

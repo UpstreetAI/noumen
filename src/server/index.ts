@@ -7,6 +7,17 @@ import type { PermissionResponse } from "../permissions/types.js";
 type MaybePromise<T> = T | Promise<T>;
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const SSE_KEEPALIVE_INTERVAL_MS = 15_000;
+const MAX_BODY_BYTES = 1_048_576; // 1 MB
+const MAX_EVENT_BUFFER = 1000;
+const DEFAULT_PENDING_TIMEOUT_MS = 120_000; // 2 minutes
+const WS_PING_INTERVAL_MS = 30_000;
+const SHUTDOWN_DRAIN_MS = 500;
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
@@ -25,6 +36,8 @@ export interface ServerOptions {
   onError?: (err: Error) => void;
   /** Enable CORS for browser clients (default true). */
   cors?: boolean;
+  /** Timeout for pending permission/input responses before rejecting (ms). Default 120000. */
+  pendingTimeoutMs?: number;
 }
 
 export type AuthConfig =
@@ -49,14 +62,23 @@ interface PromiseResolver<T> {
   reject: (err: Error) => void;
 }
 
+interface BufferedEvent {
+  seq: number;
+  event: StreamEvent;
+}
+
 interface SessionState {
   id: string;
   abortController: AbortController;
   pendingPermission: PromiseResolver<PermissionResponse> | null;
   pendingInput: PromiseResolver<string> | null;
+  pendingPermissionTimer: ReturnType<typeof setTimeout> | null;
+  pendingInputTimer: ReturnType<typeof setTimeout> | null;
   lastActivity: number;
   sseResponse: ServerResponse | null;
-  eventBuffer: StreamEvent[];
+  sseKeepaliveTimer: ReturnType<typeof setInterval> | null;
+  eventBuffer: BufferedEvent[];
+  sequenceNum: number;
   done: boolean;
   cwd?: string;
 }
@@ -65,7 +87,9 @@ type WsWebSocket = {
   on(event: "message", cb: (data: Buffer | string) => void): void;
   on(event: "close", cb: () => void): void;
   on(event: "error", cb: (err: Error) => void): void;
+  on(event: "pong", cb: () => void): void;
   send(data: string): void;
+  ping(): void;
   close(): void;
   readyState: number;
 };
@@ -122,6 +146,12 @@ export class NoumenServer {
       clearInterval(this.idleTimer);
       this.idleTimer = null;
     }
+
+    // Signal all sessions to stop, then give a brief drain period
+    for (const session of this.sessions.values()) {
+      session.abortController.abort();
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, SHUTDOWN_DRAIN_MS));
 
     for (const session of this.sessions.values()) {
       this.destroySession(session);
@@ -184,7 +214,7 @@ export class NoumenServer {
     if (this.options.cors !== false) {
       res.setHeader("Access-Control-Allow-Origin", "*");
       res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Last-Event-ID");
     }
 
     const method = req.method ?? "GET";
@@ -222,7 +252,7 @@ export class NoumenServer {
       const sessionId = sessionMatch[1];
       const sub = sessionMatch[2] ?? "";
 
-      if (sub === "events" && method === "GET") return this.handleSseStream(sessionId, res);
+      if (sub === "events" && method === "GET") return this.handleSseStream(sessionId, req, res);
       if (sub === "permissions" && method === "POST") return this.handlePermissionResponse(sessionId, req, res);
       if (sub === "input" && method === "POST") return this.handleInputResponse(sessionId, req, res);
       if (sub === "messages" && method === "POST") return this.handleSendMessage(sessionId, req, res);
@@ -285,9 +315,18 @@ export class NoumenServer {
     jsonResponse(res, 200, sessions);
   }
 
-  private handleSseStream(sessionId: string, res: ServerResponse): void {
+  private handleSseStream(sessionId: string, req: IncomingMessage, res: ServerResponse): void {
     const session = this.sessions.get(sessionId);
     if (!session) return jsonResponse(res, 404, { error: "Session not found" });
+
+    // Handle subscriber conflict: notify the old listener before replacing
+    if (session.sseResponse) {
+      const oldRes = session.sseResponse;
+      writeSseEventRaw(oldRes, session.sequenceNum + 1, { type: "subscriber_replaced" });
+      oldRes.end();
+      this.clearSseKeepalive(session);
+      session.sseResponse = null;
+    }
 
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
@@ -296,14 +335,25 @@ export class NoumenServer {
       "X-Accel-Buffering": "no",
     });
 
-    for (const event of session.eventBuffer) {
-      writeSseEvent(res, event);
+    // Support Last-Event-ID for resumption after reconnect
+    const lastEventId = req.headers["last-event-id"] as string | undefined;
+    const resumeAfterSeq = lastEventId ? parseInt(lastEventId, 10) : 0;
+
+    for (const buffered of session.eventBuffer) {
+      if (resumeAfterSeq && buffered.seq <= resumeAfterSeq) continue;
+      writeSseEventRaw(res, buffered.seq, serializeEvent(buffered.event));
     }
     session.eventBuffer = [];
     session.sseResponse = res;
 
+    // Start keepalive interval
+    this.startSseKeepalive(session);
+
     res.on("close", () => {
-      if (session.sseResponse === res) session.sseResponse = null;
+      if (session.sseResponse === res) {
+        this.clearSseKeepalive(session);
+        session.sseResponse = null;
+      }
     });
   }
 
@@ -317,6 +367,7 @@ export class NoumenServer {
     if (!session.pendingPermission) return jsonResponse(res, 409, { error: "No pending permission request" });
 
     const body = (await readBody(req)) as PermissionResponse;
+    this.clearPendingPermissionTimer(session);
     session.pendingPermission.resolve(body);
     session.pendingPermission = null;
     jsonResponse(res, 200, { ok: true });
@@ -336,6 +387,7 @@ export class NoumenServer {
       return jsonResponse(res, 400, { error: "Missing required field: answer" });
     }
 
+    this.clearPendingInputTimer(session);
     session.pendingInput.resolve(body.answer);
     session.pendingInput = null;
     jsonResponse(res, 200, { ok: true });
@@ -392,6 +444,19 @@ export class NoumenServer {
 
     const wsSessions = new Set<string>();
 
+    // Ping/pong health check
+    let pongReceived = true;
+    const pingTimer = setInterval(() => {
+      if (!pongReceived) {
+        ws.close();
+        return;
+      }
+      pongReceived = false;
+      try { ws.ping(); } catch { /* connection may already be closing */ }
+    }, WS_PING_INTERVAL_MS);
+
+    ws.on("pong", () => { pongReceived = true; });
+
     ws.on("message", async (raw) => {
       try {
         const msg = JSON.parse(typeof raw === "string" ? raw : raw.toString());
@@ -402,10 +467,15 @@ export class NoumenServer {
     });
 
     ws.on("close", () => {
+      clearInterval(pingTimer);
       for (const sid of wsSessions) {
         const session = this.sessions.get(sid);
         if (session) this.destroySession(session);
       }
+    });
+
+    ws.on("error", () => {
+      clearInterval(pingTimer);
     });
   }
 
@@ -443,6 +513,7 @@ export class NoumenServer {
     if (msgType === "permission_response") {
       const session = this.sessions.get(msg.sessionId as string);
       if (!session?.pendingPermission) return;
+      this.clearPendingPermissionTimer(session);
       const { sessionId: _sid, type: _type, ...response } = msg;
       session.pendingPermission.resolve(response as unknown as PermissionResponse);
       session.pendingPermission = null;
@@ -452,6 +523,7 @@ export class NoumenServer {
     if (msgType === "input_response") {
       const session = this.sessions.get(msg.sessionId as string);
       if (!session?.pendingInput) return;
+      this.clearPendingInputTimer(session);
       session.pendingInput.resolve((msg.answer as string) ?? "");
       session.pendingInput = null;
       return;
@@ -478,9 +550,13 @@ export class NoumenServer {
       abortController: new AbortController(),
       pendingPermission: null,
       pendingInput: null,
+      pendingPermissionTimer: null,
+      pendingInputTimer: null,
       lastActivity: Date.now(),
       sseResponse: null,
+      sseKeepaliveTimer: null,
       eventBuffer: [],
+      sequenceNum: 0,
       done: false,
       cwd: overrides.cwd,
     };
@@ -530,7 +606,8 @@ export class NoumenServer {
       try {
         const thread = this.makeThread(session, resume);
         for await (const event of thread.run(prompt, { signal: session.abortController.signal })) {
-          wsSend(ws, { ...serializeEvent(event), sessionId: session.id });
+          session.sequenceNum++;
+          wsSend(ws, { ...serializeEvent(event), sessionId: session.id, seq: session.sequenceNum });
           session.lastActivity = Date.now();
         }
       } catch (err) {
@@ -545,10 +622,17 @@ export class NoumenServer {
   }
 
   private emitSseEvent(session: SessionState, event: StreamEvent): void {
+    session.sequenceNum++;
+    const seq = session.sequenceNum;
+
     if (session.sseResponse) {
-      writeSseEvent(session.sseResponse, event);
+      writeSseEventRaw(session.sseResponse, seq, serializeEvent(event));
     } else {
-      session.eventBuffer.push(event);
+      // Buffer with cap — drop oldest if full
+      if (session.eventBuffer.length >= MAX_EVENT_BUFFER) {
+        session.eventBuffer.shift();
+      }
+      session.eventBuffer.push({ seq, event });
     }
   }
 
@@ -558,21 +642,71 @@ export class NoumenServer {
   ): Promise<PermissionResponse> {
     const session = this.sessions.get(sessionId);
     if (!session) return Promise.reject(new Error("Session not found"));
+    const timeoutMs = this.options.pendingTimeoutMs ?? DEFAULT_PENDING_TIMEOUT_MS;
     return new Promise<PermissionResponse>((resolve, reject) => {
       session.pendingPermission = { resolve, reject };
+      session.pendingPermissionTimer = setTimeout(() => {
+        session.pendingPermissionTimer = null;
+        if (session.pendingPermission) {
+          session.pendingPermission.reject(new Error("Permission request timed out"));
+          session.pendingPermission = null;
+        }
+      }, timeoutMs);
     });
   }
 
   private bridgeUserInput(sessionId: string, _question: string): Promise<string> {
     const session = this.sessions.get(sessionId);
     if (!session) return Promise.reject(new Error("Session not found"));
+    const timeoutMs = this.options.pendingTimeoutMs ?? DEFAULT_PENDING_TIMEOUT_MS;
     return new Promise<string>((resolve, reject) => {
       session.pendingInput = { resolve, reject };
+      session.pendingInputTimer = setTimeout(() => {
+        session.pendingInputTimer = null;
+        if (session.pendingInput) {
+          session.pendingInput.reject(new Error("User input request timed out"));
+          session.pendingInput = null;
+        }
+      }, timeoutMs);
     });
+  }
+
+  private startSseKeepalive(session: SessionState): void {
+    this.clearSseKeepalive(session);
+    session.sseKeepaliveTimer = setInterval(() => {
+      if (session.sseResponse && !session.sseResponse.destroyed) {
+        session.sseResponse.write(":keepalive\n\n");
+      }
+    }, SSE_KEEPALIVE_INTERVAL_MS);
+    session.sseKeepaliveTimer.unref();
+  }
+
+  private clearSseKeepalive(session: SessionState): void {
+    if (session.sseKeepaliveTimer) {
+      clearInterval(session.sseKeepaliveTimer);
+      session.sseKeepaliveTimer = null;
+    }
+  }
+
+  private clearPendingPermissionTimer(session: SessionState): void {
+    if (session.pendingPermissionTimer) {
+      clearTimeout(session.pendingPermissionTimer);
+      session.pendingPermissionTimer = null;
+    }
+  }
+
+  private clearPendingInputTimer(session: SessionState): void {
+    if (session.pendingInputTimer) {
+      clearTimeout(session.pendingInputTimer);
+      session.pendingInputTimer = null;
+    }
   }
 
   private destroySession(session: SessionState): void {
     session.abortController.abort();
+    this.clearSseKeepalive(session);
+    this.clearPendingPermissionTimer(session);
+    this.clearPendingInputTimer(session);
     if (session.pendingPermission) {
       session.pendingPermission.reject(new Error("Session aborted"));
       session.pendingPermission = null;
@@ -645,15 +779,28 @@ function serializeEvent(event: StreamEvent): Record<string, unknown> {
   return event as unknown as Record<string, unknown>;
 }
 
-function writeSseEvent(res: ServerResponse, event: StreamEvent): void {
-  res.write(`data: ${JSON.stringify(serializeEvent(event))}\n\n`);
+function writeSseEventRaw(res: ServerResponse, seq: number, data: Record<string, unknown>): void {
+  res.write(`id: ${seq}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
 function readBody(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
+    let totalBytes = 0;
+    let rejected = false;
     const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("data", (chunk: Buffer) => {
+      if (rejected) return;
+      totalBytes += chunk.length;
+      if (totalBytes > MAX_BODY_BYTES) {
+        rejected = true;
+        req.destroy();
+        reject(new Error("Request body too large"));
+        return;
+      }
+      chunks.push(chunk);
+    });
     req.on("end", () => {
+      if (rejected) return;
       try {
         const raw = Buffer.concat(chunks).toString();
         resolve(raw ? JSON.parse(raw) : {});
@@ -661,7 +808,9 @@ function readBody(req: IncomingMessage): Promise<unknown> {
         reject(err);
       }
     });
-    req.on("error", reject);
+    req.on("error", (err) => {
+      if (!rejected) reject(err);
+    });
   });
 }
 
