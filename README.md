@@ -1,13 +1,13 @@
-# fangd
+# noumen
 
 Programmatic AI coding agent library with pluggable providers and virtual infrastructure.
 
-`fangd` gives you a headless, API-only coding agent that can read, write, edit files, run shell commands, and search codebases — all backed by swappable AI providers (OpenAI, Anthropic, Google Gemini) and virtual filesystems/computers (local Node.js, [sprites.dev](https://sprites.dev) containers).
+`noumen` gives you a headless, API-only coding agent that can read, write, edit files, run shell commands, and search codebases — all backed by swappable AI providers (OpenAI, Anthropic, Google Gemini) and virtual filesystems/computers (local Node.js, [sprites.dev](https://sprites.dev) containers).
 
 ## Install
 
 ```bash
-pnpm add fangd
+pnpm add noumen
 ```
 
 ## Quick Start
@@ -18,7 +18,7 @@ import {
   OpenAIProvider,
   LocalFs,
   LocalComputer,
-} from "fangd";
+} from "noumen";
 
 const code = new Code({
   aiProvider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY }),
@@ -48,7 +48,7 @@ for await (const event of thread.run("Add a health-check endpoint to server.ts")
 ### OpenAI
 
 ```typescript
-import { OpenAIProvider } from "fangd";
+import { OpenAIProvider } from "noumen";
 
 const provider = new OpenAIProvider({
   apiKey: "sk-...",
@@ -60,7 +60,7 @@ const provider = new OpenAIProvider({
 ### Anthropic
 
 ```typescript
-import { AnthropicProvider } from "fangd";
+import { AnthropicProvider } from "noumen";
 
 const provider = new AnthropicProvider({
   apiKey: "sk-ant-...",
@@ -71,7 +71,7 @@ const provider = new AnthropicProvider({
 ### Google Gemini
 
 ```typescript
-import { GeminiProvider } from "fangd";
+import { GeminiProvider } from "noumen";
 
 const provider = new GeminiProvider({
   apiKey: "...",                   // Google AI Studio API key
@@ -86,7 +86,7 @@ const provider = new GeminiProvider({
 Backed by `fs/promises` and `child_process`:
 
 ```typescript
-import { LocalFs, LocalComputer } from "fangd";
+import { LocalFs, LocalComputer } from "noumen";
 
 const fs = new LocalFs({ basePath: "/my/project" });
 const computer = new LocalComputer({ defaultCwd: "/my/project" });
@@ -97,7 +97,7 @@ const computer = new LocalComputer({ defaultCwd: "/my/project" });
 Run inside a remote [sprites.dev](https://docs.sprites.dev) container:
 
 ```typescript
-import { SpritesFs, SpritesComputer } from "fangd";
+import { SpritesFs, SpritesComputer } from "noumen";
 
 const fs = new SpritesFs({
   token: process.env.SPRITE_TOKEN,
@@ -118,7 +118,7 @@ const code = new Code({
   virtualFs,
   virtualComputer,
   options: {
-    sessionDir: ".fangd/sessions", // JSONL transcript storage path
+    sessionDir: ".noumen/sessions", // JSONL transcript storage path
     model: "gpt-4o",                   // default model
     maxTokens: 8192,                   // max output tokens per turn
     autoCompact: true,                 // auto-compact when context is large

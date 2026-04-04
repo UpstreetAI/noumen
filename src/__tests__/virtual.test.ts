@@ -8,7 +8,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 describe("LocalFs", () => {
   it("implements VirtualFs interface", async () => {
     const { LocalFs } = await import("../virtual/local-fs.js");
-    const localFs = new LocalFs({ basePath: "/tmp/fangd-test-" + Date.now() });
+    const localFs = new LocalFs({ basePath: "/tmp/noumen-test-" + Date.now() });
 
     // Verify all required methods exist
     expect(typeof localFs.readFile).toBe("function");
@@ -26,7 +26,7 @@ describe("LocalFs", () => {
     const path = await import("node:path");
     const { LocalFs } = await import("../virtual/local-fs.js");
 
-    const tmpDir = path.join(os.tmpdir(), `fangd-test-${Date.now()}`);
+    const tmpDir = path.join(os.tmpdir(), `noumen-test-${Date.now()}`);
     const localFs = new LocalFs({ basePath: tmpDir });
 
     await localFs.writeFile("test.txt", "hello world");
@@ -49,7 +49,7 @@ describe("LocalFs", () => {
     const path = await import("node:path");
     const { LocalFs } = await import("../virtual/local-fs.js");
 
-    const tmpDir = path.join(os.tmpdir(), `fangd-test-${Date.now()}`);
+    const tmpDir = path.join(os.tmpdir(), `noumen-test-${Date.now()}`);
     const localFs = new LocalFs({ basePath: tmpDir });
 
     await localFs.writeFile("a.txt", "a");
