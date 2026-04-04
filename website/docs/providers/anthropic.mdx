@@ -5,8 +5,12 @@ description: Configure the Anthropic provider for Claude models.
 
 ## Setup
 
+```bash
+pnpm add @anthropic-ai/sdk
+```
+
 ```typescript
-import { AnthropicProvider } from "noumen";
+import { AnthropicProvider } from "noumen/anthropic";
 
 const provider = new AnthropicProvider({
   apiKey: "sk-ant-...",

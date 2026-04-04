@@ -5,8 +5,12 @@ description: Configure the Gemini provider for Google's AI models.
 
 ## Setup
 
+```bash
+pnpm add @google/genai
+```
+
 ```typescript
-import { GeminiProvider } from "noumen";
+import { GeminiProvider } from "noumen/gemini";
 
 const provider = new GeminiProvider({
   apiKey: "...",                // Google AI Studio API key

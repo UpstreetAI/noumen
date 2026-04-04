@@ -5,8 +5,12 @@ description: Configure the OpenRouter provider to access hundreds of models thro
 
 ## Setup
 
+```bash
+pnpm add openai
+```
+
 ```typescript
-import { OpenRouterProvider } from "noumen";
+import { OpenRouterProvider } from "noumen/openrouter";
 
 const provider = new OpenRouterProvider({
   apiKey: "sk-or-...",
@@ -28,6 +32,8 @@ const provider = new OpenRouterProvider({
 OpenRouter optionally accepts headers to identify your app on their leaderboards:
 
 ```typescript
+import { OpenRouterProvider } from "noumen/openrouter";
+
 const provider = new OpenRouterProvider({
   apiKey: "sk-or-...",
   appName: "My Coding Agent",

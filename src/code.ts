@@ -16,13 +16,10 @@ import { taskGetTool } from "./tools/task-get.js";
 import { taskUpdateTool } from "./tools/task-update.js";
 import { enterPlanModeTool, exitPlanModeTool } from "./tools/plan-mode.js";
 import { enterWorktreeTool, exitWorktreeTool } from "./tools/worktree.js";
-import { lspTool } from "./tools/lsp.js";
-import { LspServerManager } from "./lsp/manager.js";
 import type { LspServerConfig } from "./lsp/types.js";
 import type { SessionInfo } from "./session/types.js";
 import type { McpServerConfig } from "./mcp/types.js";
 import type { TokenStorage } from "./mcp/auth/types.js";
-import { createMcpAuthTool } from "./tools/mcp-auth.js";
 import type { PermissionConfig } from "./permissions/types.js";
 import type { HookDefinition } from "./hooks/types.js";
 import type { ThinkingConfig } from "./thinking/types.js";
@@ -37,7 +34,7 @@ import type { FileStateCacheConfig } from "./file-state/types.js";
 import type { ToolResultStorageConfig } from "./compact/tool-result-storage.js";
 import type { SnipConfig } from "./compact/history-snip.js";
 import { CostTracker } from "./cost/tracker.js";
-import { McpClientManager } from "./mcp/client.js";
+import type { McpClientManager } from "./mcp/client.js";
 import { SessionStorage } from "./session/storage.js";
 import { TaskStore } from "./tasks/store.js";
 import { Thread, type ThreadOptions } from "./thread.js";
@@ -138,6 +135,9 @@ export class Code {
   private storage: SessionStorage;
   private resolvedSkills: SkillDefinition[] | null = null;
   private mcpManager: McpClientManager | null = null;
+  private mcpServerConfigs?: Record<string, McpServerConfig>;
+  private mcpTokenStorage?: TokenStorage;
+  private mcpOnAuthorizationUrl?: (url: string) => void | Promise<void>;
   private mcpTools: Tool[] = [];
   private mcpToolNames: Set<string> = new Set();
   private mcpAuthTools: Tool[] = [];
@@ -148,7 +148,9 @@ export class Code {
   private taskStore: TaskStore | null = null;
   private enablePlanMode: boolean;
   private enableWorktrees: boolean;
-  private lspManager: LspServerManager | null = null;
+  private lspManager: import("./lsp/manager.js").LspServerManager | null = null;
+  private lspConfigs?: Record<string, LspServerConfig>;
+  private lspToolRef: Tool | null = null;
   private streamingToolExecution: boolean;
   private webSearchConfig?: WebSearchConfig;
   private userInputHandler?: (question: string) => Promise<string>;
@@ -202,8 +204,7 @@ export class Code {
     this.enablePlanMode = opts.options?.enablePlanMode ?? false;
     this.enableWorktrees = opts.options?.enableWorktrees ?? false;
     if (opts.options?.lsp && Object.keys(opts.options.lsp).length > 0) {
-      const rootUri = `file://${this.cwd}`;
-      this.lspManager = new LspServerManager(opts.options.lsp, rootUri);
+      this.lspConfigs = opts.options.lsp;
     }
     this.streamingToolExecution = opts.options?.streamingToolExecution ?? false;
     this.webSearchConfig = opts.options?.webSearch;
@@ -221,10 +222,9 @@ export class Code {
     }
 
     if (opts.options?.mcpServers && Object.keys(opts.options.mcpServers).length > 0) {
-      this.mcpManager = new McpClientManager(opts.options.mcpServers, {
-        tokenStorage: opts.options.mcpTokenStorage,
-        onAuthorizationUrl: opts.options.mcpOnAuthorizationUrl,
-      });
+      this.mcpServerConfigs = opts.options.mcpServers;
+      this.mcpTokenStorage = opts.options.mcpTokenStorage;
+      this.mcpOnAuthorizationUrl = opts.options.mcpOnAuthorizationUrl;
     }
 
     this.tracer = opts.options?.tracing?.tracer;
@@ -278,8 +278,8 @@ export class Code {
     if (this.enableWorktrees) {
       tools.push(enterWorktreeTool, exitWorktreeTool);
     }
-    if (this.lspManager) {
-      tools.push(lspTool);
+    if (this.lspManager && this.lspToolRef) {
+      tools.push(this.lspToolRef);
     }
     if (this.webSearchConfig) {
       tools.push(createWebSearchTool(this.webSearchConfig));
@@ -417,17 +417,38 @@ export class Code {
   async init(): Promise<void> {
     const tasks: Promise<void>[] = [this.getSkills().then(() => {})];
 
-    if (this.mcpManager) {
+    if (this.mcpServerConfigs && !this.mcpManager) {
       tasks.push(
-        this.mcpManager.connect().then(async () => {
-          this.mcpTools = await this.mcpManager!.getTools();
+        (async () => {
+          const { McpClientManager: McpMgr } = await import("./mcp/client.js");
+          this.mcpManager = new McpMgr(this.mcpServerConfigs!, {
+            tokenStorage: this.mcpTokenStorage,
+            onAuthorizationUrl: this.mcpOnAuthorizationUrl,
+          });
+          await this.mcpManager.connect();
+          this.mcpTools = await this.mcpManager.getTools();
           this.mcpToolNames = new Set(this.mcpTools.map((t) => t.name));
 
-          const needsAuth = this.mcpManager!.getServersNeedingAuth();
-          this.mcpAuthTools = needsAuth.map((name) =>
-            createMcpAuthTool(name, this.mcpManager!),
-          );
-        }),
+          const needsAuth = this.mcpManager.getServersNeedingAuth();
+          if (needsAuth.length > 0) {
+            const { createMcpAuthTool } = await import("./tools/mcp-auth.js");
+            this.mcpAuthTools = needsAuth.map((name) =>
+              createMcpAuthTool(name, this.mcpManager!),
+            );
+          }
+        })(),
+      );
+    }
+
+    if (this.lspConfigs && !this.lspManager) {
+      tasks.push(
+        (async () => {
+          const { LspServerManager } = await import("./lsp/manager.js");
+          const { lspTool } = await import("./tools/lsp.js");
+          const rootUri = `file://${this.cwd}`;
+          this.lspManager = new LspServerManager(this.lspConfigs!, rootUri);
+          this.lspToolRef = lspTool;
+        })(),
       );
     }
 

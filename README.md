@@ -14,10 +14,19 @@ Any provider. Any sandbox. One package.
 pnpm add noumen
 ```
 
+Then install the provider SDK you need:
+
+```bash
+pnpm add openai           # for OpenAI / OpenRouter
+pnpm add @anthropic-ai/sdk  # for Anthropic
+pnpm add @google/genai      # for Gemini
+```
+
 ## Quick Start
 
 ```typescript
-import { Code, OpenAIProvider, LocalSandbox } from "noumen";
+import { Code, LocalSandbox } from "noumen";
+import { OpenAIProvider } from "noumen/openai";
 
 const code = new Code({
   aiProvider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY }),
@@ -46,7 +55,7 @@ for await (const event of thread.run("Add a health-check endpoint to server.ts")
 ### OpenAI
 
 ```typescript
-import { OpenAIProvider } from "noumen";
+import { OpenAIProvider } from "noumen/openai";
 
 const provider = new OpenAIProvider({
   apiKey: "sk-...",
@@ -58,7 +67,7 @@ const provider = new OpenAIProvider({
 ### Anthropic
 
 ```typescript
-import { AnthropicProvider } from "noumen";
+import { AnthropicProvider } from "noumen/anthropic";
 
 const provider = new AnthropicProvider({
   apiKey: "sk-ant-...",
@@ -69,7 +78,7 @@ const provider = new AnthropicProvider({
 ### Google Gemini
 
 ```typescript
-import { GeminiProvider } from "noumen";
+import { GeminiProvider } from "noumen/gemini";
 
 const provider = new GeminiProvider({
   apiKey: "...",                   // Google AI Studio API key
@@ -80,7 +89,7 @@ const provider = new GeminiProvider({
 ### OpenRouter
 
 ```typescript
-import { OpenRouterProvider } from "noumen";
+import { OpenRouterProvider } from "noumen/openrouter";
 
 const provider = new OpenRouterProvider({
   apiKey: "sk-or-...",
@@ -92,14 +101,14 @@ const provider = new OpenRouterProvider({
 
 ### AWS Bedrock (Anthropic)
 
-Route Anthropic models through AWS Bedrock. Requires `@anthropic-ai/bedrock-sdk` as an optional peer dependency:
+Route Anthropic models through AWS Bedrock. Requires `@anthropic-ai/bedrock-sdk`:
 
 ```bash
 pnpm add @anthropic-ai/bedrock-sdk
 ```
 
 ```typescript
-import { BedrockAnthropicProvider } from "noumen";
+import { BedrockAnthropicProvider } from "noumen/bedrock";
 
 const provider = new BedrockAnthropicProvider({
   region: "us-west-2",                                     // default: us-east-1
@@ -117,14 +126,14 @@ When `credentials` is omitted, the SDK uses the standard AWS credential chain (e
 
 ### Google Vertex AI (Anthropic)
 
-Route Anthropic models through Google Cloud Vertex AI. Requires `@anthropic-ai/vertex-sdk` and `google-auth-library` as optional peer dependencies:
+Route Anthropic models through Google Cloud Vertex AI. Requires `@anthropic-ai/vertex-sdk` and `google-auth-library`:
 
 ```bash
 pnpm add @anthropic-ai/vertex-sdk google-auth-library
 ```
 
 ```typescript
-import { VertexAnthropicProvider } from "noumen";
+import { VertexAnthropicProvider } from "noumen/vertex";
 
 const provider = new VertexAnthropicProvider({
   projectId: "my-gcp-project",
@@ -588,10 +597,14 @@ options: {
 }
 ```
 
-Or expose noumen's tools as an MCP server:
+Or expose noumen's tools as an MCP server (requires `@modelcontextprotocol/sdk`):
+
+```bash
+pnpm add @modelcontextprotocol/sdk
+```
 
 ```typescript
-import { createMcpServer } from "noumen";
+import { createMcpServer } from "noumen/mcp";
 const server = createMcpServer({ tools: registry.listTools() });
 ```
 

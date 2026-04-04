@@ -24,7 +24,7 @@ Every noumen agent needs three things: an **AI provider**, a **virtual filesyste
     <Tabs items={["OpenAI", "Anthropic", "Gemini"]}>
       <Tab value="OpenAI">
         ```typescript
-        import { OpenAIProvider } from "noumen";
+        import { OpenAIProvider } from "noumen/openai";
 
         const provider = new OpenAIProvider({
           apiKey: process.env.OPENAI_API_KEY!,
@@ -34,7 +34,7 @@ Every noumen agent needs three things: an **AI provider**, a **virtual filesyste
       </Tab>
       <Tab value="Anthropic">
         ```typescript
-        import { AnthropicProvider } from "noumen";
+        import { AnthropicProvider } from "noumen/anthropic";
 
         const provider = new AnthropicProvider({
           apiKey: process.env.ANTHROPIC_API_KEY!,
@@ -44,7 +44,7 @@ Every noumen agent needs three things: an **AI provider**, a **virtual filesyste
       </Tab>
       <Tab value="Gemini">
         ```typescript
-        import { GeminiProvider } from "noumen";
+        import { GeminiProvider } from "noumen/gemini";
 
         const provider = new GeminiProvider({
           apiKey: process.env.GEMINI_API_KEY!,

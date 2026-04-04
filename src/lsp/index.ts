@@ -9,3 +9,4 @@ export type {
 export { LspClient } from "./client.js";
 export { LspServerManager } from "./manager.js";
 export { DiagnosticRegistry } from "./diagnostics.js";
+export { lspTool } from "../tools/lsp.js";

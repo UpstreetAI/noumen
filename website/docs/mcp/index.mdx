@@ -78,7 +78,8 @@ await code.close(); // disconnects all MCP servers
 Expose your agent's tools (built-in + custom) as an MCP server so external clients can use them:
 
 ```typescript
-import { createMcpServer, ToolRegistry } from "noumen";
+import { ToolRegistry } from "noumen";
+import { createMcpServer } from "noumen/mcp";
 
 const registry = new ToolRegistry();
 
@@ -99,7 +100,7 @@ This starts a stdio-based MCP server that handles `tools/list` and `tools/call` 
 For advanced usage, you can use `McpClientManager` directly:
 
 ```typescript
-import { McpClientManager } from "noumen";
+import { McpClientManager } from "noumen/mcp";
 
 const manager = new McpClientManager({
   mcpServers: {

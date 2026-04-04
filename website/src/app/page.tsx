@@ -180,7 +180,7 @@ export default function Home() {
           </h2>
           <div className="mt-8 space-y-2 text-left">
             <TerminalBlock command="pnpm add noumen" />
-            <TerminalBlock command='import { Code, OpenAIProvider } from "noumen"' />
+            <TerminalBlock command='import { OpenAIProvider } from "noumen/openai"' />
           </div>
           <Link
             href="/docs/getting-started"

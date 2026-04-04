@@ -28,7 +28,8 @@ Where:
 Pass tools in the `Code` options:
 
 ```typescript
-import { Code, OpenAIProvider, LocalFs, LocalComputer } from "noumen";
+import { Code, LocalFs, LocalComputer } from "noumen";
+import { OpenAIProvider } from "noumen/openai";
 import type { Tool, ToolContext, ToolResult } from "noumen";
 
 const fetchUrlTool: Tool = {

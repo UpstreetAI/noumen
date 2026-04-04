@@ -5,8 +5,12 @@ description: Configure the OpenAI provider for GPT-4o and compatible APIs.
 
 ## Setup
 
+```bash
+pnpm add openai
+```
+
 ```typescript
-import { OpenAIProvider } from "noumen";
+import { OpenAIProvider } from "noumen/openai";
 
 const provider = new OpenAIProvider({
   apiKey: "sk-...",
@@ -32,6 +36,8 @@ The `baseURL` option lets you use any OpenAI-compatible API. This includes:
 - **Local models** -- use Ollama, vLLM, or other local servers
 
 ```typescript
+import { OpenAIProvider } from "noumen/openai";
+
 const provider = new OpenAIProvider({
   apiKey: "your-key",
   baseURL: "https://openrouter.ai/api/v1",

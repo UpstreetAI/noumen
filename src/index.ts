@@ -2,7 +2,13 @@
 export { Code, type CodeOptions } from "./code.js";
 export { Thread, type ThreadOptions, type ThreadConfig } from "./thread.js";
 
-// AI Providers
+// AI Provider types (shared interface — concrete providers are subpath exports)
+//   import { OpenAIProvider } from "noumen/openai"
+//   import { AnthropicProvider } from "noumen/anthropic"
+//   import { GeminiProvider } from "noumen/gemini"
+//   import { OpenRouterProvider } from "noumen/openrouter"
+//   import { BedrockAnthropicProvider } from "noumen/bedrock"
+//   import { VertexAnthropicProvider } from "noumen/vertex"
 export type {
   AIProvider,
   ChatParams,
@@ -15,30 +21,12 @@ export type {
   OutputFormat,
 } from "./providers/types.js";
 export { ChatStreamError } from "./providers/types.js";
-export {
-  OpenAIProvider,
-  type OpenAIProviderOptions,
-} from "./providers/openai.js";
-export {
-  AnthropicProvider,
-  type AnthropicProviderOptions,
-} from "./providers/anthropic.js";
-export {
-  GeminiProvider,
-  type GeminiProviderOptions,
-} from "./providers/gemini.js";
-export {
-  OpenRouterProvider,
-  type OpenRouterProviderOptions,
-} from "./providers/openrouter.js";
-export {
-  BedrockAnthropicProvider,
-  type BedrockAnthropicProviderOptions,
-} from "./providers/bedrock.js";
-export {
-  VertexAnthropicProvider,
-  type VertexAnthropicProviderOptions,
-} from "./providers/vertex.js";
+export type { OpenAIProviderOptions } from "./providers/openai.js";
+export type { AnthropicProviderOptions } from "./providers/anthropic.js";
+export type { GeminiProviderOptions } from "./providers/gemini.js";
+export type { OpenRouterProviderOptions } from "./providers/openrouter.js";
+export type { BedrockAnthropicProviderOptions } from "./providers/bedrock.js";
+export type { VertexAnthropicProviderOptions } from "./providers/vertex.js";
 
 // Sandbox (bundled VirtualFs + VirtualComputer)
 export {
@@ -206,7 +194,7 @@ export {
 } from "./utils/worktree.js";
 export type { WorktreeInfo } from "./utils/worktree.js";
 
-// LSP integration
+// LSP integration (runtime exports are subpath: import { LspClient } from "noumen/lsp")
 export type {
   LspServerConfig,
   LspServerState,
@@ -215,10 +203,6 @@ export type {
   LspLocation,
   LspSymbol,
 } from "./lsp/types.js";
-export { LspClient } from "./lsp/client.js";
-export { LspServerManager } from "./lsp/manager.js";
-export { DiagnosticRegistry } from "./lsp/diagnostics.js";
-export { lspTool } from "./tools/lsp.js";
 
 // Multi-agent swarm
 export type {
@@ -263,8 +247,14 @@ export { parseFrontmatter, parseAllowedTools, parsePaths } from "./skills/frontm
 export type { FrontmatterData, ParsedFrontmatter } from "./skills/frontmatter.js";
 export { activateSkillsForPaths, getActiveSkills } from "./skills/activation.js";
 
-// MCP
-export { McpClientManager, type McpClientManagerOptions } from "./mcp/client.js";
+// MCP (runtime exports are subpath: import { McpClientManager } from "noumen/mcp")
+export {
+  normalizeNameForMCP,
+  buildMcpToolName,
+  getMcpPrefix,
+  parseMcpToolName,
+} from "./mcp/normalization.js";
+export type { McpClientManagerOptions } from "./mcp/client.js";
 export type {
   McpServerConfig,
   McpStdioServerConfig,
@@ -276,15 +266,7 @@ export type {
   McpConnection,
   McpToolInfo,
 } from "./mcp/types.js";
-export { createMcpServer, type McpServerOptions } from "./mcp/server.js";
-export {
-  normalizeNameForMCP,
-  buildMcpToolName,
-  getMcpPrefix,
-  parseMcpToolName,
-} from "./mcp/normalization.js";
-
-// MCP OAuth
+export type { McpServerOptions } from "./mcp/server.js";
 export type {
   TokenStorage,
   OAuthTokenData,
@@ -297,14 +279,6 @@ export type {
   OAuthClientInformationFull,
   OAuthClientInformationMixed,
 } from "./mcp/auth/types.js";
-export { InMemoryTokenStorage, FileTokenStorage } from "./mcp/auth/storage.js";
-export {
-  findAvailablePort,
-  OAuthCallbackServer,
-  type OAuthCallbackResult,
-} from "./mcp/auth/callback-server.js";
-export { NoumenOAuthProvider } from "./mcp/auth/provider.js";
-export { createMcpAuthTool } from "./tools/mcp-auth.js";
 
 // Compaction
 export { compactConversation, estimateCompactionSavings } from "./compact/compact.js";

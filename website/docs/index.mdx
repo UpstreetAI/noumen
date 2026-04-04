@@ -18,7 +18,8 @@ pnpm add noumen
 ## Quick start
 
 ```typescript
-import { Code, OpenAIProvider, LocalFs, LocalComputer } from "noumen";
+import { Code, LocalFs, LocalComputer } from "noumen";
+import { OpenAIProvider } from "noumen/openai";
 
 const code = new Code({
   aiProvider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY }),
