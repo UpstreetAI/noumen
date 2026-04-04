@@ -5,6 +5,10 @@ description: Spawn isolated child agents for focused subtasks with independent c
 
 Subagents let the model delegate focused work to isolated child agents. Each subagent runs in its own conversation context with its own session, and returns a result to the parent agent.
 
+## Why opt-in?
+
+Subagents are disabled by default because each spawned child runs a full conversation loop with its own token budget. Exposing the Agent tool also means the model may choose to delegate work even when a direct approach would be simpler and cheaper. Keeping subagents opt-in avoids the extra tool in context and prevents unintended delegation.
+
 ## Configuration
 
 ```typescript

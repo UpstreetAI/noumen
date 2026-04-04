@@ -88,9 +88,20 @@ const code = new Agent({
     skills: [...],            // adds Skill tool when skills are configured
     webSearch: { ... },       // configures the WebSearch tool backend
     toolSearch: true,         // adds ToolSearch for on-demand tool discovery
+    streamingToolExecution: true, // execute tools as they arrive during model streaming
   },
 });
 ```
+
+These flags are opt-in rather than on by default for two reasons: each additional tool increases the token cost of every request, and exposing a capability means the model may use it even when a simpler approach would suffice. See each feature's docs page for specifics.
+
+### Tool search
+
+When `toolSearch` is enabled, tools marked as deferred (MCP tools by default, plus any tool with `shouldDefer: true`) are hidden from the model's tool definitions. Instead, a `ToolSearch` tool is added that lets the model discover and load deferred tools on demand. This fundamentally changes how the agent sees its tool set — tools it would normally use directly become invisible until explicitly searched for — so it's off by default.
+
+### Streaming tool execution
+
+When `streamingToolExecution` is enabled, the agent begins executing concurrency-safe tools as soon as their arguments finish streaming from the model, rather than waiting for the model's entire response to complete. This can reduce latency when the model requests multiple independent tool calls in a single turn. It's off by default because it changes execution ordering: tools may start running while the model is still generating, which can be surprising if you rely on observing the full model response before side-effects occur.
 
 ## How tools work
 

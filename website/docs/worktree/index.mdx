@@ -7,7 +7,11 @@ noumen includes tools for structured planning workflows: plan mode restricts the
 
 ## Plan mode
 
-Enable plan mode tools so the agent can switch between exploration and implementation:
+### Why opt-in?
+
+Plan mode adds two tools (EnterPlanMode, ExitPlanMode) that let the agent switch itself into a read-only state. This changes the agent's permission model at runtime, which may be surprising if you're not expecting it — the agent could enter plan mode mid-task and stop making progress. The extra tools also add to the context cost of every request.
+
+### Configuration
 
 ```typescript
 const code = new Agent({
@@ -30,7 +34,11 @@ When in plan mode, the permission system automatically denies write operations. 
 
 ## Git worktrees
 
-Enable worktree tools for isolated branch-based experimentation:
+### Why opt-in?
+
+Worktree tools create real git worktrees on disk, which has filesystem and git side-effects beyond the normal sandbox scope. The agent might create branches and directories you don't expect. Keeping this opt-in ensures worktrees are only used when you've designed your workflow around them.
+
+### Configuration
 
 ```typescript
 const code = new Agent({
