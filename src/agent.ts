@@ -509,6 +509,14 @@ export class Agent {
    */
   run(
     prompt: string | ContentPart[],
+    opts: RunOptions & ThreadOptions & RunCallbacks,
+  ): Promise<RunResult>;
+  run(
+    prompt: string | ContentPart[],
+    opts?: RunOptions & ThreadOptions,
+  ): AsyncGenerator<StreamEvent, void, unknown>;
+  run(
+    prompt: string | ContentPart[],
     opts?: RunOptions & ThreadOptions & RunCallbacks,
   ): AsyncGenerator<StreamEvent, void, unknown> | Promise<RunResult> {
     const hasCallbacks = opts && (
@@ -527,6 +535,7 @@ export class Agent {
     prompt: string | ContentPart[],
     opts?: RunOptions & ThreadOptions,
   ): AsyncGenerator<StreamEvent, void, unknown> {
+    await this.ensureProvider();
     const thread = this.createThread(opts);
     yield* thread.run(prompt, opts);
   }
@@ -535,6 +544,7 @@ export class Agent {
     prompt: string | ContentPart[],
     opts: RunOptions & ThreadOptions & RunCallbacks,
   ): Promise<RunResult> {
+    await this.ensureProvider();
     const thread = this.createThread(opts);
     let text = "";
     let toolCalls = 0;
