@@ -2,10 +2,13 @@ import type { AIProvider } from "./providers/types.js";
 import type { VirtualFs } from "./virtual/fs.js";
 import type { VirtualComputer } from "./virtual/computer.js";
 import type { SkillDefinition } from "./skills/types.js";
-import type { Tool } from "./tools/types.js";
+import type { Tool, SubagentConfig, SubagentRun } from "./tools/types.js";
+import { agentTool } from "./tools/agent.js";
+import { createWebSearchTool, type WebSearchConfig } from "./tools/web-search.js";
 import type { SessionInfo } from "./session/types.js";
 import type { McpServerConfig } from "./mcp/types.js";
 import type { PermissionConfig } from "./permissions/types.js";
+import type { HookDefinition } from "./hooks/types.js";
 import { McpClientManager } from "./mcp/client.js";
 import { SessionStorage } from "./session/storage.js";
 import { Thread, type ThreadOptions } from "./thread.js";
@@ -43,6 +46,11 @@ export interface CodeOptions {
     autoCompactThreshold?: number;
     cwd?: string;
     permissions?: PermissionConfig;
+    hooks?: HookDefinition[];
+    enableSubagents?: boolean;
+    streamingToolExecution?: boolean;
+    webSearch?: WebSearchConfig;
+    userInputHandler?: (question: string) => Promise<string>;
   };
 }
 
@@ -65,6 +73,11 @@ export class Code {
   private mcpManager: McpClientManager | null = null;
   private mcpTools: Tool[] = [];
   private permissions?: PermissionConfig;
+  private hooks: HookDefinition[];
+  private enableSubagents: boolean;
+  private streamingToolExecution: boolean;
+  private webSearchConfig?: WebSearchConfig;
+  private userInputHandler?: (question: string) => Promise<string>;
 
   constructor(opts: CodeOptions) {
     this.aiProvider = opts.aiProvider;
@@ -82,6 +95,11 @@ export class Code {
     this.cwd = opts.options?.cwd ?? "/";
     this.storage = new SessionStorage(this.fs, this.sessionDir);
     this.permissions = opts.options?.permissions;
+    this.hooks = opts.options?.hooks ?? [];
+    this.enableSubagents = opts.options?.enableSubagents ?? false;
+    this.streamingToolExecution = opts.options?.streamingToolExecution ?? false;
+    this.webSearchConfig = opts.options?.webSearch;
+    this.userInputHandler = opts.options?.userInputHandler;
 
     if (opts.options?.mcpServers && Object.keys(opts.options.mcpServers).length > 0) {
       this.mcpManager = new McpClientManager(opts.options.mcpServers);
@@ -102,7 +120,48 @@ export class Code {
   }
 
   private getAllTools(): Tool[] {
-    return [...this.tools, ...this.mcpTools];
+    const tools = [...this.tools, ...this.mcpTools];
+    if (this.enableSubagents) {
+      tools.push(agentTool);
+    }
+    if (this.webSearchConfig) {
+      tools.push(createWebSearchTool(this.webSearchConfig));
+    }
+    return tools;
+  }
+
+  private createSpawnSubagent(parentCwd: string): (config: SubagentConfig) => SubagentRun {
+    return (config: SubagentConfig): SubagentRun => {
+      const parentTools = this.getAllTools().filter((t) => t.name !== "Agent");
+      const childTools = config.allowedTools
+        ? parentTools.filter((t) => config.allowedTools!.includes(t.name))
+        : parentTools;
+
+      const childThread = new Thread(
+        {
+          aiProvider: this.aiProvider,
+          fs: this.fs,
+          computer: this.computer,
+          sessionDir: this.sessionDir,
+          skills: this.resolvedSkills ?? this.skills,
+          tools: childTools,
+          systemPrompt: config.systemPrompt ?? this.systemPrompt,
+          model: config.model ?? this.model,
+          maxTokens: this.maxTokens,
+          autoCompact: createAutoCompactConfig({ enabled: false }),
+          permissions: config.permissionMode
+            ? { mode: config.permissionMode }
+            : { mode: "bypassPermissions" },
+          hooks: this.hooks,
+        },
+        { cwd: parentCwd },
+      );
+
+      return {
+        sessionId: childThread.sessionId,
+        events: childThread.run(config.prompt),
+      };
+    };
   }
 
   createThread(opts?: ThreadOptions): Thread {
@@ -112,6 +171,7 @@ export class Code {
     });
 
     const skills = this.resolvedSkills ?? this.skills;
+    const cwd = opts?.cwd ?? this.cwd;
 
     return new Thread(
       {
@@ -126,10 +186,16 @@ export class Code {
         maxTokens: this.maxTokens,
         autoCompact,
         permissions: this.permissions,
+        hooks: this.hooks,
+        spawnSubagent: this.enableSubagents
+          ? this.createSpawnSubagent(cwd)
+          : undefined,
+        streamingToolExecution: this.streamingToolExecution,
+        userInputHandler: this.userInputHandler,
       },
       {
         ...opts,
-        cwd: opts?.cwd ?? this.cwd,
+        cwd,
       },
     );
   }

@@ -226,9 +226,9 @@ describe("Grep", () => {
 // ToolRegistry
 // -----------------------------------------------------------------------
 describe("ToolRegistry", () => {
-  it("registers all 6 built-in tools", () => {
+  it("registers all 9 built-in tools", () => {
     const registry = new ToolRegistry();
-    expect(registry.listTools()).toHaveLength(6);
+    expect(registry.listTools()).toHaveLength(9);
   });
 
   it("gets a tool by name", () => {
@@ -247,7 +247,7 @@ describe("ToolRegistry", () => {
   it("toToolDefinitions returns correct shape", () => {
     const registry = new ToolRegistry();
     const defs = registry.toToolDefinitions();
-    expect(defs.length).toBe(6);
+    expect(defs.length).toBe(9);
     for (const def of defs) {
       expect(def.type).toBe("function");
       expect(def.function.name).toBeTruthy();
@@ -264,7 +264,7 @@ describe("ToolRegistry", () => {
       call: async () => ({ content: "ok" }),
     };
     const registry = new ToolRegistry([custom]);
-    expect(registry.listTools()).toHaveLength(7);
+    expect(registry.listTools()).toHaveLength(10);
     expect(registry.get("Custom")).toBeDefined();
   });
 });

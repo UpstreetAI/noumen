@@ -267,3 +267,56 @@ export function toolCallResponse(
     toolCallsFinishChunk(usage),
   ];
 }
+
+/**
+ * Build a multi-tool-call response sequence (parallel tool calls).
+ */
+export function multiToolCallResponse(
+  calls: Array<{ id: string; name: string; args: Record<string, unknown> }>,
+  usage?: ChatCompletionUsage,
+): ChatStreamChunk[] {
+  const chunks: ChatStreamChunk[] = [];
+  for (let i = 0; i < calls.length; i++) {
+    const { id, name, args } = calls[i];
+    chunks.push({
+      id: `mock-${_chunkId++}`,
+      model: "mock-model",
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              {
+                index: i,
+                id,
+                type: "function",
+                function: { name, arguments: "" },
+              },
+            ],
+          },
+          finish_reason: null,
+        },
+      ],
+    });
+    chunks.push({
+      id: `mock-${_chunkId++}`,
+      model: "mock-model",
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              {
+                index: i,
+                function: { arguments: JSON.stringify(args) },
+              },
+            ],
+          },
+          finish_reason: null,
+        },
+      ],
+    });
+  }
+  chunks.push(toolCallsFinishChunk(usage));
+  return chunks;
+}

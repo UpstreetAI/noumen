@@ -6,6 +6,9 @@ import { editFileTool } from "./edit.js";
 import { bashTool } from "./bash.js";
 import { globTool } from "./glob.js";
 import { grepTool } from "./grep.js";
+import { webFetchTool } from "./web-fetch.js";
+import { notebookEditTool } from "./notebook.js";
+import { askUserTool } from "./ask-user.js";
 
 /**
  * Resolve a tool flag that can be a static boolean or a function of the input.
@@ -32,6 +35,9 @@ export class ToolRegistry {
       bashTool,
       globTool,
       grepTool,
+      webFetchTool,
+      notebookEditTool,
+      askUserTool,
     ];
 
     for (const tool of builtIn) {

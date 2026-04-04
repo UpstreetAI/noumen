@@ -31,6 +31,7 @@
     "@anthropic-ai/sdk": "^0.39.0",
     "@google/genai": "^1.48.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "node-html-markdown": "^2.0.0",
     "openai": "^4.85.0",
     "uuid": "^11.1.0"
   },

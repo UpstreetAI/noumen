@@ -6,6 +6,7 @@ export const readFileTool: Tool = {
     "Read a file from the filesystem. Returns the file content with line numbers. " +
     "Use offset and limit to read specific portions of large files.",
   isReadOnly: true,
+  isConcurrencySafe: true,
   parameters: {
     type: "object",
     properties: {

@@ -1,10 +1,27 @@
 import type { VirtualFs } from "../virtual/fs.js";
 import type { VirtualComputer } from "../virtual/computer.js";
 import type { PermissionResult } from "../permissions/types.js";
+import type { PermissionMode } from "../permissions/types.js";
 
 export interface ToolResult {
   content: string;
   isError?: boolean;
+}
+
+export interface SubagentConfig {
+  prompt: string;
+  systemPrompt?: string;
+  /** Tool name allowlist. When set, only these tools are available. */
+  allowedTools?: string[];
+  permissionMode?: PermissionMode;
+  maxTurns?: number;
+  model?: string;
+}
+
+/** Async generator of stream events from a subagent run. */
+export interface SubagentRun {
+  sessionId: string;
+  events: AsyncGenerator<import("../session/types.js").StreamEvent, void, unknown>;
 }
 
 /**
@@ -19,6 +36,10 @@ export interface ToolContext {
   fs: VirtualFs;
   computer: VirtualComputer;
   cwd: string;
+  /** Factory for spawning isolated subagent threads. */
+  spawnSubagent?: (config: SubagentConfig) => SubagentRun;
+  /** Handler for user input requests from the AskUser tool. */
+  userInputHandler?: (question: string) => Promise<string>;
 }
 
 export interface ToolParameterProperty {
@@ -57,6 +78,14 @@ export interface Tool {
    * Defaults to `false` when omitted.
    */
   isDestructive?: boolean | ((args: Record<string, unknown>) => boolean);
+
+  /**
+   * Whether this tool can safely run concurrently with other concurrency-safe
+   * tools. Read-only tools are typically safe; tools that mutate shared state
+   * (filesystem writes, shell commands) are not. Can be a static boolean or a
+   * function of the input. Defaults to `false` when omitted.
+   */
+  isConcurrencySafe?: boolean | ((args: Record<string, unknown>) => boolean);
 
   /**
    * Tool-specific permission check, called by the permission pipeline before

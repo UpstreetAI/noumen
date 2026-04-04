@@ -78,6 +78,8 @@ export type {
   ToolContext,
   ToolParameters,
   ToolResult as ToolCallResult,
+  SubagentConfig,
+  SubagentRun,
 } from "./tools/types.js";
 export { ToolRegistry } from "./tools/registry.js";
 export { readFileTool } from "./tools/read.js";
@@ -87,6 +89,31 @@ export { bashTool } from "./tools/bash.js";
 export { globTool } from "./tools/glob.js";
 export { grepTool } from "./tools/grep.js";
 export { createSkillTool } from "./tools/skill.js";
+export { agentTool } from "./tools/agent.js";
+export { webFetchTool } from "./tools/web-fetch.js";
+export {
+  createWebSearchTool,
+  webSearchToolPlaceholder,
+  type WebSearchResult,
+  type WebSearchConfig,
+} from "./tools/web-search.js";
+export { notebookEditTool } from "./tools/notebook.js";
+export { askUserTool, type UserInputHandler } from "./tools/ask-user.js";
+export {
+  runToolsBatched,
+  partitionToolCalls,
+  type ToolCallExecResult,
+  type ToolCallExecutor,
+} from "./tools/orchestration.js";
+
+export {
+  StreamingToolExecutor,
+  type StreamingExecResult,
+  type StreamingToolExecutorFn,
+} from "./tools/streaming-executor.js";
+
+// Utilities
+export { all } from "./utils/generators.js";
 
 // Skills
 export type { SkillDefinition } from "./skills/types.js";
@@ -150,3 +177,23 @@ export {
 } from "./permissions/rules.js";
 export { resolvePermission } from "./permissions/pipeline.js";
 export { resolveToolFlag } from "./tools/registry.js";
+
+// Hooks
+export type {
+  HookEvent,
+  HookDefinition,
+  HookInput,
+  HookOutput,
+  PreToolUseHookInput,
+  PreToolUseHookOutput,
+  PostToolUseHookInput,
+  PostToolUseHookOutput,
+  SubagentStartHookInput,
+  SubagentStopHookInput,
+  NotificationHookInput,
+} from "./hooks/types.js";
+export {
+  runPreToolUseHooks,
+  runPostToolUseHooks,
+  runNotificationHooks,
+} from "./hooks/runner.js";

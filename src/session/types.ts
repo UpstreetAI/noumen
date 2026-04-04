@@ -161,6 +161,13 @@ export type StreamEvent =
       toolName: string;
       input: Record<string, unknown>;
       message: string;
+    }
+  | { type: "subagent_start"; toolUseId: string; prompt: string }
+  | { type: "subagent_end"; toolUseId: string; result: string }
+  | {
+      type: "user_input_request";
+      toolUseId: string;
+      question: string;
     };
 
 export interface RunOptions {

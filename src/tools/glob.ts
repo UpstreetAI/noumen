@@ -9,6 +9,7 @@ export const globTool: Tool = {
     "for fast, gitignore-aware file discovery. Returns matching file paths " +
     "sorted by modification time.",
   isReadOnly: true,
+  isConcurrencySafe: true,
   parameters: {
     type: "object",
     properties: {
