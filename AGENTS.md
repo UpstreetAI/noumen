@@ -66,6 +66,12 @@ Run this checklist **every time** you modify any of the files listed below:
 - Update `README.md` CLI section (flags table, config example)
 - Update `website/docs/cli/index.mdx` (flags reference, config keys table)
 
+### If you change `DiagnoseResult` or `diagnose()` (`src/code.ts`)
+- Update `README.md` health checks snippet (in Embedding section)
+- Update `website/docs/embedding/index.mdx` health checks section
+- Update `website/docs/cli/index.mdx` doctor command section
+- Update `src/__tests__/presets.test.ts` diagnose tests
+
 ## Code example rules
 
 - **Always use the `sandbox` pattern** in documentation examples:

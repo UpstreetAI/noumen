@@ -189,7 +189,23 @@ for await (const event of client.run("Deploy to staging")) { /* ... */ }
 
 ```typescript
 const result = await code.diagnose();
-// { provider: { ok: true }, sandbox: { fs: true, computer: true }, mcp: {}, lsp: {} }
+// {
+//   overall: true,
+//   provider: { ok: true, latencyMs: 342, model: "claude-sonnet-4-20250514" },
+//   sandbox: {
+//     fs: { ok: true, latencyMs: 2 },
+//     computer: { ok: true, latencyMs: 45 },
+//   },
+//   mcp: { filesystem: { ok: true, latencyMs: 0, status: "connected", toolCount: 5 } },
+//   lsp: {},
+//   timestamp: "2026-04-04T12:00:00.000Z",
+// }
+```
+
+Or from the CLI:
+
+```bash
+npx noumen doctor
 ```
 
 ## Providers

@@ -152,6 +152,16 @@ export class LspServerManager {
   }
 
   /**
+   * Return the name and state of every configured LSP server.
+   */
+  getServerStatus(): Array<{ name: string; state: string }> {
+    return Array.from(this.servers.entries()).map(([name, s]) => ({
+      name,
+      state: s.client.state,
+    }));
+  }
+
+  /**
    * Shut down all LSP servers.
    */
   async shutdown(): Promise<void> {

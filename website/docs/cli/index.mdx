@@ -101,6 +101,7 @@ Commands:
   init                     Create .noumen/config.json
   sessions                 List past sessions
   resume <session-id>      Resume a previous session
+  doctor                   Run health checks on provider, sandbox, MCP, and LSP
 ```
 
 Flags override config file values.
@@ -186,6 +187,32 @@ npx noumen sessions
 # Resume by ID (prefix match supported)
 npx noumen resume a1b2c3d4
 ```
+
+## Health checks
+
+Run `noumen doctor` to verify your provider, sandbox, MCP servers, and LSP servers are all working:
+
+```bash
+npx noumen doctor
+```
+
+Example output:
+
+```
+noumen doctor
+
+  ✓ Provider (claude-sonnet-4-20250514)  (342ms)
+  ✓ Sandbox: filesystem  (2ms)
+  ✓ Sandbox: shell  (45ms)
+  ✓ MCP: filesystem  (120ms) connected, 5 tools
+  ✓ LSP: typescript  running
+
+  Overall: healthy
+```
+
+The command exits with code 0 when all core checks pass, or 1 otherwise. Useful in CI pipelines or setup scripts.
+
+The same check is available programmatically via `code.diagnose()` — see [Embedding](/docs/embedding) for details.
 
 ## Project context
 

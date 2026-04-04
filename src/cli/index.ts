@@ -8,7 +8,7 @@ import { startRepl } from "./repl.js";
 import { renderEvent, createRenderState, promptPermission } from "./render.js";
 import { runInit } from "./init.js";
 import * as os from "node:os";
-import { Code, LocalSandbox } from "../index.js";
+import { Code, LocalSandbox, type DiagnoseResult, type DiagnoseCheckResult } from "../index.js";
 import type { ThinkingConfig } from "../thinking/types.js";
 import type { PermissionMode } from "../permissions/types.js";
 
@@ -108,6 +108,13 @@ async function main(): Promise<void> {
     .description("resume a previous session")
     .action(async (sessionId: string) => {
       await resumeSession(sessionId);
+    });
+
+  program
+    .command("doctor")
+    .description("run health checks on provider, sandbox, MCP, and LSP")
+    .action(async () => {
+      await runDoctor();
     });
 
   await program.parseAsync(process.argv);
@@ -415,6 +422,81 @@ async function resumeSession(sessionId: string): Promise<void> {
   } finally {
     rl.close();
     await code.close();
+  }
+}
+
+async function runDoctor(): Promise<void> {
+  const cwd = process.cwd();
+  const config = loadCliConfig(cwd);
+  const merged = mergeConfig(config, { cwd });
+
+  const providerName = merged.provider ?? await detectProvider();
+  if (!providerName) {
+    process.stderr.write(chalk.red("No provider configured. Run `noumen init` first.\n"));
+    process.exit(1);
+  }
+
+  const provider = await createProvider(providerName, {
+    apiKey: merged.apiKey,
+    model: merged.model,
+    configApiKey: merged.apiKey,
+    baseURL: merged.baseURL,
+  });
+
+  const code = new Code({
+    aiProvider: provider,
+    sandbox: LocalSandbox({ cwd }),
+    options: {
+      cwd,
+      model: merged.model,
+      mcpServers: merged.mcpServers,
+      lsp: merged.lsp,
+      sessionDir: merged.sessionDir ?? ".noumen/sessions",
+    },
+  });
+
+  await code.init();
+
+  process.stderr.write(chalk.bold("\nnoumen doctor\n\n"));
+  const result = await code.diagnose();
+  printDiagnoseResult(result);
+  await code.close();
+  process.exit(result.overall ? 0 : 1);
+}
+
+function formatCheckLine(label: string, check: DiagnoseCheckResult, extra?: string): string {
+  const icon = check.ok ? chalk.green("✓") : chalk.red("✗");
+  const timing = check.latencyMs > 0 ? chalk.dim(` (${check.latencyMs}ms)`) : "";
+  const suffix = extra ? chalk.dim(` ${extra}`) : "";
+  const errMsg = check.error ? chalk.red(`  ${check.error}`) : "";
+  const warnMsg = !check.error && check.warning ? chalk.yellow(`  ${check.warning}`) : "";
+  return `  ${icon} ${label}${timing}${suffix}${errMsg}${warnMsg}\n`;
+}
+
+function printDiagnoseResult(r: DiagnoseResult): void {
+  const modelLabel = r.provider.model ? ` (${r.provider.model})` : "";
+  process.stderr.write(formatCheckLine(`Provider${modelLabel}`, r.provider));
+  process.stderr.write(formatCheckLine("Sandbox: filesystem", r.sandbox.fs));
+  process.stderr.write(formatCheckLine("Sandbox: shell", r.sandbox.computer));
+
+  for (const [name, check] of Object.entries(r.mcp)) {
+    const parts: string[] = [];
+    if (check.status) parts.push(check.status);
+    if (check.toolCount != null) parts.push(`${check.toolCount} tools`);
+    const extra = parts.length ? parts.join(", ") : undefined;
+    process.stderr.write(formatCheckLine(`MCP: ${name}`, check, extra));
+  }
+
+  for (const [name, check] of Object.entries(r.lsp)) {
+    const extra = check.state ?? undefined;
+    process.stderr.write(formatCheckLine(`LSP: ${name}`, check, extra));
+  }
+
+  process.stderr.write("\n");
+  if (r.overall) {
+    process.stderr.write(`  ${chalk.green("Overall: healthy")}\n\n`);
+  } else {
+    process.stderr.write(`  ${chalk.red("Overall: unhealthy")}\n\n`);
   }
 }
 

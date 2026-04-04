@@ -82,18 +82,32 @@ Three presets are available:
 
 ### Health checks
 
-Before running prompts, verify that all integrations are working:
+Before running prompts, verify that all integrations are working. Pass an optional `timeoutMs` to control per-check timeout (default 10 000 ms):
 
 ```typescript
 const result = await code.diagnose();
 console.log(result);
 // {
-//   provider: { ok: true },
-//   sandbox: { fs: true, computer: true },
-//   mcp: { filesystem: { ok: true } },
-//   lsp: {}
+//   overall: true,
+//   provider: { ok: true, latencyMs: 342, model: "claude-sonnet-4-20250514" },
+//   sandbox: {
+//     fs: { ok: true, latencyMs: 2 },
+//     computer: { ok: true, latencyMs: 45 },
+//   },
+//   mcp: { filesystem: { ok: true, latencyMs: 0, status: "connected", toolCount: 5 } },
+//   lsp: { typescript: { ok: true, latencyMs: 0, state: "running" } },
+//   timestamp: "2026-04-04T12:00:00.000Z",
 // }
 ```
+
+Each check includes:
+
+- **`ok`** — whether the subsystem is healthy
+- **`latencyMs`** — how long the check took (useful for identifying slow integrations)
+- **`error`** / **`warning`** — human-readable detail when something is wrong
+- **`overall`** — `true` only when provider, filesystem, and shell all pass
+
+Use `result.overall` as a gate before accepting user prompts in production.
 
 ## HTTP / SSE server
 

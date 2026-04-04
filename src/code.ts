@@ -45,11 +45,20 @@ import { DEFAULT_RETRY_CONFIG } from "./retry/types.js";
 import type { ContextFile, ProjectContextConfig } from "./context/types.js";
 import { loadProjectContext } from "./context/loader.js";
 
+export interface DiagnoseCheckResult {
+  ok: boolean;
+  latencyMs: number;
+  error?: string;
+  warning?: string;
+}
+
 export interface DiagnoseResult {
-  provider: { ok: boolean; error?: string };
-  sandbox: { fs: boolean; computer: boolean; error?: string };
-  mcp: Record<string, { ok: boolean; error?: string }>;
-  lsp: Record<string, { ok: boolean; error?: string }>;
+  overall: boolean;
+  provider: DiagnoseCheckResult & { model?: string };
+  sandbox: { fs: DiagnoseCheckResult; computer: DiagnoseCheckResult };
+  mcp: Record<string, DiagnoseCheckResult & { status?: string; toolCount?: number }>;
+  lsp: Record<string, DiagnoseCheckResult & { state?: string }>;
+  timestamp: string;
 }
 
 export interface CodeOptions {
@@ -501,77 +510,113 @@ export class Code {
   /**
    * Run health checks on the provider, sandbox, MCP servers, and LSP servers.
    * Returns a structured report — useful for debugging integration issues.
+   *
+   * @param timeoutMs Per-check timeout in milliseconds (default 10 000).
    */
-  async diagnose(): Promise<DiagnoseResult> {
-    const result: DiagnoseResult = {
-      provider: { ok: false },
-      sandbox: { fs: false, computer: false },
-      mcp: {},
-      lsp: {},
+  async diagnose(timeoutMs = 10_000): Promise<DiagnoseResult> {
+    const timedCheck = async <T>(
+      fn: () => Promise<T>,
+    ): Promise<{ value: T; latencyMs: number }> => {
+      const start = performance.now();
+      const value = await Promise.race([
+        fn(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`Timed out after ${timeoutMs}ms`)), timeoutMs),
+        ),
+      ]);
+      return { value, latencyMs: Math.round(performance.now() - start) };
     };
 
-    // Provider check
+    const fail = (err: unknown): string =>
+      err instanceof Error ? err.message : String(err);
+
+    // --- Provider ----------------------------------------------------------
+    let providerCheck: DiagnoseResult["provider"];
     try {
-      const stream = this.aiProvider.chat({
-        model: this.model ?? "gpt-4o-mini",
-        messages: [{ role: "user", content: "Say ok" }],
-        tools: [],
-        system: "",
+      const { latencyMs } = await timedCheck(async () => {
+        const stream = this.aiProvider.chat({
+          model: this.model ?? "gpt-4o-mini",
+          messages: [{ role: "user", content: "Say ok" }],
+          tools: [],
+          system: "",
+        });
+        for await (const _ of stream) { break; }
       });
-      for await (const _ of stream) { break; }
-      result.provider = { ok: true };
+      providerCheck = { ok: true, latencyMs, model: this.model };
     } catch (err) {
-      result.provider = { ok: false, error: err instanceof Error ? err.message : String(err) };
+      providerCheck = { ok: false, latencyMs: 0, error: fail(err), model: this.model };
     }
 
-    // Sandbox filesystem check
+    // --- Sandbox FS --------------------------------------------------------
+    let fsCheck: DiagnoseCheckResult;
     try {
-      await this.fs.exists("/");
-      result.sandbox.fs = true;
+      const { latencyMs } = await timedCheck(async () => this.fs.exists("/"));
+      fsCheck = { ok: true, latencyMs };
     } catch (err) {
-      result.sandbox.error = err instanceof Error ? err.message : String(err);
+      fsCheck = { ok: false, latencyMs: 0, error: fail(err) };
     }
 
-    // Sandbox computer check
+    // --- Sandbox Computer --------------------------------------------------
+    let computerCheck: DiagnoseCheckResult;
     try {
-      const cmd = await this.computer.executeCommand("echo ok");
-      result.sandbox.computer = cmd.exitCode === 0;
-      if (cmd.exitCode !== 0) {
-        result.sandbox.error = (result.sandbox.error ? result.sandbox.error + "; " : "") + "Shell returned non-zero";
+      const { value: cmd, latencyMs } = await timedCheck(
+        async () => this.computer.executeCommand("echo ok"),
+      );
+      if (cmd.exitCode === 0) {
+        computerCheck = { ok: true, latencyMs };
+      } else {
+        computerCheck = { ok: false, latencyMs, warning: "Shell returned non-zero" };
       }
     } catch (err) {
-      result.sandbox.computer = false;
-      const msg = err instanceof Error ? err.message : String(err);
-      result.sandbox.error = (result.sandbox.error ? result.sandbox.error + "; " : "") + msg;
+      computerCheck = { ok: false, latencyMs: 0, error: fail(err) };
     }
 
-    // MCP server status
+    // --- MCP servers -------------------------------------------------------
+    const mcpResults: DiagnoseResult["mcp"] = {};
     if (this.mcpManager) {
-      try {
-        const tools = await this.mcpManager.getTools();
-        for (const name of Object.keys(this.mcpServerConfigs ?? {})) {
-          const hasTools = tools.some((t) => t.name.startsWith(`mcp__${name}`));
-          result.mcp[name] = { ok: hasTools };
-        }
-      } catch (err) {
-        for (const name of Object.keys(this.mcpServerConfigs ?? {})) {
-          result.mcp[name] = { ok: false, error: err instanceof Error ? err.message : String(err) };
-        }
+      const statuses = this.mcpManager.getConnectionStatus();
+      for (const s of statuses) {
+        const ok = s.status === "connected";
+        mcpResults[s.name] = {
+          ok,
+          latencyMs: 0,
+          status: s.status,
+          toolCount: s.toolCount,
+          ...(!ok && s.status === "needs-auth"
+            ? { warning: "Requires OAuth authentication" }
+            : {}),
+          ...(!ok && s.status === "failed"
+            ? { error: "Connection failed" }
+            : {}),
+        };
       }
     }
 
-    // LSP server status
+    // --- LSP servers -------------------------------------------------------
+    const lspResults: DiagnoseResult["lsp"] = {};
     if (this.lspManager) {
-      for (const name of Object.keys(this.lspConfigs ?? {})) {
-        try {
-          result.lsp[name] = { ok: true };
-        } catch (err) {
-          result.lsp[name] = { ok: false, error: err instanceof Error ? err.message : String(err) };
-        }
+      for (const s of this.lspManager.getServerStatus()) {
+        lspResults[s.name] = {
+          ok: s.state === "running",
+          latencyMs: 0,
+          state: s.state,
+          ...(s.state !== "running" && s.state !== "idle"
+            ? { warning: `Server state: ${s.state}` }
+            : {}),
+        };
       }
     }
 
-    return result;
+    const overall = providerCheck.ok && fsCheck.ok && computerCheck.ok;
+
+    return {
+      overall,
+      provider: providerCheck,
+      sandbox: { fs: fsCheck, computer: computerCheck },
+      mcp: mcpResults,
+      lsp: lspResults,
+      timestamp: new Date().toISOString(),
+    };
   }
 
   /**
