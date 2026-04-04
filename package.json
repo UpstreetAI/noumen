@@ -42,6 +42,14 @@
     "./lsp": {
       "import": "./dist/lsp/index.js",
       "types": "./dist/lsp/index.d.ts"
+    },
+    "./server": {
+      "import": "./dist/server/index.js",
+      "types": "./dist/server/index.d.ts"
+    },
+    "./client": {
+      "import": "./dist/client/index.js",
+      "types": "./dist/client/index.d.ts"
     }
   },
   "files": [
@@ -74,7 +82,8 @@
     "@anthropic-ai/vertex-sdk": ">=0.4.0",
     "google-auth-library": ">=9.0.0",
     "dockerode": ">=4.0.0",
-    "e2b": ">=2.0.0"
+    "e2b": ">=2.0.0",
+    "ws": ">=8.0.0"
   },
   "peerDependenciesMeta": {
     "@anthropic-ai/sdk": {
@@ -109,6 +118,9 @@
     },
     "e2b": {
       "optional": true
+    },
+    "ws": {
+      "optional": true
     }
   },
   "devDependencies": {
@@ -124,6 +136,8 @@
     "concurrently": "^9.2.1",
     "tsup": "^8.4.0",
     "typescript": "^5.7.0",
-    "vitest": "^3.0.0"
+    "vitest": "^3.0.0",
+    "ws": "^8.18.0",
+    "@types/ws": "^8.5.0"
   }
 }

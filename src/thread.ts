@@ -105,6 +105,10 @@ export interface ThreadOptions {
   resume?: boolean;
   cwd?: string;
   model?: string;
+  /** Override the permission handler for this thread (takes precedence over CodeOptions). */
+  permissionHandler?: PermissionHandler;
+  /** Override the user input handler for this thread (takes precedence over CodeOptions). */
+  userInputHandler?: (question: string) => Promise<string>;
 }
 
 export interface ThreadConfig {

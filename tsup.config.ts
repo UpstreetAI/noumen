@@ -11,6 +11,8 @@ export default defineConfig({
     "src/providers/vertex.ts",
     "src/mcp/index.ts",
     "src/lsp/index.ts",
+    "src/server/index.ts",
+    "src/client/index.ts",
   ],
   format: ["esm"],
   dts: true,

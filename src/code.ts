@@ -374,13 +374,15 @@ export class Code {
         microcompact: this.microcompactConfig,
         toolResultBudget: this.toolResultBudgetConfig,
         reactiveCompact: this.reactiveCompactConfig,
-        permissions: this.permissions,
+        permissions: opts?.permissionHandler
+          ? { ...this.permissions, handler: opts.permissionHandler }
+          : this.permissions,
         hooks: this.hooks,
         spawnSubagent: this.enableSubagents
           ? this.createSpawnSubagent(cwd)
           : undefined,
         streamingToolExecution: this.streamingToolExecution,
-        userInputHandler: this.userInputHandler,
+        userInputHandler: opts?.userInputHandler ?? this.userInputHandler,
         taskStore: this.taskStore ?? undefined,
         lspManager: this.lspManager ?? undefined,
         thinking: this.thinkingConfig,
