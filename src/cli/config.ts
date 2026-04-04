@@ -82,6 +82,7 @@ export interface MergedConfig extends CliConfig {
   json?: boolean;
   quiet?: boolean;
   verbose?: boolean;
+  headless?: boolean;
   prompt?: string;
 }
 
@@ -107,6 +108,7 @@ export function mergeConfig(
     json: flags.json as boolean | undefined,
     quiet: flags.quiet as boolean | undefined,
     verbose: flags.verbose as boolean | undefined,
+    headless: flags.headless as boolean | undefined,
     prompt: flags.prompt as string | undefined,
   };
 }

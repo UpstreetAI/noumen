@@ -154,6 +154,32 @@ for await (const event of client.run("Fix the failing test in auth.test.ts")) {
 }
 ```
 
+## Middleware adapter
+
+Mount the agent on an existing Express, Fastify, or Hono server using `createRequestHandler()`:
+
+```typescript
+import express from "express";
+import { Code, LocalSandbox } from "noumen";
+import { createRequestHandler } from "noumen/server";
+import { OpenAIProvider } from "noumen/openai";
+
+const code = new Code({
+  aiProvider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY! }),
+  sandbox: LocalSandbox({ cwd: "/workspace" }),
+  options: { permissions: { mode: "bypassPermissions" } },
+});
+await code.init();
+
+const app = express();
+app.use("/agent", createRequestHandler(code, {
+  auth: { type: "bearer", token: process.env.API_TOKEN! },
+}));
+app.listen(3000);
+```
+
+All REST endpoints from the [Server API Reference](/docs/server-api) are available under the mount path. WebSocket requires `createServer()` standalone mode.
+
 ## WebSocket
 
 For bidirectional communication (permissions, user input), use the WebSocket transport:
@@ -312,6 +338,16 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(disposable);
 }
 ```
+
+## Headless CLI
+
+For subprocess integration from any language, run the agent in headless mode with bidirectional NDJSON over stdin/stdout:
+
+```bash
+noumen --headless -p anthropic -m claude-sonnet-4-20250514
+```
+
+Send commands as JSON lines on stdin, receive events as JSON lines on stdout. See the [Server API Reference](/docs/server-api#headless-cli-protocol) for the full protocol and examples in Node.js and Python.
 
 ## Key stream events to handle
 

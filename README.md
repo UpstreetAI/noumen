@@ -156,7 +156,7 @@ Ollama, Bedrock, and Vertex do not require an API key.
 
 ## Embedding
 
-noumen is a library first. Four integration patterns:
+noumen is a library first. Six integration patterns:
 
 **In-process** — `Code` + `Thread.run()` async iterator, direct import:
 
@@ -175,6 +175,13 @@ const server = createServer(code, { port: 3001, auth: { type: "bearer", token: "
 await server.start();
 ```
 
+**Middleware** — mount on Express, Fastify, or Hono:
+
+```typescript
+import { createRequestHandler } from "noumen/server";
+app.use("/agent", createRequestHandler(code, { auth: { type: "bearer", token: "..." } }));
+```
+
 **WebSocket** — bidirectional with permission handling:
 
 ```typescript
@@ -183,7 +190,13 @@ const client = new NoumenClient({ baseUrl: "http://localhost:3001", transport: "
 for await (const event of client.run("Deploy to staging")) { /* ... */ }
 ```
 
-**Frameworks** — Next.js API routes, Electron IPC, VS Code extensions. See the [full embedding guide](https://noumen.dev/docs/embedding).
+**Headless CLI** — NDJSON subprocess control from any language:
+
+```bash
+npx noumen --headless -p anthropic <<< '{"type":"prompt","text":"Fix the bug"}'
+```
+
+**Frameworks** — Next.js API routes, Electron IPC, VS Code extensions. See the [full embedding guide](https://noumen.dev/docs/embedding) and [Server API Reference](https://noumen.dev/docs/server-api).
 
 **Health checks** — verify all integrations work before running:
 

@@ -1,0 +1,4 @@
+{
+  "title": "Server API",
+  "description": "REST, WebSocket, and headless CLI protocol reference for the noumen agent server"
+}

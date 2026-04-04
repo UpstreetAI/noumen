@@ -40,6 +40,20 @@ export interface ServerOptions {
   pendingTimeoutMs?: number;
 }
 
+/**
+ * Options for `createRequestHandler()` — same as `ServerOptions` but without
+ * `port` / `host` / `ws` since the caller owns the HTTP server.
+ */
+export interface RequestHandlerOptions {
+  auth?: AuthConfig;
+  maxSessions?: number;
+  idleTimeoutMs?: number;
+  onConnection?: (info: ConnectionInfo) => MaybePromise<ConnectionOverrides>;
+  onError?: (err: Error) => void;
+  cors?: boolean;
+  pendingTimeoutMs?: number;
+}
+
 export type AuthConfig =
   | { type: "bearer"; token: string }
   | { type: "custom"; verify: (req: IncomingMessage) => MaybePromise<AuthResult | null> };
@@ -117,22 +131,13 @@ export class NoumenServer {
   }
 
   async start(): Promise<void> {
-    this.httpServer = createHttpServer((req, res) => {
-      this.handleHttp(req, res).catch((err) => {
-        this.options.onError?.(err instanceof Error ? err : new Error(String(err)));
-        if (!res.headersSent) jsonResponse(res, 500, { error: "Internal server error" });
-      });
-    });
+    this.httpServer = createHttpServer((req, res) => this.handleRequest(req, res));
 
     if (this.options.ws !== false) {
       await this.initWebSocket();
     }
 
-    if (this.options.idleTimeoutMs) {
-      const interval = Math.max(this.options.idleTimeoutMs / 2, 1000);
-      this.idleTimer = setInterval(() => this.reapIdleSessions(), interval);
-      this.idleTimer.unref();
-    }
+    this.ensureIdleReaper();
 
     return new Promise<void>((resolve, reject) => {
       const host = this.options.host ?? "0.0.0.0";
@@ -204,6 +209,29 @@ export class NoumenServer {
         this.options.onError?.(err instanceof Error ? err : new Error(String(err))),
       );
     });
+  }
+
+  /**
+   * Handle an HTTP request. Used internally by `start()` and exposed for
+   * `createRequestHandler()` so the same logic can be mounted on an
+   * external Express / Fastify / Hono server.
+   */
+  async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    this.ensureIdleReaper();
+    return this.handleHttp(req, res).catch((err) => {
+      this.options.onError?.(err instanceof Error ? err : new Error(String(err)));
+      if (!res.headersSent) jsonResponse(res, 500, { error: "Internal server error" });
+    });
+  }
+
+  private idleReaperStarted = false;
+
+  private ensureIdleReaper(): void {
+    if (this.idleReaperStarted || !this.options.idleTimeoutMs) return;
+    this.idleReaperStarted = true;
+    const interval = Math.max(this.options.idleTimeoutMs / 2, 1000);
+    this.idleTimer = setInterval(() => this.reapIdleSessions(), interval);
+    this.idleTimer.unref();
   }
 
   // -------------------------------------------------------------------------
@@ -746,6 +774,33 @@ export class NoumenServer {
 
 export function createServer(code: Code, options: ServerOptions): NoumenServer {
   return new NoumenServer(code, options);
+}
+
+/**
+ * Create a `(req, res)` handler that can be mounted on any Node HTTP
+ * framework (Express, Fastify, Hono, bare `http.createServer`, etc.).
+ *
+ * ```ts
+ * import express from "express";
+ * import { createRequestHandler } from "noumen/server";
+ *
+ * const app = express();
+ * app.use("/agent", createRequestHandler(code, { auth: { type: "bearer", token: "..." } }));
+ * ```
+ *
+ * WebSocket is not supported in middleware mode — use `createServer()` for WS.
+ */
+export function createRequestHandler(
+  code: Code,
+  options?: RequestHandlerOptions,
+): (req: IncomingMessage, res: ServerResponse) => void {
+  const serverOpts: ServerOptions = {
+    port: 0,
+    ws: false,
+    ...options,
+  };
+  const server = new NoumenServer(code, serverOpts);
+  return (req, res) => { server.handleRequest(req, res); };
 }
 
 // ---------------------------------------------------------------------------

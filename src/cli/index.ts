@@ -62,6 +62,7 @@ async function main(): Promise<void> {
     .option("--json", "emit JSONL stream events to stdout")
     .option("--quiet", "only output final text")
     .option("--verbose", "show tool calls and thinking")
+    .option("--headless", "NDJSON stdin/stdout protocol for programmatic control")
     .option("-c, --prompt <text>", "one-shot prompt (non-interactive)")
     .argument("[prompt...]", "inline prompt")
     .allowExcessArguments(true)
@@ -242,6 +243,12 @@ async function runAgent(config: MergedConfig): Promise<void> {
       retry: true,
     },
   });
+
+  if (config.headless) {
+    const { runHeadless } = await import("./headless.js");
+    await runHeadless(code, config);
+    return;
+  }
 
   await code.init();
 

@@ -1,0 +1,404 @@
+---
+title: Server API Reference
+description: Complete protocol reference for the noumen agent server — REST endpoints, SSE streaming, WebSocket messages, middleware adapter, and headless CLI.
+---
+
+noumen ships a built-in server (`noumen/server`) that exposes the agent over HTTP/SSE and WebSocket, plus a headless CLI mode for subprocess control. This page documents the full protocol.
+
+## Standalone server
+
+```typescript
+import { Code, LocalSandbox } from "noumen";
+import { createServer } from "noumen/server";
+import { AnthropicProvider } from "noumen/anthropic";
+
+const code = new Code({
+  aiProvider: new AnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY! }),
+  sandbox: LocalSandbox({ cwd: "/workspace" }),
+  options: { permissions: { mode: "bypassPermissions" } },
+});
+
+await code.init();
+
+const server = createServer(code, {
+  port: 3001,
+  auth: { type: "bearer", token: process.env.API_TOKEN! },
+  cors: true,
+  ws: true,
+  maxSessions: 10,
+  idleTimeoutMs: 300_000,
+  pendingTimeoutMs: 120_000,
+});
+
+await server.start();
+```
+
+### ServerOptions
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `port` | `number` | required | TCP port to listen on |
+| `host` | `string` | `"0.0.0.0"` | Bind address |
+| `ws` | `boolean` | `true` | Enable WebSocket transport (requires `ws` package) |
+| `auth` | `AuthConfig` | none | Bearer token or custom auth function |
+| `maxSessions` | `number` | unlimited | Maximum concurrent sessions |
+| `idleTimeoutMs` | `number` | none | Reap sessions idle longer than this |
+| `cors` | `boolean` | `true` | Set CORS headers for browser clients |
+| `pendingTimeoutMs` | `number` | `120000` | Timeout for pending permission/input responses |
+| `onConnection` | function | none | Called per connection; return `{ cwd }` overrides |
+| `onError` | function | none | Error callback |
+
+### AuthConfig
+
+```typescript
+// Bearer token
+{ type: "bearer", token: "my-secret" }
+
+// Custom verifier
+{ type: "custom", verify: (req) => req.headers["x-api-key"] === "..." ? {} : null }
+```
+
+---
+
+## REST endpoints
+
+All endpoints except `/health` require authentication when `auth` is configured.
+
+### GET /health
+
+Health check. Does **not** require auth.
+
+**Response** `200`:
+```json
+{ "status": "ok", "sessions": 2 }
+```
+
+### POST /sessions
+
+Create a session and start an agent run.
+
+**Body:**
+```json
+{ "prompt": "Fix the failing test", "sessionId": "optional-custom-id" }
+```
+
+**Response** `201`:
+```json
+{ "sessionId": "abc-123", "eventsUrl": "/sessions/abc-123/events" }
+```
+
+**Errors:** `400` missing prompt, `429` max sessions reached.
+
+### GET /sessions
+
+List active sessions.
+
+**Response** `200`:
+```json
+[{ "id": "abc-123", "lastActivity": 1712188800000, "done": false }]
+```
+
+### GET /sessions/:id/events
+
+SSE event stream. Connect after creating a session to receive events.
+
+**Headers:** `Content-Type: text/event-stream`
+
+Each event has an incrementing `id:` for resumption:
+
+```
+id: 1
+data: {"type":"text_delta","text":"Hello"}
+
+id: 2
+data: {"type":"tool_use_start","toolName":"ReadFile","input":{"path":"src/main.ts"}}
+
+id: 3
+data: {"type":"turn_complete","usage":{"inputTokens":100,"outputTokens":50}}
+```
+
+**Resumption:** On reconnect, send `Last-Event-ID: 3` to skip already-received events.
+
+**Keepalive:** The server sends `:keepalive` comments every 15 seconds.
+
+**Subscriber replacement:** If a second client connects to the same session's event stream, the first receives `{"type":"subscriber_replaced"}` and is disconnected.
+
+### POST /sessions/:id/permissions
+
+Resolve a pending permission request.
+
+**Body:**
+```json
+{ "allow": true }
+```
+
+**Errors:** `404` session not found, `409` no pending permission request.
+
+### POST /sessions/:id/input
+
+Resolve a pending user input request.
+
+**Body:**
+```json
+{ "answer": "yes, deploy to production" }
+```
+
+**Errors:** `404` session not found, `409` no pending input request.
+
+### POST /sessions/:id/messages
+
+Send a follow-up prompt to an idle session.
+
+**Body:**
+```json
+{ "prompt": "Now run the tests" }
+```
+
+**Errors:** `404` session not found, `409` session is still running.
+
+### DELETE /sessions/:id
+
+Abort and destroy a session.
+
+**Response** `200`:
+```json
+{ "ok": true }
+```
+
+---
+
+## WebSocket protocol
+
+Connect to `ws://host:port` (or `wss://` for TLS). The same HTTP server handles both REST and WebSocket.
+
+### Authentication
+
+- **Query parameter:** `ws://host:port?token=my-secret`
+- **Authorization header:** Standard `Authorization: Bearer my-secret` on the upgrade request
+
+### Client-to-server messages
+
+#### run
+
+Start a new agent session.
+
+```json
+{ "type": "run", "prompt": "Fix the bug", "sessionId": "optional-id" }
+```
+
+Server responds with `session_created`, then streams events.
+
+#### message
+
+Send a follow-up prompt to an idle session.
+
+```json
+{ "type": "message", "sessionId": "abc-123", "prompt": "Now add tests" }
+```
+
+#### permission_response
+
+Resolve a pending permission request.
+
+```json
+{ "type": "permission_response", "sessionId": "abc-123", "allow": true }
+```
+
+#### input_response
+
+Resolve a pending user input request.
+
+```json
+{ "type": "input_response", "sessionId": "abc-123", "answer": "yes" }
+```
+
+#### abort
+
+Abort and destroy a session.
+
+```json
+{ "type": "abort", "sessionId": "abc-123" }
+```
+
+### Server-to-client messages
+
+All messages include `sessionId` and `seq` (incrementing sequence number):
+
+```json
+{ "type": "session_created", "sessionId": "abc-123" }
+```
+
+```json
+{ "type": "text_delta", "text": "Hello", "sessionId": "abc-123", "seq": 1 }
+```
+
+```json
+{ "type": "turn_complete", "sessionId": "abc-123", "seq": 5, "usage": { ... } }
+```
+
+```json
+{ "type": "error", "sessionId": "abc-123", "error": "Something went wrong" }
+```
+
+### Connection lifecycle
+
+- **Ping/pong:** Server pings every 30 seconds; closes connections that fail to respond.
+- **Session cleanup:** When the WebSocket closes, all sessions created on that connection are destroyed.
+
+---
+
+## Middleware adapter
+
+Mount the agent on an existing HTTP server using `createRequestHandler()`:
+
+```typescript
+import express from "express";
+import { Code, LocalSandbox } from "noumen";
+import { createRequestHandler } from "noumen/server";
+import { OpenAIProvider } from "noumen/openai";
+
+const code = new Code({
+  aiProvider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY! }),
+  sandbox: LocalSandbox({ cwd: "/workspace" }),
+  options: { permissions: { mode: "bypassPermissions" } },
+});
+await code.init();
+
+const app = express();
+app.use("/agent", createRequestHandler(code, {
+  auth: { type: "bearer", token: process.env.API_TOKEN! },
+  cors: true,
+  maxSessions: 5,
+}));
+app.listen(3000);
+```
+
+The handler supports all REST endpoints documented above. Routes are relative to the mount path (e.g. `POST /agent/sessions`).
+
+WebSocket is not supported in middleware mode. Use `createServer()` for WebSocket support.
+
+### RequestHandlerOptions
+
+Same as `ServerOptions` but without `port`, `host`, and `ws`.
+
+---
+
+## Headless CLI protocol
+
+Run `noumen --headless` to start the agent in headless mode. Communication is bidirectional NDJSON over stdin/stdout.
+
+```bash
+noumen --headless -p anthropic -m claude-sonnet-4-20250514
+```
+
+### Startup
+
+The process emits `{"type":"ready"}` on stdout when initialization is complete.
+
+### Inbound commands (stdin)
+
+One JSON object per line:
+
+#### prompt
+
+```json
+{"type":"prompt","text":"Fix the failing test","sessionId":"optional-id","maxTurns":10}
+```
+
+#### permission_response
+
+```json
+{"type":"permission_response","sessionId":"abc-123","allow":true}
+```
+
+#### input_response
+
+```json
+{"type":"input_response","sessionId":"abc-123","answer":"yes"}
+```
+
+#### abort
+
+```json
+{"type":"abort","sessionId":"abc-123"}
+```
+
+### Outbound events (stdout)
+
+One JSON object per line. All stream events include a `sessionId` field:
+
+```json
+{"type":"ready"}
+{"type":"session_created","sessionId":"abc-123"}
+{"type":"text_delta","text":"Hello","sessionId":"abc-123"}
+{"type":"tool_use_start","toolName":"ReadFile","input":{"path":"src/main.ts"},"sessionId":"abc-123"}
+{"type":"turn_complete","sessionId":"abc-123"}
+{"type":"session_done","sessionId":"abc-123"}
+```
+
+### Usage from Node.js
+
+```typescript
+import { spawn } from "node:child_process";
+
+const agent = spawn("npx", ["noumen", "--headless", "-p", "anthropic"], {
+  stdio: ["pipe", "pipe", "inherit"],
+});
+
+const rl = readline.createInterface({ input: agent.stdout });
+
+for await (const line of rl) {
+  const event = JSON.parse(line);
+  if (event.type === "ready") {
+    agent.stdin.write(JSON.stringify({ type: "prompt", text: "Hello" }) + "\n");
+  }
+  if (event.type === "text_delta") {
+    process.stdout.write(event.text);
+  }
+  if (event.type === "session_done") break;
+}
+
+agent.kill();
+```
+
+### Usage from Python
+
+```python
+import subprocess, json
+
+proc = subprocess.Popen(
+    ["npx", "noumen", "--headless", "-p", "anthropic"],
+    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=None,
+    text=True, bufsize=1,
+)
+
+for line in proc.stdout:
+    event = json.loads(line)
+    if event["type"] == "ready":
+        proc.stdin.write(json.dumps({"type": "prompt", "text": "Hello"}) + "\n")
+        proc.stdin.flush()
+    if event["type"] == "text_delta":
+        print(event["text"], end="")
+    if event["type"] == "session_done":
+        break
+
+proc.terminate()
+```
+
+---
+
+## Stream event types
+
+For a full reference of all `StreamEvent` types emitted by the agent, see [Stream Events](/docs/stream-events).
+
+The most common events to handle:
+
+| Event | Description |
+|-------|-------------|
+| `text_delta` | Model streaming text (field: `text`) |
+| `thinking_delta` | Model thinking/reasoning (field: `text`) |
+| `tool_use_start` | Tool call begins (fields: `toolName`, `input`) |
+| `tool_result` | Tool call result (field: `result`) |
+| `permission_request` | Agent needs permission (fields: `toolName`, `input`) |
+| `turn_complete` | Agent turn finished (field: `usage`) |
+| `error` | Error occurred (field: `error`) |

@@ -95,6 +95,7 @@ Options:
   --json                   Emit JSONL stream events to stdout
   --quiet                  Only output final text
   --verbose                Show tool calls and thinking
+  --headless               NDJSON stdin/stdout protocol for programmatic control
   -c, --prompt <text>      One-shot prompt (non-interactive)
 
 Commands:
@@ -175,6 +176,30 @@ Use `--quiet` to suppress everything except the final text output:
 ```bash
 RESULT=$(npx noumen --quiet -c "What does server.ts do?")
 ```
+
+## Headless mode
+
+Use `--headless` for programmatic subprocess control. The agent communicates via bidirectional NDJSON over stdin/stdout:
+
+```bash
+npx noumen --headless -p anthropic -m claude-sonnet-4-20250514
+```
+
+The process emits `{"type":"ready"}` when initialized. Send commands as JSON lines on stdin:
+
+```json
+{"type":"prompt","text":"Fix the failing test"}
+```
+
+Receive events as JSON lines on stdout:
+
+```json
+{"type":"session_created","sessionId":"abc-123"}
+{"type":"text_delta","text":"Looking at the test...","sessionId":"abc-123"}
+{"type":"session_done","sessionId":"abc-123"}
+```
+
+This works from any language that can spawn a subprocess. See the [Server API Reference](/docs/server-api#headless-cli-protocol) for the full protocol and examples in Node.js and Python.
 
 ## Session management
 

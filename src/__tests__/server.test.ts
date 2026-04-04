@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { MockFs, MockComputer, MockAIProvider, textResponse, toolCallResponse } from "./helpers.js";
 import { Code } from "../code.js";
 import { createServer, type NoumenServer } from "../server/index.js";
+import WebSocket from "ws";
 
 let fs: MockFs;
 let computer: MockComputer;
@@ -556,5 +557,234 @@ describe("NoumenServer", () => {
         expect(session.done).toBe(true);
       }
     }, 5000);
+  });
+
+  // -------------------------------------------------------------------------
+  // WebSocket transport tests
+  // -------------------------------------------------------------------------
+
+  describe("WebSocket transport", () => {
+    async function startWsServer(
+      c: Code,
+      opts?: { auth?: any; maxSessions?: number },
+    ): Promise<{ server: NoumenServer; wsUrl: string; baseUrl: string }> {
+      const s = createServer(c, { port: 0, ws: true, ...opts });
+      await s.start();
+      const addr = (s as any).httpServer?.address();
+      const port = typeof addr === "object" ? addr.port : 0;
+      return {
+        server: s,
+        wsUrl: `ws://127.0.0.1:${port}`,
+        baseUrl: `http://127.0.0.1:${port}`,
+      };
+    }
+
+    function wsConnect(url: string): Promise<WebSocket> {
+      return new Promise((resolve, reject) => {
+        const ws = new WebSocket(url);
+        ws.on("open", () => resolve(ws));
+        ws.on("error", reject);
+      });
+    }
+
+    function wsSend(ws: WebSocket, data: unknown): void {
+      ws.send(JSON.stringify(data));
+    }
+
+    function collectMessages(
+      ws: WebSocket,
+      opts?: { untilType?: string; timeoutMs?: number },
+    ): Promise<any[]> {
+      const msgs: any[] = [];
+      const timeout = opts?.timeoutMs ?? 3000;
+
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          ws.removeAllListeners("message");
+          resolve(msgs);
+        }, timeout);
+
+        ws.on("message", (raw) => {
+          const msg = JSON.parse(raw.toString());
+          msgs.push(msg);
+          if (opts?.untilType && msg.type === opts.untilType) {
+            clearTimeout(timer);
+            ws.removeAllListeners("message");
+            resolve(msgs);
+          }
+        });
+      });
+    }
+
+    it("sends run command and receives session_created + stream events", async () => {
+      provider.addResponse(textResponse("WS hello!"));
+      code = makeCode();
+      ({ server, baseUrl } = await startWsServer(code));
+      const wsUrl = baseUrl.replace("http", "ws");
+
+      const ws = await wsConnect(wsUrl);
+      wsSend(ws, { type: "run", prompt: "hi" });
+
+      const msgs = await collectMessages(ws, { untilType: "turn_complete" });
+      ws.close();
+
+      const types = msgs.map((m) => m.type);
+      expect(types).toContain("session_created");
+      expect(types).toContain("text_delta");
+      expect(types).toContain("turn_complete");
+
+      const sessionCreated = msgs.find((m) => m.type === "session_created");
+      expect(sessionCreated.sessionId).toBeTruthy();
+
+      const textDelta = msgs.find((m) => m.type === "text_delta");
+      expect(textDelta.text).toContain("WS hello!");
+      expect(textDelta.sessionId).toBeTruthy();
+      expect(textDelta.seq).toBeGreaterThan(0);
+    });
+
+    it("supports follow-up messages after session is done", async () => {
+      provider.addResponse(textResponse("first"));
+      provider.addResponse(textResponse("second"));
+      code = makeCode();
+      ({ server, baseUrl } = await startWsServer(code));
+      const wsUrl = baseUrl.replace("http", "ws");
+
+      const ws = await wsConnect(wsUrl);
+      wsSend(ws, { type: "run", prompt: "hi" });
+
+      const firstMsgs = await collectMessages(ws, { untilType: "turn_complete" });
+      const sessionId = firstMsgs.find((m) => m.type === "session_created")?.sessionId;
+      expect(sessionId).toBeTruthy();
+
+      await new Promise((r) => setTimeout(r, 100));
+
+      wsSend(ws, { type: "message", sessionId, prompt: "more" });
+
+      const secondMsgs = await collectMessages(ws, { untilType: "turn_complete" });
+      ws.close();
+
+      const textDeltas = secondMsgs.filter((m) => m.type === "text_delta");
+      expect(textDeltas.length).toBeGreaterThan(0);
+      expect(textDeltas[0].text).toContain("second");
+    });
+
+    it("handles abort command", async () => {
+      provider.addResponse(textResponse("hi"));
+      code = makeCode();
+      ({ server, baseUrl } = await startWsServer(code));
+      const wsUrl = baseUrl.replace("http", "ws");
+
+      const ws = await wsConnect(wsUrl);
+      wsSend(ws, { type: "run", prompt: "start" });
+
+      const msgs = await collectMessages(ws, { untilType: "session_created", timeoutMs: 1000 });
+      const sessionId = msgs.find((m) => m.type === "session_created")?.sessionId;
+
+      wsSend(ws, { type: "abort", sessionId });
+
+      await new Promise((r) => setTimeout(r, 200));
+      ws.close();
+
+      // Verify session was cleaned up
+      const listRes = await globalThis.fetch(baseUrl + "/sessions");
+      const sessions = await listRes.json() as any[];
+      expect(sessions.length).toBe(0);
+    });
+
+    it("authenticates via query parameter token", async () => {
+      provider.addResponse(textResponse("ok"));
+      code = makeCode();
+      ({ server, baseUrl } = await startWsServer(code, {
+        auth: { type: "bearer", token: "ws-secret" },
+      }));
+      const wsUrl = baseUrl.replace("http", "ws");
+
+      const ws = await wsConnect(`${wsUrl}?token=ws-secret`);
+      wsSend(ws, { type: "run", prompt: "hi" });
+
+      const msgs = await collectMessages(ws, { untilType: "session_created", timeoutMs: 1000 });
+      ws.close();
+
+      expect(msgs.find((m) => m.type === "session_created")).toBeTruthy();
+    });
+
+    it("rejects connections with invalid token", async () => {
+      code = makeCode();
+      ({ server, baseUrl } = await startWsServer(code, {
+        auth: { type: "bearer", token: "ws-secret" },
+      }));
+      const wsUrl = baseUrl.replace("http", "ws");
+
+      const ws = new WebSocket(`${wsUrl}?token=wrong`);
+      const closed = new Promise<void>((resolve) => ws.on("close", () => resolve()));
+
+      await closed;
+      // If we get here, the connection was correctly rejected
+    });
+
+    it("enforces max sessions over WebSocket", async () => {
+      provider.addResponse(textResponse("ok"));
+      provider.addResponse(textResponse("ok"));
+      code = makeCode();
+      ({ server, baseUrl } = await startWsServer(code, { maxSessions: 1 }));
+      const wsUrl = baseUrl.replace("http", "ws");
+
+      const ws = await wsConnect(wsUrl);
+      wsSend(ws, { type: "run", prompt: "one" });
+
+      await collectMessages(ws, { untilType: "session_created", timeoutMs: 1000 });
+
+      wsSend(ws, { type: "run", prompt: "two" });
+
+      const errorMsgs = await collectMessages(ws, { timeoutMs: 500 });
+      ws.close();
+
+      const error = errorMsgs.find((m) => m.type === "error");
+      expect(error).toBeTruthy();
+      expect(error.error).toContain("Maximum sessions");
+    });
+
+    it("includes sessionId and seq on all stream events", async () => {
+      provider.addResponse(textResponse("tagged"));
+      code = makeCode();
+      ({ server, baseUrl } = await startWsServer(code));
+      const wsUrl = baseUrl.replace("http", "ws");
+
+      const ws = await wsConnect(wsUrl);
+      wsSend(ws, { type: "run", prompt: "hi" });
+
+      const msgs = await collectMessages(ws, { untilType: "turn_complete" });
+      ws.close();
+
+      const streamEvents = msgs.filter((m) => m.type !== "session_created");
+      for (const evt of streamEvents) {
+        expect(evt.sessionId).toBeTruthy();
+        expect(typeof evt.seq).toBe("number");
+      }
+
+      const seqs = streamEvents.map((e) => e.seq);
+      for (let i = 1; i < seqs.length; i++) {
+        expect(seqs[i]).toBeGreaterThan(seqs[i - 1]);
+      }
+    });
+
+    it("cleans up sessions when WebSocket closes", async () => {
+      provider.addResponse(textResponse("ok"));
+      code = makeCode();
+      ({ server, baseUrl } = await startWsServer(code));
+      const wsUrl = baseUrl.replace("http", "ws");
+
+      const ws = await wsConnect(wsUrl);
+      wsSend(ws, { type: "run", prompt: "hi" });
+
+      await collectMessages(ws, { untilType: "session_created", timeoutMs: 1000 });
+
+      ws.close();
+      await new Promise((r) => setTimeout(r, 200));
+
+      const listRes = await globalThis.fetch(baseUrl + "/sessions");
+      const sessions = await listRes.json() as any[];
+      expect(sessions.length).toBe(0);
+    });
   });
 });

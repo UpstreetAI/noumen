@@ -72,6 +72,14 @@ Run this checklist **every time** you modify any of the files listed below:
 - Update `website/docs/cli/index.mdx` doctor command section
 - Update `src/__tests__/presets.test.ts` diagnose tests
 
+### If you change server routes or WS protocol (`src/server/index.ts`)
+- Update `website/docs/server-api/index.mdx` (REST endpoints, WS messages, middleware)
+- Update `website/docs/embedding/index.mdx` server/client examples
+
+### If you change headless protocol (`src/cli/headless.ts`)
+- Update `website/docs/cli/index.mdx` headless mode section
+- Update `website/docs/server-api/index.mdx` headless CLI protocol section
+
 ## Code example rules
 
 - **Always use the `sandbox` pattern** in documentation examples:
