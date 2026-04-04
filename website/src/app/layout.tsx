@@ -27,6 +27,13 @@ export const metadata: Metadata = {
       "The composable coding agent SDK for Node.js. Swap AI providers, filesystems, and compute backends. Same agent loop, any infrastructure. MIT licensed.",
     images: ["/images/og-image.webp"],
   },
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "48x48" },
+      { url: "/icon.png", type: "image/png", sizes: "1024x1024" },
+    ],
+    apple: [{ url: "/apple-icon.png", type: "image/png", sizes: "1024x1024" }],
+  },
 };
 
 export default function RootLayout({
