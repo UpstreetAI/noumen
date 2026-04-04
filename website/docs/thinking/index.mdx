@@ -8,12 +8,11 @@ Extended thinking lets models "think" before responding, producing internal reas
 ## Configuration
 
 ```typescript
-import { Code } from "noumen";
+import { Code, LocalSandbox } from "noumen";
 
 const code = new Code({
   aiProvider,
-  virtualFs,
-  virtualComputer,
+  sandbox: LocalSandbox({ cwd: "/my/project" }),
   options: {
     thinking: { type: "enabled", budgetTokens: 10000 },
   },
@@ -43,10 +42,10 @@ Thinking content is streamed as `thinking_delta` events:
 ```typescript
 for await (const event of thread.run("...")) {
   if (event.type === "thinking_delta") {
-    process.stdout.write(event.content); // thinking tokens
+    process.stdout.write(event.text); // thinking tokens
   }
   if (event.type === "text_delta") {
-    process.stdout.write(event.content); // response tokens
+    process.stdout.write(event.text); // response tokens
   }
 }
 ```

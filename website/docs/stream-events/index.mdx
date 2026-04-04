@@ -205,3 +205,6 @@ for await (const event of thread.run("prompt", {
 | Option | Type | Description |
 |--------|------|-------------|
 | `signal` | `AbortSignal` | Abort signal for cancellation |
+| `maxTurns` | `number` | Maximum number of agent turns before stopping. Emits `max_turns_reached` when hit. |
+| `outputFormat` | `OutputFormat` | Request structured JSON output from the model (JSON schema or JSON object mode). |
+| `structuredOutputMode` | `"alongside_tools" \| "final_response"` | When to apply structured output: during tool use or only on the final response. |

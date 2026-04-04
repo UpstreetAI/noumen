@@ -8,14 +8,13 @@ The memory system lets agents retain knowledge across sessions. Memories are sto
 ## Configuration
 
 ```typescript
-import { Code, FileMemoryProvider, LocalFs } from "noumen";
+import { Code, LocalSandbox, FileMemoryProvider, LocalFs } from "noumen";
 
 const memoryFs = new LocalFs({ basePath: ".noumen/memory" });
 
 const code = new Code({
   aiProvider,
-  virtualFs,
-  virtualComputer,
+  sandbox: LocalSandbox({ cwd: "/my/project" }),
   options: {
     memory: {
       provider: new FileMemoryProvider(memoryFs),

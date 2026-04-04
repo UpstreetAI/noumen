@@ -47,50 +47,32 @@ const ROWS: AdapterRow[] = [
     ],
   },
   {
-    label: "Filesystem",
-    field: "virtualFs",
+    label: "Sandbox",
+    field: "sandbox",
     options: [
       {
-        id: "local-fs",
+        id: "local",
         name: "Local",
-        importName: "LocalFs",
-        code: 'new LocalFs({ basePath: "/my/project" })',
+        importName: "LocalSandbox",
+        code: 'LocalSandbox({ cwd: "/my/project" })',
       },
       {
-        id: "sprites-fs",
+        id: "sprites",
         name: "Sprites",
-        importName: "SpritesFs",
-        code: "new SpritesFs({ spriteId })",
+        importName: "SpritesSandbox",
+        code: "SpritesSandbox({ token, spriteName })",
       },
       {
-        id: "custom-fs",
-        name: "Custom",
-        importName: "YourFs",
-        code: "new YourFs({ /* ... */ })",
-      },
-    ],
-  },
-  {
-    label: "Compute",
-    field: "virtualComputer",
-    options: [
-      {
-        id: "local-computer",
-        name: "Local",
-        importName: "LocalComputer",
-        code: 'new LocalComputer({ defaultCwd: "/my/project" })',
+        id: "docker",
+        name: "Docker",
+        importName: "DockerSandbox",
+        code: "DockerSandbox({ container, cwd: \"/workspace\" })",
       },
       {
-        id: "sprites-computer",
-        name: "Sprites",
-        importName: "SpritesComputer",
-        code: "new SpritesComputer({ spriteId })",
-      },
-      {
-        id: "custom-computer",
-        name: "Custom",
-        importName: "YourComputer",
-        code: "new YourComputer({ /* ... */ })",
+        id: "e2b",
+        name: "E2B",
+        importName: "E2BSandbox",
+        code: "E2BSandbox({ sandbox: e2b, cwd: \"/home/user\" })",
       },
     ],
   },
@@ -103,15 +85,10 @@ const ICONS: Record<string, React.ReactNode> = {
       <path d="M10 20v2h4v-2" />
     </svg>
   ),
-  Filesystem: (
+  Sandbox: (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-    </svg>
-  ),
-  Compute: (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="4 17 10 11 4 5" />
-      <line x1="12" y1="19" x2="20" y2="19" />
+      <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+      <polyline points="8 21 12 17 16 21" />
     </svg>
   ),
 };
@@ -125,7 +102,7 @@ const STATIC_LINES = [
 ];
 
 export function AdapterStack() {
-  const [selected, setSelected] = useState([0, 0, 0]);
+  const [selected, setSelected] = useState([0, 0]);
 
   const handleSelect = useCallback((rowIdx: number, optIdx: number) => {
     setSelected((prev) => {

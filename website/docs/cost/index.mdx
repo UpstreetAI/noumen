@@ -8,12 +8,11 @@ The cost tracking system records token usage per model and estimates USD costs u
 ## Configuration
 
 ```typescript
-import { Code } from "noumen";
+import { Code, LocalSandbox } from "noumen";
 
 const code = new Code({
   aiProvider,
-  virtualFs,
-  virtualComputer,
+  sandbox: LocalSandbox({ cwd: "/my/project" }),
   options: {
     costTracking: {
       enabled: true,

@@ -10,37 +10,73 @@ const FEATURES = [
     icon: "🛠️",
     title: "Read, write, edit, execute",
     description:
-      "ReadFile, WriteFile, EditFile, Bash, Glob, Grep — the same tools shipping inside production coding agents, wired up and ready to go.",
+      "ReadFile, WriteFile, EditFile, Bash, Glob, Grep, WebFetch, NotebookEdit, AskUser — the same tools shipping inside production coding agents, wired up and ready to go.",
   },
   {
     icon: "🔌",
-    title: "Swap models in one line",
+    title: "Six providers, one interface",
     description:
-      "OpenAI, Anthropic, Google Gemini, OpenRouter. Same streaming interface, same tool dispatch, same results. Bring your own keys.",
+      "OpenAI, Anthropic, Google Gemini, OpenRouter, AWS Bedrock, Google Vertex AI. Same streaming interface, same tool dispatch, same results. Bring your own keys.",
   },
   {
     icon: "💻",
-    title: "Run anywhere",
+    title: "Four sandbox backends",
     description:
-      "Local Node.js, remote containers via sprites.dev, or implement VirtualFs yourself. The agent doesn't care where it runs.",
+      "Local Node.js, sprites.dev containers, Docker, or E2B cloud. Swap one line to move from zero isolation to a fully sandboxed remote environment.",
   },
   {
     icon: "💾",
     title: "Resume, compact, persist",
     description:
-      "Conversations save as JSONL. Auto-compaction keeps context under control. Resume any thread by ID, right where you left off.",
-  },
-  {
-    icon: "📚",
-    title: "Teach your agent",
-    description:
-      "Inject markdown instructions into the system prompt. Load SKILL.md files from the filesystem. Shape behavior without changing code.",
+      "Conversations save as JSONL. Auto-compaction, microcompact, and reactive strategies keep context under control. Resume any thread by ID.",
   },
   {
     icon: "🔗",
-    title: "Connect to anything",
+    title: "MCP, LSP, ACP, A2A",
     description:
-      "Client and server support for Model Context Protocol. Expose external tools and resources to the agent seamlessly.",
+      "Connect to MCP servers for external tools. Query language servers via LSP. Expose your agent over HTTP/WebSocket with the built-in server, or use ACP and A2A protocol adapters.",
+  },
+  {
+    icon: "🔒",
+    title: "Permissions and safety",
+    description:
+      "Six permission modes from full auto to plan-only. Per-tool rules, denial tracking, and an optional AI classifier. Git safety guards built in.",
+  },
+  {
+    icon: "🧠",
+    title: "Extended thinking",
+    description:
+      "Unified thinking config across providers. Anthropic budget_tokens, OpenAI reasoning_effort, Gemini thinkingBudget — one option, any model.",
+  },
+  {
+    icon: "📚",
+    title: "Skills and project context",
+    description:
+      "Load SKILL.md files with conditional activation. Drop a NOUMEN.md or CLAUDE.md in your repo for automatic project instructions. Hierarchical scoping from enterprise to local.",
+  },
+  {
+    icon: "💰",
+    title: "Cost tracking and observability",
+    description:
+      "Built-in token usage and USD cost tracking with per-model pricing. OpenTelemetry tracing integration. Retry with exponential backoff and model fallback.",
+  },
+  {
+    icon: "🤖",
+    title: "Multi-agent and subagents",
+    description:
+      "Spawn isolated subagents for focused subtasks. Run a swarm of agents in parallel with message passing and configurable concurrency.",
+  },
+  {
+    icon: "🧩",
+    title: "Structured output",
+    description:
+      "Request JSON output with schema validation. Works alongside tools or as a final response. Supports JSON Schema and JSON object modes.",
+  },
+  {
+    icon: "🗂️",
+    title: "Tasks, plans, and worktrees",
+    description:
+      "Built-in task management tools for decomposing work. Plan mode for read-only exploration. Git worktrees for isolated branch-based experimentation.",
   },
 ];
 
@@ -127,7 +163,7 @@ export default function Home() {
             that every coding agent needs — so you don&apos;t have to build it yourself.
           </p>
 
-          <div className="mt-14 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="mt-14 grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {FEATURES.map((feature) => (
               <div
                 key={feature.title}

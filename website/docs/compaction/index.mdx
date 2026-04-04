@@ -24,8 +24,7 @@ Auto-compact triggers compaction automatically when token usage exceeds a thresh
 ```typescript
 const code = new Code({
   aiProvider,
-  virtualFs,
-  virtualComputer,
+  sandbox,
   options: {
     autoCompactThreshold: 0.8, // compact at 80% of context window
   },

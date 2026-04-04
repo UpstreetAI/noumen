@@ -70,8 +70,7 @@ Enable auto-compaction to automatically summarize when the conversation exceeds 
 ```typescript
 const code = new Code({
   aiProvider,
-  virtualFs,
-  virtualComputer,
+  sandbox,
   options: {
     autoCompact: true,
     autoCompactThreshold: 100_000, // tokens (default)

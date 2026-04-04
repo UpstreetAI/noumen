@@ -12,8 +12,7 @@ The simplest way to add skills is inline in the `Code` options:
 ```typescript
 const code = new Code({
   aiProvider,
-  virtualFs,
-  virtualComputer,
+  sandbox,
   options: {
     skills: [
       {
@@ -36,8 +35,7 @@ For larger skill definitions, use `SKILL.md` files on the virtual filesystem:
 ```typescript
 const code = new Code({
   aiProvider,
-  virtualFs,
-  virtualComputer,
+  sandbox,
   options: {
     skillsPaths: [".claude/skills", "~/.config/skills"],
   },

@@ -18,13 +18,12 @@ pnpm add noumen
 ## Quick start
 
 ```typescript
-import { Code, LocalFs, LocalComputer } from "noumen";
+import { Code, LocalSandbox } from "noumen";
 import { OpenAIProvider } from "noumen/openai";
 
 const code = new Code({
   aiProvider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY }),
-  virtualFs: new LocalFs({ basePath: "/my/project" }),
-  virtualComputer: new LocalComputer({ defaultCwd: "/my/project" }),
+  sandbox: LocalSandbox({ cwd: "/my/project" }),
 });
 
 const thread = code.createThread();
@@ -51,10 +50,10 @@ for await (const event of thread.run("Add a health-check endpoint to server.ts")
 
 <Cards>
   <Card title="Swap models in one line" href="/docs/providers">
-    OpenAI, Anthropic, Google Gemini. Same streaming interface, same tool dispatch. Bring your own keys.
+    OpenAI, Anthropic, Google Gemini, OpenRouter, AWS Bedrock, Google Vertex AI. Same streaming interface, same tool dispatch. Bring your own keys.
   </Card>
   <Card title="Sandboxed by default" href="/docs/virtual">
-    All tool I/O routes through VirtualFs and VirtualComputer — the sandboxing boundary. Swap in a remote container (sprites.dev) or your own Docker/E2B adapter for full isolation.
+    All tool I/O routes through a Sandbox — the isolation boundary. Four built-in backends: local Node.js, sprites.dev containers, Docker, and E2B cloud. Or implement your own.
   </Card>
   <Card title="Read, write, edit, execute" href="/docs/tools">
     ReadFile, WriteFile, EditFile, Bash, Glob, Grep — the same tools shipping inside production coding agents.
@@ -77,7 +76,7 @@ for await (const event of thread.run("Add a health-check endpoint to server.ts")
 
 <Cards>
   <Card title="Getting Started" description="Install, configure, and run your first agent" href="/docs/getting-started" />
-  <Card title="Providers" description="Configure OpenAI, Anthropic, or Gemini" href="/docs/providers" />
+  <Card title="Providers" description="Configure OpenAI, Anthropic, Gemini, OpenRouter, Bedrock, or Vertex" href="/docs/providers" />
   <Card title="Tools" description="Built-in tools and custom tool authoring" href="/docs/tools" />
   <Card title="Stream Events" description="All event types emitted during agent runs" href="/docs/stream-events" />
 </Cards>

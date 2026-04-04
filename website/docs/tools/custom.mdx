@@ -28,7 +28,7 @@ Where:
 Pass tools in the `Code` options:
 
 ```typescript
-import { Code, LocalFs, LocalComputer } from "noumen";
+import { Code, LocalSandbox } from "noumen";
 import { OpenAIProvider } from "noumen/openai";
 import type { Tool, ToolContext, ToolResult } from "noumen";
 
@@ -56,8 +56,7 @@ const fetchUrlTool: Tool = {
 
 const code = new Code({
   aiProvider: new OpenAIProvider({ apiKey: "..." }),
-  virtualFs: new LocalFs({ basePath: "." }),
-  virtualComputer: new LocalComputer({ defaultCwd: "." }),
+  sandbox: LocalSandbox({ cwd: "." }),
   options: {
     tools: [fetchUrlTool],
   },

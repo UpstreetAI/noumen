@@ -23,8 +23,7 @@ import { Code, type PermissionConfig } from "noumen";
 
 const code = new Code({
   aiProvider,
-  virtualFs,
-  virtualComputer,
+  sandbox,
   options: {
     permissions: {
       mode: "default",

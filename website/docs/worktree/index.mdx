@@ -12,8 +12,7 @@ Enable plan mode tools so the agent can switch between exploration and implement
 ```typescript
 const code = new Code({
   aiProvider,
-  virtualFs,
-  virtualComputer,
+  sandbox,
   options: {
     enablePlanMode: true,
   },
@@ -36,8 +35,7 @@ Enable worktree tools for isolated branch-based experimentation:
 ```typescript
 const code = new Code({
   aiProvider,
-  virtualFs,
-  virtualComputer,
+  sandbox,
   options: {
     enableWorktrees: true,
   },

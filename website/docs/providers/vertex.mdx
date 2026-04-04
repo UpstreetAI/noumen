@@ -1,0 +1,67 @@
+---
+title: Google Vertex AI
+description: Route Anthropic models through Google Cloud Vertex AI.
+---
+
+## Setup
+
+```bash
+pnpm add @anthropic-ai/vertex-sdk google-auth-library
+```
+
+```typescript
+import { VertexAnthropicProvider } from "noumen/vertex";
+
+const provider = new VertexAnthropicProvider({
+  projectId: "my-gcp-project",
+  region: "us-east5",                     // default
+  model: "claude-sonnet-4@20250514",      // default
+});
+```
+
+## Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `projectId` | `string` | — | GCP project ID. If omitted, inferred from application default credentials. |
+| `region` | `string` | `"us-east5"` | GCP region |
+| `model` | `string` | `"claude-sonnet-4@20250514"` | Default model in Vertex format |
+| `googleAuth` | `GoogleAuth` | — | Custom `GoogleAuth` instance. If omitted, the provider creates one using application default credentials. |
+| `cacheControl` | `CacheControlConfig` | — | Enable prompt caching |
+| `client` | `AnthropicVertex` | — | Pre-constructed client instance. When provided, all other connection options are ignored. |
+
+## Authentication
+
+When `googleAuth` is omitted, the provider creates a `GoogleAuth` instance using application default credentials. You can pass your own instance for custom authentication:
+
+```typescript
+import { GoogleAuth } from "google-auth-library";
+
+const provider = new VertexAnthropicProvider({
+  projectId: "my-project",
+  googleAuth: new GoogleAuth({ keyFile: "/path/to/service-account.json" }),
+});
+```
+
+## Prompt caching
+
+Enable prompt caching to reduce costs on repeated system prompts:
+
+```typescript
+const provider = new VertexAnthropicProvider({
+  projectId: "my-project",
+  cacheControl: { enabled: true },
+});
+```
+
+## Streaming
+
+The Vertex provider uses the shared Anthropic streaming layer. It maps Vertex's response events to noumen's OpenAI-compatible chunk format identically to the direct Anthropic provider.
+
+## Models
+
+Use Vertex model IDs. Common choices:
+
+- `claude-sonnet-4@20250514` -- balanced speed and capability
+- `claude-opus-4@20250514` -- highest capability
+- `claude-haiku-3@20250307` -- fastest, most affordable

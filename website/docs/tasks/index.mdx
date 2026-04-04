@@ -8,10 +8,11 @@ The task system lets agents create and manage structured work items. When enable
 ## Configuration
 
 ```typescript
+import { Code, LocalSandbox } from "noumen";
+
 const code = new Code({
   aiProvider,
-  virtualFs,
-  virtualComputer,
+  sandbox: LocalSandbox({ cwd: "/my/project" }),
   options: {
     enableTasks: true,
   },

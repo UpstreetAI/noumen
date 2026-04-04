@@ -8,12 +8,11 @@ The retry engine wraps provider calls with automatic retry logic. It handles rat
 ## Configuration
 
 ```typescript
-import { Code } from "noumen";
+import { Code, LocalSandbox } from "noumen";
 
 const code = new Code({
   aiProvider,
-  virtualFs,
-  virtualComputer,
+  sandbox: LocalSandbox({ cwd: "/my/project" }),
   options: {
     retry: {
       maxRetries: 10,

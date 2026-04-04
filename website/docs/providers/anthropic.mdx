@@ -25,6 +25,7 @@ const provider = new AnthropicProvider({
 | `apiKey` | `string` | required | Anthropic API key |
 | `model` | `string` | `"claude-sonnet-4-20250514"` | Default model |
 | `baseURL` | `string` | — | Override the API base URL |
+| `cacheControl` | `CacheControlConfig` | — | Enable prompt caching. Pass `{ enabled: true }` to inject `cache_control` markers. |
 
 ## Streaming
 

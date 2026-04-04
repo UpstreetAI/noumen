@@ -26,6 +26,7 @@ const provider = new OpenAIProvider({
 | `apiKey` | `string` | required | OpenAI API key |
 | `model` | `string` | `"gpt-4o"` | Default model for all calls |
 | `baseURL` | `string` | — | Override the API base URL (for Azure, proxies, or compatible APIs) |
+| `defaultHeaders` | `Record<string, string \| undefined>` | — | Custom headers sent with every request (useful for proxies, auth, or tracking) |
 
 ## Compatible APIs
 

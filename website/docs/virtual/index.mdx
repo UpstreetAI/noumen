@@ -1,17 +1,163 @@
 ---
 title: Virtual Infrastructure (Sandboxing)
-description: "VirtualFs and VirtualComputer are noumen's sandboxing primitives — the isolation boundary between the agent and the outside world."
+description: "Sandbox factories bundle a filesystem and shell into a single object — the isolation boundary between the agent and the outside world."
 ---
 
-`VirtualFs` and `VirtualComputer` are noumen's **sandboxing primitives**. Every file read/write and every shell command the agent executes is routed through these two interfaces — built-in tools never touch `node:fs` or `child_process` directly. The isolation level of your agent is determined entirely by which implementations you provide.
+A `Sandbox` bundles a `VirtualFs` (filesystem) and `VirtualComputer` (shell execution) into one object. Every file read/write and shell command the agent executes goes through these interfaces — swap the sandbox to control what the agent can access.
 
-<Callout type="info" title="This is your security boundary">
-  Swapping `LocalFs` / `LocalComputer` for `SpritesFs` / `SpritesComputer` (or any custom implementation) is all it takes to move from unsandboxed local execution to a fully isolated remote container. The agent code, tools, and prompts stay exactly the same.
+```typescript
+interface Sandbox {
+  fs: VirtualFs;
+  computer: VirtualComputer;
+}
+```
+
+noumen ships four sandbox factories. You can also implement your own.
+
+## LocalSandbox — no isolation
+
+Backed by `node:fs/promises` and `node:child_process`. Use for local development and trusted environments:
+
+```typescript
+import { LocalSandbox } from "noumen";
+
+const sandbox = LocalSandbox({ cwd: "/my/project" });
+```
+
+<Callout type="warn" title="No isolation">
+  `LocalSandbox` provides no sandboxing. The agent can access anything the host process can. Use it for development or environments where you trust the agent.
 </Callout>
 
-## VirtualFs — filesystem sandbox
+### Options
 
-The filesystem interface that all file tools (`ReadFile`, `WriteFile`, `EditFile`) delegate to:
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `cwd` | `string` | — | Working directory for file operations and commands |
+| `defaultTimeout` | `number` | `30000` | Command timeout in milliseconds |
+
+## SpritesSandbox — remote containers
+
+Run inside a remote [sprites.dev](https://docs.sprites.dev) container. The agent has no access to the host machine:
+
+```typescript
+import { SpritesSandbox } from "noumen";
+
+const sandbox = SpritesSandbox({
+  token: process.env.SPRITE_TOKEN!,
+  spriteName: "my-sprite",
+});
+```
+
+### Options
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `token` | `string` | sprites.dev API token |
+| `spriteName` | `string` | Name of the sprite container |
+| `baseURL` | `string` | API base URL (optional) |
+| `workingDir` | `string` | Working directory inside the container (optional) |
+
+## DockerSandbox — container isolation
+
+Run the agent inside a Docker container. Requires `dockerode` as an optional peer dependency:
+
+```bash
+pnpm add dockerode
+```
+
+```typescript
+import Docker from "dockerode";
+import { DockerSandbox } from "noumen";
+
+const docker = new Docker();
+const container = await docker.createContainer({
+  Image: "node:22",
+  Cmd: ["sleep", "infinity"],
+  Tty: false,
+});
+await container.start();
+
+const sandbox = DockerSandbox({
+  container,
+  cwd: "/workspace",
+});
+
+const code = new Code({ aiProvider, sandbox });
+
+// Clean up when done
+await container.stop();
+await container.remove();
+```
+
+You are responsible for container lifecycle (create, start, stop, remove). The sandbox just wraps the running container.
+
+### Options
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `container` | `Docker.Container` | A running Docker container instance |
+| `cwd` | `string` | Working directory inside the container (optional) |
+| `defaultTimeout` | `number` | Command timeout in milliseconds (optional) |
+
+## E2BSandbox — cloud sandbox
+
+Run the agent inside an [E2B](https://e2b.dev) cloud sandbox. Requires `e2b` as an optional peer dependency:
+
+```bash
+pnpm add e2b
+```
+
+```typescript
+import { Sandbox as E2BSandboxSDK } from "e2b";
+import { E2BSandbox } from "noumen";
+
+const e2b = await E2BSandboxSDK.create();
+
+const sandbox = E2BSandbox({
+  sandbox: e2b,
+  cwd: "/home/user",
+});
+
+const code = new Code({ aiProvider, sandbox });
+
+// Clean up when done
+await e2b.close();
+```
+
+You are responsible for sandbox lifecycle (create, close). The adapter maps `VirtualFs` and `VirtualComputer` to E2B's `files` and `commands` APIs.
+
+### Options
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `sandbox` | `E2B.Sandbox` | An E2B sandbox instance |
+| `cwd` | `string` | Working directory inside the sandbox (optional) |
+| `defaultTimeout` | `number` | Command timeout in milliseconds (optional) |
+
+## Custom sandboxes
+
+Implement `VirtualFs` and `VirtualComputer` to target any execution environment — Daytona, cloud VMs, or an in-memory test harness. A custom `Sandbox` is any object with `{ fs, computer }`:
+
+```typescript
+import type { Sandbox, VirtualFs, VirtualComputer, CommandResult, ExecOptions } from "noumen";
+
+class MyComputer implements VirtualComputer {
+  async executeCommand(command: string, opts?: ExecOptions): Promise<CommandResult> {
+    // your implementation
+  }
+}
+
+const sandbox: Sandbox = {
+  fs: new MyCustomFs(),
+  computer: new MyComputer(),
+};
+```
+
+The interfaces are intentionally minimal (one method for shell, eight for filesystem) so adapters are straightforward to write.
+
+## VirtualFs interface
+
+The filesystem interface that all file tools (ReadFile, WriteFile, EditFile) delegate to:
 
 ```typescript
 interface VirtualFs {
@@ -26,9 +172,9 @@ interface VirtualFs {
 }
 ```
 
-## VirtualComputer — shell execution sandbox
+## VirtualComputer interface
 
-The shell execution interface that all command tools (`Bash`, `Glob`, `Grep`) delegate to:
+The shell execution interface that all command tools (Bash, Glob, Grep) delegate to:
 
 ```typescript
 interface VirtualComputer {
@@ -37,91 +183,3 @@ interface VirtualComputer {
 ```
 
 Where `ExecOptions` supports `cwd`, `timeout`, and `env`, and `CommandResult` returns `exitCode`, `stdout`, and `stderr`.
-
-## Built-in implementations
-
-### Local (Node.js) — no isolation
-
-For local development and trusted environments. Commands and file operations run directly on the host machine:
-
-```typescript
-import { LocalFs, LocalComputer } from "noumen";
-
-const fs = new LocalFs({ basePath: "/my/project" });
-const computer = new LocalComputer({ defaultCwd: "/my/project" });
-```
-
-`LocalFs` uses `node:fs/promises` under the hood. Paths resolve relative to `basePath`.
-
-`LocalComputer` uses `node:child_process.exec` with a configurable default working directory, timeout, and maximum output buffer size.
-
-<Callout type="warn" title="No isolation">
-  `LocalFs` and `LocalComputer` provide no sandboxing. The agent can access anything the host process can. Use these for development, or in environments where you trust the agent and the prompts.
-</Callout>
-
-#### LocalFs options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `basePath` | `string` | required | Root directory for all file operations |
-
-#### LocalComputer options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `defaultCwd` | `string` | required | Default working directory for commands |
-| `timeout` | `number` | `30000` | Command timeout in milliseconds |
-| `maxBuffer` | `number` | `10 * 1024 * 1024` | Maximum stdout/stderr buffer size |
-
-### sprites.dev — full sandbox
-
-For production and untrusted agents. All file and shell operations execute inside a remote [sprites.dev](https://docs.sprites.dev) container over HTTPS. The agent has zero access to the host machine's filesystem, processes, or network:
-
-```typescript
-import { SpritesFs, SpritesComputer } from "noumen";
-
-const fs = new SpritesFs({
-  token: process.env.SPRITE_TOKEN!,
-  spriteName: "my-sprite",
-});
-
-const computer = new SpritesComputer({
-  token: process.env.SPRITE_TOKEN!,
-  spriteName: "my-sprite",
-});
-```
-
-#### SpritesFs options
-
-| Option | Type | Description |
-|--------|------|-------------|
-| `token` | `string` | sprites.dev API token |
-| `spriteName` | `string` | Name of the sprite container |
-| `baseURL` | `string` | API base URL (optional) |
-
-#### SpritesComputer options
-
-| Option | Type | Description |
-|--------|------|-------------|
-| `token` | `string` | sprites.dev API token |
-| `spriteName` | `string` | Name of the sprite container |
-| `baseURL` | `string` | API base URL (optional) |
-
-## Custom sandbox implementations
-
-Implement `VirtualFs` and `VirtualComputer` to target any execution environment — Docker, E2B, Daytona, cloud VMs, or an in-memory test harness. The interfaces are intentionally minimal (one method for shell, eight for filesystem) so adapters are straightforward to write.
-
-```typescript
-import type { VirtualComputer, CommandResult, ExecOptions } from "noumen";
-
-class DockerComputer implements VirtualComputer {
-  constructor(private containerId: string) {}
-
-  async executeCommand(command: string, opts?: ExecOptions): Promise<CommandResult> {
-    // docker exec ${this.containerId} bash -c "${command}"
-    // ... your implementation here
-  }
-}
-```
-
-Any object that satisfies the interface works — no base classes, no registration, no framework lock-in.

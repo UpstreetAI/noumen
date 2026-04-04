@@ -1,6 +1,6 @@
 ---
 title: Getting Started
-description: Install noumen, wire up a provider and a filesystem, and ship your first coding agent in minutes.
+description: Install noumen, wire up a provider and a sandbox, and ship your first coding agent in minutes.
 ---
 
 ## Installation
@@ -13,16 +13,20 @@ noumen requires Node.js 18 or later.
 
 ## Setup
 
-Every noumen agent needs three things: an **AI provider**, a **virtual filesystem**, and a **virtual computer**.
+Every noumen agent needs two things: an **AI provider** and a **sandbox**.
 
 <Steps>
   <Step>
     ### Choose a provider
 
-    Pick one of the three built-in providers. Each takes an API key and an optional default model.
+    noumen ships six providers. Each takes an API key and an optional default model.
 
-    <Tabs items={["OpenAI", "Anthropic", "Gemini"]}>
+    <Tabs items={["OpenAI", "Anthropic", "Gemini", "OpenRouter", "Bedrock", "Vertex"]}>
       <Tab value="OpenAI">
+        ```bash
+        pnpm add openai
+        ```
+
         ```typescript
         import { OpenAIProvider } from "noumen/openai";
 
@@ -33,6 +37,10 @@ Every noumen agent needs three things: an **AI provider**, a **virtual filesyste
         ```
       </Tab>
       <Tab value="Anthropic">
+        ```bash
+        pnpm add @anthropic-ai/sdk
+        ```
+
         ```typescript
         import { AnthropicProvider } from "noumen/anthropic";
 
@@ -43,6 +51,10 @@ Every noumen agent needs three things: an **AI provider**, a **virtual filesyste
         ```
       </Tab>
       <Tab value="Gemini">
+        ```bash
+        pnpm add @google/genai
+        ```
+
         ```typescript
         import { GeminiProvider } from "noumen/gemini";
 
@@ -52,22 +64,62 @@ Every noumen agent needs three things: an **AI provider**, a **virtual filesyste
         });
         ```
       </Tab>
+      <Tab value="OpenRouter">
+        ```bash
+        pnpm add openai
+        ```
+
+        ```typescript
+        import { OpenRouterProvider } from "noumen/openrouter";
+
+        const provider = new OpenRouterProvider({
+          apiKey: process.env.OPENROUTER_API_KEY!,
+          model: "anthropic/claude-sonnet-4", // default
+        });
+        ```
+      </Tab>
+      <Tab value="Bedrock">
+        ```bash
+        pnpm add @anthropic-ai/bedrock-sdk
+        ```
+
+        ```typescript
+        import { BedrockAnthropicProvider } from "noumen/bedrock";
+
+        const provider = new BedrockAnthropicProvider({
+          region: "us-east-1", // default
+        });
+        ```
+      </Tab>
+      <Tab value="Vertex">
+        ```bash
+        pnpm add @anthropic-ai/vertex-sdk google-auth-library
+        ```
+
+        ```typescript
+        import { VertexAnthropicProvider } from "noumen/vertex";
+
+        const provider = new VertexAnthropicProvider({
+          projectId: "my-gcp-project",
+          region: "us-east5", // default
+        });
+        ```
+      </Tab>
     </Tabs>
   </Step>
 
   <Step>
-    ### Configure virtual infrastructure (sandbox)
+    ### Choose a sandbox
 
-    All tool I/O routes through `VirtualFs` and `VirtualComputer` — the sandboxing boundary. For local development, use the unsandboxed Node.js implementations:
+    A sandbox bundles a filesystem and a shell into one object. All tool I/O routes through it. For local development, use the unsandboxed Node.js sandbox:
 
     ```typescript
-    import { LocalFs, LocalComputer } from "noumen";
+    import { LocalSandbox } from "noumen";
 
-    const fs = new LocalFs({ basePath: "/path/to/your/project" });
-    const computer = new LocalComputer({ defaultCwd: "/path/to/your/project" });
+    const sandbox = LocalSandbox({ cwd: "/path/to/your/project" });
     ```
 
-    For production or untrusted agents, swap in a sandboxed implementation like `SpritesFs` / `SpritesComputer` (remote containers) or write your own adapter for Docker, E2B, etc. See [Virtual Infrastructure](/docs/virtual).
+    For production or untrusted agents, swap in a sandboxed implementation like `SpritesSandbox` (remote containers), `DockerSandbox`, or `E2BSandbox`. See [Virtual Infrastructure](/docs/virtual).
   </Step>
 
   <Step>
@@ -80,14 +132,13 @@ Every noumen agent needs three things: an **AI provider**, a **virtual filesyste
 
     const code = new Code({
       aiProvider: provider,
-      virtualFs: fs,
-      virtualComputer: computer,
+      sandbox,
       options: {
         sessionDir: ".noumen/sessions",
         model: "gpt-4o",
         maxTokens: 8192,
         autoCompact: true,
-        projectContext: true, // loads NOUMEN.md / CLAUDE.md from the project
+        projectContext: true,
       },
     });
     ```
@@ -127,17 +178,12 @@ Every noumen agent needs three things: an **AI provider**, a **virtual filesyste
 ## Full example
 
 ```typescript
-import {
-  Code,
-  OpenAIProvider,
-  LocalFs,
-  LocalComputer,
-} from "noumen";
+import { Code, LocalSandbox } from "noumen";
+import { OpenAIProvider } from "noumen/openai";
 
 const code = new Code({
   aiProvider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY! }),
-  virtualFs: new LocalFs({ basePath: process.cwd() }),
-  virtualComputer: new LocalComputer({ defaultCwd: process.cwd() }),
+  sandbox: LocalSandbox({ cwd: process.cwd() }),
   options: {
     sessionDir: ".noumen/sessions",
     autoCompact: true,
@@ -155,6 +201,6 @@ for await (const event of thread.run("Add input validation to the signup handler
 ## What's next
 
 - [Providers](/docs/providers) -- detailed configuration for each AI provider
-- [Tools](/docs/tools) -- the six built-in coding tools and how to add your own
+- [Tools](/docs/tools) -- the built-in coding tools and how to add your own
 - [Project Context](/docs/context) -- configure NOUMEN.md / CLAUDE.md for project-level instructions
 - [Stream Events](/docs/stream-events) -- every event type your app can handle

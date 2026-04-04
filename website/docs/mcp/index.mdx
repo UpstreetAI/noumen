@@ -12,8 +12,7 @@ Connect to external MCP servers to give your agent access to their tools:
 ```typescript
 const code = new Code({
   aiProvider,
-  virtualFs,
-  virtualComputer,
+  sandbox,
   options: {
     mcpServers: {
       filesystem: {
@@ -86,8 +85,8 @@ const registry = new ToolRegistry();
 await createMcpServer({
   tools: registry.listTools(),
   toolContext: {
-    fs: virtualFs,
-    computer: virtualComputer,
+    fs: sandbox.fs,
+    computer: sandbox.computer,
     cwd: "/working/dir",
   },
 });

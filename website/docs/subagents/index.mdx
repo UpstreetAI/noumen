@@ -8,10 +8,11 @@ Subagents let the model delegate focused work to isolated child agents. Each sub
 ## Configuration
 
 ```typescript
+import { Code, LocalSandbox } from "noumen";
+
 const code = new Code({
   aiProvider,
-  virtualFs,
-  virtualComputer,
+  sandbox: LocalSandbox({ cwd: "/my/project" }),
   options: {
     enableSubagents: true,
   },

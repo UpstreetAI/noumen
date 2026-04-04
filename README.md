@@ -273,7 +273,7 @@ const code = new Code({
     systemPrompt: "...",               // override the built-in system prompt
     cwd: "/working/dir",              // working directory for tools
     skills: [{ name: "...", content: "..." }],
-    skillsPaths: [".claude/skills"],   // paths to SKILL.md files on virtualFs
+    skillsPaths: [".claude/skills"],   // paths to SKILL.md files on the sandbox filesystem
     projectContext: true,              // load NOUMEN.md / CLAUDE.md from project
 
     // Extended thinking / reasoning (see below)
@@ -329,7 +329,16 @@ thread.abort();
 | `retry_exhausted` | `attempts`, `error` | All retries exhausted |
 | `compact_start` | | Auto-compaction started |
 | `compact_complete` | | Auto-compaction finished |
+| `permission_request` | `toolName`, `input`, `message` | Tool call requires user approval |
+| `subagent_start` | `toolUseId`, `prompt` | A subagent is being spawned |
+| `subagent_end` | `toolUseId`, `result` | A subagent finished |
+| `session_resumed` | `sessionId`, `messageCount` | A previous session was restored |
+| `memory_update` | `created`, `updated`, `deleted` | Memories were extracted from the conversation |
+| `structured_output` | `output` | Structured output was produced |
+| `max_turns_reached` | `turns` | The agent hit the maxTurns limit |
 | `error` | `error` | An error occurred |
+
+See **[noumen.dev/docs/stream-events](https://noumen.dev/docs/stream-events)** for the full event reference including permissions, tracing, recovery, and more.
 
 ## Built-in Tools
 
@@ -607,10 +616,10 @@ Connect to MCP servers to discover and use external tools:
 
 ```typescript
 options: {
-  mcpServers: [
-    { type: "stdio", command: "npx", args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"] },
-    { type: "http", url: "http://localhost:3001/mcp" },
-  ],
+  mcpServers: {
+    filesystem: { command: "npx", args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"] },
+    remote: { type: "http", url: "http://localhost:3001/mcp" },
+  },
 }
 ```
 
