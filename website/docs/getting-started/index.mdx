@@ -87,6 +87,7 @@ Every noumen agent needs three things: an **AI provider**, a **virtual filesyste
         model: "gpt-4o",
         maxTokens: 8192,
         autoCompact: true,
+        projectContext: true, // loads NOUMEN.md / CLAUDE.md from the project
       },
     });
     ```
@@ -155,4 +156,5 @@ for await (const event of thread.run("Add input validation to the signup handler
 
 - [Providers](/docs/providers) -- detailed configuration for each AI provider
 - [Tools](/docs/tools) -- the six built-in coding tools and how to add your own
+- [Project Context](/docs/context) -- configure NOUMEN.md / CLAUDE.md for project-level instructions
 - [Stream Events](/docs/stream-events) -- every event type your app can handle

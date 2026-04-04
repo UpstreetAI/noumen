@@ -274,6 +274,7 @@ const code = new Code({
     cwd: "/working/dir",              // working directory for tools
     skills: [{ name: "...", content: "..." }],
     skillsPaths: [".claude/skills"],   // paths to SKILL.md files on virtualFs
+    projectContext: true,              // load NOUMEN.md / CLAUDE.md from project
 
     // Extended thinking / reasoning (see below)
     thinking: { type: "enabled", budgetTokens: 10000 },
@@ -495,6 +496,22 @@ const code = new Code({
 // If using skillsPaths, call init() to pre-load them
 await code.init();
 ```
+
+## Project Context (NOUMEN.md / CLAUDE.md)
+
+Drop a `NOUMEN.md` or `CLAUDE.md` in your project root to give the agent persistent instructions:
+
+```markdown
+# Project instructions
+
+This is a TypeScript monorepo. Use strict mode. Write vitest tests for all new code.
+```
+
+Enable it with `projectContext: true` in your `Code` options. The loader discovers context files from four layers — managed (enterprise), user (`~/.noumen/`), project (repo ancestors), and local (`.local.md`, gitignored) — so you can scope instructions at any level.
+
+This is fully compatible with `CLAUDE.md`. If your project already has one, noumen picks it up automatically. Both `NOUMEN.md` and `CLAUDE.md` can coexist in the same directory. The format supports `@path` includes, conditional rules via `paths:` frontmatter in `.noumen/rules/` directories, and hierarchical overriding.
+
+See **[noumen.dev/docs/context](https://noumen.dev/docs/context)** for full configuration options.
 
 ## Sessions
 

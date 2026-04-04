@@ -1,0 +1,189 @@
+---
+title: Project Context
+description: Automatically load project instructions from NOUMEN.md and CLAUDE.md files with hierarchical scoping, rules directories, and inline includes.
+---
+
+Project context files give your agent persistent, per-project instructions that are loaded into the system prompt automatically. This is the same concept as `CLAUDE.md` — and noumen supports `CLAUDE.md` natively — but also recognizes `NOUMEN.md` as its own convention. Both formats work, and both can coexist in the same project.
+
+## Quick start
+
+1. Create a `NOUMEN.md` (or `CLAUDE.md`) in your project root:
+
+```markdown
+# Project instructions
+
+This is a TypeScript monorepo using pnpm workspaces.
+
+- Use strict TypeScript. Prefer `const` over `let`.
+- Write vitest tests for all new code.
+- Use 2-space indentation.
+```
+
+2. Enable project context loading in your `Code` options:
+
+```typescript
+import { Code, LocalSandbox } from "noumen";
+import { OpenAIProvider } from "noumen/openai";
+
+const code = new Code({
+  aiProvider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY }),
+  sandbox: LocalSandbox({ cwd: "/my/project" }),
+  options: {
+    projectContext: true,
+  },
+});
+
+await code.init(); // discovers and loads context files
+```
+
+That's it. The agent now sees your project instructions in every conversation.
+
+## How it works
+
+The loader scans four layers in order, from lowest to highest priority. Each layer checks for both `NOUMEN.*` and `CLAUDE.*` variants:
+
+| Layer | Scope | Files scanned |
+|-------|-------|---------------|
+| **Managed** | Enterprise/MDM | `<managedDir>/NOUMEN.md`, `<managedDir>/CLAUDE.md`, rules in `<managedDir>/.noumen/rules/`, `<managedDir>/.claude/rules/` |
+| **User** | Per-user home | `~/.noumen/NOUMEN.md`, `~/.claude/CLAUDE.md`, rules in `~/.noumen/rules/`, `~/.claude/rules/` |
+| **Project** | Repo ancestors | For each directory from filesystem root down to `cwd`: `<dir>/NOUMEN.md`, `<dir>/CLAUDE.md`, `<dir>/.noumen/NOUMEN.md`, `<dir>/.claude/CLAUDE.md`, rules in `<dir>/.noumen/rules/`, `<dir>/.claude/rules/` |
+| **Local** | Gitignored | `<dir>/NOUMEN.local.md`, `<dir>/CLAUDE.local.md` (same ancestor walk) |
+
+Files loaded later in the list have higher priority. This means your project-level `NOUMEN.md` at the repo root overrides user-level defaults, and `NOUMEN.local.md` (which you gitignore for personal overrides) has the highest priority of all.
+
+## CLAUDE.md compatibility
+
+If your project already has a `CLAUDE.md` or `.claude/` directory, noumen picks it up automatically — no renaming needed. When both `NOUMEN.md` and `CLAUDE.md` exist in the same directory, both are loaded. This lets you maintain compatibility with Claude Code while also using noumen-specific instructions.
+
+## Rules directories
+
+For fine-grained control, add markdown files under `.noumen/rules/` or `.claude/rules/`:
+
+```
+my-project/
+  NOUMEN.md              # main project instructions
+  .noumen/
+    rules/
+      style.md           # coding style rules
+      testing.md          # testing conventions
+      api/
+        rest.md          # REST API patterns
+```
+
+Each `.md` file in the rules directory is loaded as a separate context file. Subdirectories are scanned recursively.
+
+### Conditional rules
+
+Rules can target specific file patterns using `paths:` frontmatter, just like [Skills](/docs/skills):
+
+```markdown
+---
+paths:
+  - "src/**/*.tsx"
+  - "src/**/*.jsx"
+---
+
+When working on React components:
+- Use functional components with hooks
+- Co-locate tests in __tests__ directories
+- Export component props as a named type
+```
+
+This rule only activates when the agent reads or edits files matching those globs. Conditional rules keep the system prompt focused — the agent only sees instructions relevant to the files it is working on.
+
+## @ includes
+
+Context files can reference other files using inline `@path` syntax:
+
+```markdown
+# Project instructions
+
+See @./docs/architecture.md for the system design.
+See @./docs/conventions.md for coding standards.
+```
+
+Paths are resolved relative to the including file. The `@` reference is detected anywhere in prose (outside fenced code blocks and inline code spans), and the referenced file's contents are loaded and attached to the parent.
+
+- Maximum include depth: 5 levels (configurable via `maxIncludeDepth`)
+- Cycles are detected and skipped automatically
+- Missing referenced files are silently ignored
+
+## Configuration
+
+Pass `true` for sensible defaults, or a `ProjectContextConfig` object for full control:
+
+```typescript
+options: {
+  // Simple: use defaults (cwd from sandbox, load everything)
+  projectContext: true,
+
+  // Full control:
+  projectContext: {
+    cwd: "/my/project",
+    homeDir: "/home/user",           // for sandboxed environments
+    managedDir: "/etc/noumen",       // enterprise managed settings
+    loadClaudeMd: true,              // load .claude/ files (default: true)
+    loadUserContext: true,            // load from homeDir (default: true)
+    loadProjectContext: true,         // load from cwd ancestors (default: true)
+    loadLocalContext: true,           // load *.local.md files (default: true)
+    excludes: ["**/secret.md"],      // glob patterns to skip
+    maxIncludeDepth: 5,              // @ include depth limit (default: 5)
+  },
+}
+```
+
+### ProjectContextConfig fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `cwd` | `string` | *required* | Working directory (project root) |
+| `homeDir` | `string` | — | User home directory. Pass explicitly for sandboxed environments. |
+| `managedDir` | `string` | — | Enterprise/MDM settings directory |
+| `loadClaudeMd` | `boolean` | `true` | Also scan for `.claude/` and `CLAUDE.md` files |
+| `loadUserContext` | `boolean` | `true` | Load user-scope context from `homeDir` |
+| `loadProjectContext` | `boolean` | `true` | Load project-scope context from `cwd` ancestors |
+| `loadLocalContext` | `boolean` | `true` | Load `*.local.md` files |
+| `excludes` | `string[]` | `[]` | Glob patterns to exclude |
+| `maxIncludeDepth` | `number` | `5` | Maximum `@` include recursion depth |
+
+## ContextFile type
+
+Each loaded context file is represented as:
+
+```typescript
+interface ContextFile {
+  path: string;
+  scope: "managed" | "user" | "project" | "local";
+  content: string;
+  globs?: string[];       // from paths: frontmatter (conditional rules)
+  includes?: ContextFile[]; // files referenced via @
+}
+```
+
+## Standalone usage
+
+You can use the loader and formatter independently of `Code`, for example to build your own prompt pipeline:
+
+```typescript
+import { loadProjectContext, buildProjectContextSection } from "noumen";
+import { LocalFs } from "noumen";
+
+const fs = new LocalFs({ basePath: "/" });
+
+const files = await loadProjectContext(fs, {
+  cwd: "/my/project",
+  homeDir: "/home/user",
+});
+
+const promptSection = buildProjectContextSection(files);
+// Insert into your own system prompt
+```
+
+The `filterActiveContextFiles` helper filters conditional rules by touched file paths:
+
+```typescript
+import { filterActiveContextFiles } from "noumen";
+
+const active = filterActiveContextFiles(files, ["/my/project/src/App.tsx"], "/my/project");
+const section = buildProjectContextSection(active);
+```
