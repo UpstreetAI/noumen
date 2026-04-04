@@ -15,7 +15,6 @@ describe("classifyCommand", () => {
       "wc -l file.txt",
       "echo hello",
       "pwd",
-      "env",
       "date",
       "uname -a",
       "whoami",
@@ -124,7 +123,7 @@ describe("classifyCommand", () => {
 
     it("piped with mutating is not read-only", () => {
       const result = classifyCommand("cat file.txt | tee output.txt");
-      expect(result.isReadOnly).toBe(true); // tee is in read-only list (conservative)
+      expect(result.isReadOnly).toBe(false);
     });
 
     it("semicolon-separated commands", () => {

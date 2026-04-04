@@ -230,30 +230,30 @@ function splitCompoundCommand(command: string): string[] {
  * Extract the base command name from a command string (first token after
  * env vars and redirects).
  */
-export function extractCommandName(command: string): string {
+function stripPrefixes(command: string): string {
   let cmd = command.trim();
-  // Strip leading env-var assignments: FOO=bar BAZ=qux command ...
   while (/^[A-Za-z_][A-Za-z0-9_]*=\S*\s/.test(cmd)) {
     cmd = cmd.replace(/^[A-Za-z_][A-Za-z0-9_]*=\S*\s+/, "");
   }
-  // Strip sudo/env/nohup/time prefixes
   for (const prefix of ["sudo", "env", "nohup", "time", "nice", "ionice", "strace", "ltrace"]) {
     if (cmd.startsWith(prefix + " ")) {
       cmd = cmd.slice(prefix.length).trim();
-      // Strip flags of the prefix command
       while (cmd.startsWith("-")) {
         const spaceIdx = cmd.indexOf(" ");
         if (spaceIdx === -1) break;
         cmd = cmd.slice(spaceIdx).trim();
       }
-      // Strip env-var assignments that follow the prefix (e.g. env FOO=bar cmd)
       while (/^[A-Za-z_][A-Za-z0-9_]*=\S*\s/.test(cmd)) {
         cmd = cmd.replace(/^[A-Za-z_][A-Za-z0-9_]*=\S*\s+/, "");
       }
     }
   }
+  return cmd;
+}
+
+export function extractCommandName(command: string): string {
+  const cmd = stripPrefixes(command);
   const firstToken = cmd.split(/\s/)[0] ?? "";
-  // Resolve paths: /usr/bin/ls -> ls
   const base = firstToken.includes("/") ? firstToken.split("/").pop()! : firstToken;
   return base;
 }
@@ -390,7 +390,7 @@ function classifySingleCommand(
     return classifyGitCommand(command);
   }
 
-  if ((name === "echo" || name === "printf") && SAFE_ECHO_RE.test(command.trim())) {
+  if ((name === "echo" || name === "printf") && SAFE_ECHO_RE.test(stripPrefixes(command).trim())) {
     return { isReadOnly: true, isDestructive: false, reason: `${name} with safe arguments is read-only` };
   }
 
