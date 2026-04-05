@@ -7,22 +7,22 @@ import { EasterEggFooter } from "@/components/EasterEggFooter";
 
 const FEATURES = [
   {
-    icon: "🛠️",
-    title: "Read, write, edit, execute",
+    icon: "🔌",
+    title: "Seven providers, one interface",
     description:
-      "ReadFile, WriteFile, EditFile, Bash, Glob, Grep, WebFetch, NotebookEdit, AskUser — the same tools shipping inside production coding agents, wired up and ready to go.",
+      "OpenAI, Anthropic, Google Gemini, OpenRouter, AWS Bedrock, Vertex AI, and Ollama. Same streaming interface, same tool dispatch. Switch models without changing your code.",
   },
   {
     icon: "💻",
     title: "Five sandbox backends",
     description:
-      "LocalSandbox (OS-level via sandbox-runtime), UnsandboxedLocal for raw host access, sprites.dev, Docker, or E2B cloud. Swap one line to change the isolation boundary.",
+      "LocalSandbox (OS-level), UnsandboxedLocal, sprites.dev, Docker, or E2B cloud. Swap one line to change the isolation boundary — from raw host access to a remote container.",
   },
   {
-    icon: "🔌",
-    title: "Seven providers, one interface",
+    icon: "🛠️",
+    title: "Nine built-in coding tools",
     description:
-      "OpenAI, Anthropic, Google Gemini, OpenRouter, AWS Bedrock, Google Vertex AI, and Ollama. Same streaming interface, same tool dispatch, same results. Cloud or local.",
+      "ReadFile, WriteFile, EditFile, Bash, Glob, Grep, WebFetch, NotebookEdit, AskUser — the same tools shipping inside production coding agents, wired up and ready to go.",
   },
   {
     icon: "💾",
@@ -31,10 +31,16 @@ const FEATURES = [
       "Conversations save as JSONL. Auto-compaction, microcompact, and reactive strategies keep context under control. Resume any thread by ID.",
   },
   {
+    icon: "🤖",
+    title: "Multi-agent and subagents",
+    description:
+      "Spawn isolated subagents for focused subtasks. Run a swarm of agents in parallel with message passing and configurable concurrency.",
+  },
+  {
     icon: "🔗",
     title: "MCP, LSP, ACP, A2A",
     description:
-      "Connect to MCP servers for external tools. Query language servers via LSP. Expose your agent over HTTP/WebSocket with the built-in server, or use ACP and A2A protocol adapters.",
+      "Connect to MCP servers for external tools. Query language servers via LSP. Expose your agent over HTTP/WebSocket, or use ACP and A2A protocol adapters.",
   },
   {
     icon: "🔒",
@@ -44,9 +50,9 @@ const FEATURES = [
   },
   {
     icon: "🧠",
-    title: "Extended thinking",
+    title: "Thinking, structured output",
     description:
-      "Unified thinking config across providers. Anthropic budget_tokens, OpenAI reasoning_effort, Gemini thinkingBudget — one option, any model.",
+      "Unified extended-thinking config across providers. Request JSON output with schema validation. One option, any model.",
   },
   {
     icon: "📚",
@@ -58,43 +64,19 @@ const FEATURES = [
     icon: "💰",
     title: "Cost tracking and observability",
     description:
-      "Built-in token usage and USD cost tracking with per-model pricing. OpenTelemetry tracing integration. Retry with exponential backoff and model fallback.",
-  },
-  {
-    icon: "🤖",
-    title: "Multi-agent and subagents",
-    description:
-      "Spawn isolated subagents for focused subtasks. Run a swarm of agents in parallel with message passing and configurable concurrency.",
-  },
-  {
-    icon: "🧩",
-    title: "Structured output",
-    description:
-      "Request JSON output with schema validation. Works alongside tools or as a final response. Supports JSON Schema and JSON object modes.",
-  },
-  {
-    icon: "🗂️",
-    title: "Tasks, plans, and worktrees",
-    description:
-      "Built-in task management tools for decomposing work. Plan mode for read-only exploration. Git worktrees for isolated branch-based experimentation.",
+      "Built-in token usage and USD cost tracking with per-model pricing. OpenTelemetry tracing. Retry with exponential backoff and model fallback.",
   },
   {
     icon: "🪝",
     title: "18 hook events",
     description:
-      "Intercept tool calls, session lifecycle, permissions, file writes, model switches, retry, compaction, and memory extraction. Modify inputs, deny actions, or run side effects.",
+      "Intercept tool calls, session lifecycle, permissions, file writes, model switches, retry, compaction, and memory. Modify inputs, deny actions, or run side effects.",
   },
   {
     icon: "📦",
-    title: "Embed in any app",
+    title: "Embed anywhere, or use the CLI",
     description:
-      "Use in-process with async iterators, expose over HTTP/SSE or WebSocket, or drop into Next.js, Electron, and VS Code extensions. Presets for zero-config setup.",
-  },
-  {
-    icon: "⌨️",
-    title: "CLI included",
-    description:
-      "Run npx noumen to start an interactive session with any provider. One-shot mode, JSONL pipe output, config files, and session resume — all from the terminal.",
+      "In-process async iterators, HTTP/SSE, WebSocket, Next.js, Electron, VS Code — or just run npx noumen from the terminal. Presets for zero-config setup.",
   },
 ];
 
@@ -119,24 +101,23 @@ export default function Home() {
           {/* Left: copy */}
           <div className="min-w-0 flex flex-col gap-6">
             <div className="inline-flex w-fit items-center gap-2 rounded-full border border-[var(--color-accent-blue-dim)] bg-[var(--color-accent-blue-dim)] px-3 py-1 text-xs font-medium text-[var(--color-accent-blue)]">
-              <span>🐍</span> coding agent SDK
+              <span>⚡</span> coding agent SDK
             </div>
 
             <h1 className="font-[family-name:var(--font-display)] text-4xl font-extrabold leading-[1.08] tracking-tight text-[var(--color-text-primary)] sm:text-5xl lg:text-6xl">
-              Coding agents are products.
-              <br />
-              This is the{" "}
+              <code className="rounded bg-[var(--color-base-surface)] px-2 py-0.5 font-mono text-[0.9em]">npm install</code>{" "}your{" "}
               <span className="bg-gradient-to-r from-[var(--color-accent-blue)] to-[var(--color-accent-cyan)] bg-clip-text text-transparent">
-                library.
+                coding agent.
               </span>
             </h1>
             <p className="max-w-lg text-lg leading-relaxed text-[var(--color-text-secondary)]">
-              The tool loop, file editing, shell execution, and session
-              management that power coding agents &mdash; as a composable npm
-              package. Every layer is a swappable adapter.
+              Every coding agent needs the same infrastructure &mdash; file
+              editing, shell execution, context management, sandboxing. Noumen
+              gives you all of it as one package. Swap a line to change the
+              model or the isolation boundary.
             </p>
 
-            <TerminalBlock command="pnpm add noumen" className="max-w-lg" />
+            <TerminalBlock command="npm install noumen" className="max-w-lg" />
 
             <div className="flex flex-wrap items-center gap-3">
               <Link
@@ -174,11 +155,12 @@ export default function Home() {
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent via-[var(--color-accent-blue-dim)] to-transparent opacity-30" />
         <div className="relative mx-auto max-w-6xl px-6">
           <h2 className="font-[family-name:var(--font-display)] text-center text-3xl font-bold tracking-tight text-[var(--color-text-primary)] sm:text-4xl">
-            The missing layer between LLMs and codebases
+            Everything between the LLM and the codebase
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-center text-[var(--color-text-secondary)]">
-            The tool loop, session management, and virtual infrastructure
-            that every coding agent needs — so you don&apos;t have to build it yourself.
+            Other SDKs lock you to one model or make you build the coding
+            tools yourself. Noumen ships the full stack &mdash; any provider,
+            any sandbox, every tool &mdash; so you ship the agent.
           </p>
 
           <div className="mt-14 grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -224,16 +206,15 @@ export default function Home() {
       <section className="relative overflow-hidden py-24 sm:py-32">
         <div className="absolute inset-0 bg-gradient-to-b from-transparent via-[var(--color-accent-blue-dim)] to-transparent" />
         <div className="relative mx-auto max-w-2xl px-6 text-center">
-          <div className="mb-4 text-5xl">🐍</div>
+          <div className="mb-4 text-5xl">⚡</div>
           <h2 className="font-[family-name:var(--font-display)] text-3xl font-bold tracking-tight text-[var(--color-text-primary)] sm:text-4xl">
-            Every layer plugs in.
-            <br />
+            Three imports to a{" "}
             <span className="bg-gradient-to-r from-[var(--color-accent-blue)] to-[var(--color-accent-cyan)] bg-clip-text text-transparent">
-              Ship yours.
+              coding agent.
             </span>
           </h2>
           <div className="mt-8 space-y-2 text-left">
-            <TerminalBlock command="pnpm add noumen" />
+            <TerminalBlock command="npm install noumen" />
             <TerminalBlock command='import { Agent } from "noumen"' />
             <TerminalBlock command='import { OpenAIProvider } from "noumen/openai"' />
           </div>
