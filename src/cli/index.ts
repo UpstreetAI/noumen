@@ -304,7 +304,7 @@ async function runAgent(config: MergedConfig): Promise<void> {
 async function runOneShot(agent: Agent, config: MergedConfig): Promise<void> {
   const { startSpinner } = await import("./spinner.js");
   const { isVisibleEvent } = await import("./render.js");
-  const thread = agent.createThread();
+  const thread = await agent.createThread();
   const state = createRenderState();
   const runOpts = config.maxTurns ? { maxTurns: config.maxTurns } : undefined;
 
@@ -432,7 +432,7 @@ async function resumeSession(sessionId: string): Promise<void> {
   const { createInterface } = await import("node:readline/promises");
   const rl = createInterface({ input: process.stdin, output: process.stderr, terminal: true });
 
-  const thread = agent.resumeThread(match.sessionId);
+  const thread = await agent.resumeThread(match.sessionId);
 
   // Enter REPL with the resumed thread
   const { renderEvent: render, createRenderState: makeState } = await import("./render.js");

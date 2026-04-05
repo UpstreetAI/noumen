@@ -45,6 +45,10 @@ export interface AssistantMessage {
   role: "assistant";
   content: string | null;
   tool_calls?: ToolCallContent[];
+  /** Accumulated thinking content for providers that support extended thinking (e.g. Anthropic). */
+  thinking_content?: string;
+  /** Thinking signature required by Anthropic to verify thinking blocks across turns. */
+  thinking_signature?: string;
 }
 
 export interface ToolResultMessage {

@@ -4,11 +4,13 @@ import type {
   ChatParams,
   ChatStreamChunk,
 } from "./types.js";
+import { ChatStreamError } from "./types.js";
 import type { ChatMessage, ContentPart } from "../session/types.js";
 
 export interface GeminiProviderOptions {
   apiKey: string;
   model?: string;
+  baseURL?: string;
 }
 
 interface GeminiContent {
@@ -32,7 +34,9 @@ export class GeminiProvider implements AIProvider {
   private defaultModel: string;
 
   constructor(opts: GeminiProviderOptions) {
-    this.client = new GoogleGenAI({ apiKey: opts.apiKey });
+    const clientOpts: Record<string, unknown> = { apiKey: opts.apiKey };
+    if (opts.baseURL) clientOpts.httpOptions = { baseUrl: opts.baseURL };
+    this.client = new GoogleGenAI(clientOpts as ConstructorParameters<typeof GoogleGenAI>[0]);
     this.defaultModel = opts.model ?? "gemini-2.5-flash";
   }
 
@@ -79,6 +83,7 @@ export class GeminiProvider implements AIProvider {
       config.responseMimeType = "application/json";
     }
 
+    try {
     const stream = await this.client.models.generateContentStream({
       model: params.model ?? this.defaultModel,
       contents,
@@ -112,67 +117,68 @@ export class GeminiProvider implements AIProvider {
       if (!candidates || candidates.length === 0) continue;
 
       const parts = candidates[0].content?.parts as GeminiPart[] | undefined;
-      if (!parts) continue;
 
-      for (const part of parts) {
-        if (part.thought && part.text !== undefined && part.text !== null) {
-          yield {
-            id: chunkId,
-            model,
-            choices: [
-              {
-                index: 0,
-                delta: { thinking_content: part.text },
-                finish_reason: null,
-              },
-            ],
-          };
-          continue;
-        }
-
-        if (part.text !== undefined && part.text !== null) {
-          yield {
-            id: chunkId,
-            model,
-            choices: [
-              {
-                index: 0,
-                delta: { content: part.text },
-                finish_reason: null,
-              },
-            ],
-          };
-        }
-
-        if (part.functionCall) {
-          const fc = part.functionCall;
-          const tcId = `gemini-tc-${toolCallIndex}`;
-          const idx = toolCallIndex++;
-          responseHasToolCalls = true;
-
-          yield {
-            id: chunkId,
-            model,
-            choices: [
-              {
-                index: 0,
-                delta: {
-                  tool_calls: [
-                    {
-                      index: idx,
-                      id: tcId,
-                      type: "function" as const,
-                      function: {
-                        name: fc.name,
-                        arguments: JSON.stringify(fc.args ?? {}),
-                      },
-                    },
-                  ],
+      if (parts) {
+        for (const part of parts) {
+          if (part.thought && part.text !== undefined && part.text !== null) {
+            yield {
+              id: chunkId,
+              model,
+              choices: [
+                {
+                  index: 0,
+                  delta: { thinking_content: part.text },
+                  finish_reason: null,
                 },
-                finish_reason: null,
-              },
-            ],
-          };
+              ],
+            };
+            continue;
+          }
+
+          if (part.text !== undefined && part.text !== null) {
+            yield {
+              id: chunkId,
+              model,
+              choices: [
+                {
+                  index: 0,
+                  delta: { content: part.text },
+                  finish_reason: null,
+                },
+              ],
+            };
+          }
+
+          if (part.functionCall) {
+            const fc = part.functionCall;
+            const tcId = `gemini-tc-${toolCallIndex}`;
+            const idx = toolCallIndex++;
+            responseHasToolCalls = true;
+
+            yield {
+              id: chunkId,
+              model,
+              choices: [
+                {
+                  index: 0,
+                  delta: {
+                    tool_calls: [
+                      {
+                        index: idx,
+                        id: tcId,
+                        type: "function" as const,
+                        function: {
+                          name: fc.name,
+                          arguments: JSON.stringify(fc.args ?? {}),
+                        },
+                      },
+                    ],
+                  },
+                  finish_reason: null,
+                },
+              ],
+            };
+          }
         }
       }
 
@@ -196,6 +202,18 @@ export class GeminiProvider implements AIProvider {
           usage: lastUsage,
         };
       }
+    }
+    } catch (err: unknown) {
+      if (err instanceof ChatStreamError) throw err;
+      const apiErr = err as { status?: number; statusCode?: number; code?: number };
+      const status = apiErr.status ?? apiErr.statusCode ?? apiErr.code;
+      throw new ChatStreamError(
+        err instanceof Error ? err.message : String(err),
+        {
+          status: typeof status === "number" ? status : undefined,
+          cause: err,
+        },
+      );
     }
   }
 

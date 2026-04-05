@@ -145,6 +145,16 @@ export function convertAnthropicMessages(
       }
     } else if (msg.role === "assistant") {
       const content: Record<string, unknown>[] = [];
+      if (msg.thinking_content) {
+        const thinkingBlock: Record<string, unknown> = {
+          type: "thinking",
+          thinking: msg.thinking_content,
+        };
+        if (msg.thinking_signature) {
+          thinkingBlock.signature = msg.thinking_signature;
+        }
+        content.push(thinkingBlock);
+      }
       if (msg.content && (typeof msg.content !== "string" || msg.content.trim() !== "")) {
         content.push({ type: "text", text: msg.content });
       }
@@ -256,7 +266,7 @@ export async function* streamAnthropicChat(
     ? (params.max_tokens ?? modelMaxOutput)
     : (params.max_tokens ?? 8192);
   const clampedBudget = thinkingEnabled
-    ? Math.min(budgetTokens, maxOutputTokens - 1)
+    ? Math.max(1024, Math.min(budgetTokens, maxOutputTokens - 1))
     : 0;
 
   const streamParams: Record<string, unknown> = {
@@ -476,7 +486,7 @@ export async function* streamAnthropicChat(
     }
   }
 
-  if (!receivedMessageStop && chunkIndex <= 1) {
+  if (!receivedMessageStop && chunkIndex > 0) {
     throw new ChatStreamError(
       "Stream ended without receiving message_stop event",
       { cause: new Error("incomplete_stream") },

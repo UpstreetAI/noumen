@@ -39,19 +39,18 @@ describe("AgentTool", () => {
 });
 
 describe("Subagent via Agent", () => {
-  it("enables Agent tool when enableSubagents is true", () => {
+  it("enables Agent tool when enableSubagents is true", async () => {
     const provider = new MockAIProvider();
     const code = new Agent({
       provider: provider,
       sandbox: { fs, computer },
       options: { enableSubagents: true },
     });
-    const thread = code.createThread({ sessionId: "s1" });
-    // The Agent tool should be registered — a model call with Agent should work
+    const thread = await code.createThread({ sessionId: "s1" });
     expect(thread).toBeDefined();
   });
 
-  it("does not include Agent tool when enableSubagents is false", () => {
+  it("does not include Agent tool when enableSubagents is false", async () => {
     const provider = new MockAIProvider();
     provider.addResponse(textResponse("hello"));
 
@@ -60,7 +59,7 @@ describe("Subagent via Agent", () => {
       sandbox: { fs, computer },
       options: { enableSubagents: false },
     });
-    const thread = code.createThread({ sessionId: "s1" });
+    const thread = await code.createThread({ sessionId: "s1" });
     expect(thread).toBeDefined();
   });
 
@@ -92,7 +91,7 @@ describe("Subagent via Agent", () => {
       },
     });
 
-    const thread = code.createThread({ sessionId: "parent-1" });
+    const thread = await code.createThread({ sessionId: "parent-1" });
     const events = await collectEvents(thread.run("Summarize data.txt using a subagent"));
 
     // Check that we got a tool_result from the Agent tool
@@ -134,7 +133,7 @@ describe("Subagent via Agent", () => {
       },
     });
 
-    const thread = code.createThread({ sessionId: "s1" });
+    const thread = await code.createThread({ sessionId: "s1" });
     const events = await collectEvents(thread.run("test"));
 
     const agentResult = events.find(

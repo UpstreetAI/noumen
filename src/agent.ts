@@ -223,6 +223,8 @@ export class Agent {
   private historySnipConfig: SnipConfig | undefined;
   private outputFormat: OutputFormat | undefined;
   private structuredOutputMode: "alongside_tools" | "final_response" | undefined;
+  private providerPromise: Promise<AIProvider> | null = null;
+  private initPromise: Promise<void> | null = null;
 
   constructor(opts: AgentOptions) {
     this.providerInput = opts.provider;
@@ -315,10 +317,13 @@ export class Agent {
 
   private async ensureProvider(): Promise<AIProvider> {
     if (this.resolvedProvider) return this.resolvedProvider;
-    const { resolveProvider } = await import("./providers/resolve.js");
-    this.resolvedProvider = await resolveProvider(this.providerInput, {
-      model: this.model,
-    });
+    if (!this.providerPromise) {
+      this.providerPromise = (async () => {
+        const { resolveProvider } = await import("./providers/resolve.js");
+        return resolveProvider(this.providerInput, { model: this.model });
+      })();
+    }
+    this.resolvedProvider = await this.providerPromise;
     return this.resolvedProvider;
   }
 
@@ -415,7 +420,7 @@ export class Agent {
     };
   }
 
-  createThread(opts?: ThreadOptions): Thread {
+  async createThread(opts?: ThreadOptions): Promise<Thread> {
     const autoCompact = createAutoCompactConfig({
       enabled: this.autoCompactEnabled,
       threshold: this.autoCompactThreshold,
@@ -427,7 +432,7 @@ export class Agent {
 
     return new Thread(
       {
-        provider: this.getProvider(),
+        provider: await this.ensureProvider(),
         fs: this.fs,
         computer: this.computer,
         sessionDir: this.sessionDir,
@@ -487,7 +492,7 @@ export class Agent {
    * messages (respecting compact boundaries), file checkpoint state, and
    * cost tracking state from the persisted JSONL transcript.
    */
-  resumeThread(sessionId: string, opts?: Omit<ThreadOptions, "sessionId" | "resume">): Thread {
+  async resumeThread(sessionId: string, opts?: Omit<ThreadOptions, "sessionId" | "resume">): Promise<Thread> {
     return this.createThread({
       ...opts,
       sessionId,
@@ -510,7 +515,7 @@ export class Agent {
     opts?: RunOptions & ThreadOptions,
   ): AsyncGenerator<StreamEvent, void, unknown> {
     await this.ensureProvider();
-    const thread = this.createThread(opts);
+    const thread = await this.createThread(opts);
     yield* thread.run(prompt, opts);
   }
 
@@ -530,7 +535,7 @@ export class Agent {
     opts?: RunOptions & ThreadOptions & RunCallbacks,
   ): Promise<RunResult> {
     await this.ensureProvider();
-    const thread = this.createThread(opts);
+    const thread = await this.createThread(opts);
     let text = "";
     let toolCalls = 0;
     let lastUsage: ChatCompletionUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
@@ -577,6 +582,13 @@ export class Agent {
    * mcpServers, or lsp, so that createThread() has everything available synchronously.
    */
   async init(): Promise<void> {
+    if (!this.initPromise) {
+      this.initPromise = this.doInit();
+    }
+    return this.initPromise;
+  }
+
+  private async doInit(): Promise<void> {
     const tasks: Promise<void>[] = [
       this.ensureProvider().then(() => {}),
       this.getSkills().then(() => {}),
@@ -656,7 +668,7 @@ export class Agent {
     try {
       const { latencyMs } = await timedCheck(async () => {
         const stream = this.getProvider().chat({
-          model: this.model ?? "gpt-4o-mini",
+          model: this.model as string,
           messages: [{ role: "user", content: "Say ok" }],
           tools: [],
           system: "",
@@ -785,12 +797,21 @@ export class Agent {
         this.mcpManager.close().then(() => {
           this.mcpTools = [];
           this.mcpAuthTools = [];
+          this.mcpToolNames.clear();
+          this.mcpManager = null;
         }),
       );
     }
     if (this.lspManager) {
-      tasks.push(this.lspManager.shutdown());
+      tasks.push(
+        this.lspManager.shutdown().then(() => {
+          this.lspManager = null;
+          this.lspToolRef = null;
+        }),
+      );
     }
     await Promise.all(tasks);
+    this.initPromise = null;
+    this.providerPromise = null;
   }
 }

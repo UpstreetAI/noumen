@@ -4,6 +4,7 @@ import type {
   ChatParams,
   ChatStreamChunk,
 } from "./types.js";
+import { ChatStreamError } from "./types.js";
 import type { ChatMessage, ContentPart } from "../session/types.js";
 
 export interface OpenAIProviderOptions {
@@ -69,6 +70,7 @@ export class OpenAIProvider implements AIProvider {
       };
     }
 
+    try {
     const stream = await this.client.chat.completions.create(createParams);
 
     for await (const chunk of stream) {
@@ -111,6 +113,18 @@ export class OpenAIProvider implements AIProvider {
         })),
         usage: mappedUsage,
       };
+    }
+    } catch (err: unknown) {
+      if (err instanceof ChatStreamError) throw err;
+      const apiErr = err as { status?: number; headers?: Record<string, string> & { get?(k: string): string | null } };
+      throw new ChatStreamError(
+        err instanceof Error ? err.message : String(err),
+        {
+          status: apiErr.status,
+          retryAfter: apiErr.headers?.get?.("retry-after") ?? apiErr.headers?.["retry-after"] ?? undefined,
+          cause: err,
+        },
+      );
     }
   }
 

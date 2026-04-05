@@ -95,7 +95,18 @@ export async function* runToolsBatched(
       yield* all(generators, concurrencyCap);
     } else {
       for (const { toolCall, parsedArgs } of batch.items) {
-        yield await executor(toolCall, parsedArgs);
+        try {
+          yield await executor(toolCall, parsedArgs);
+        } catch (err) {
+          yield {
+            toolCall,
+            parsedArgs,
+            result: {
+              content: `Error: ${err instanceof Error ? err.message : String(err)}`,
+              isError: true,
+            },
+          } satisfies ToolCallExecResult;
+        }
       }
     }
   }

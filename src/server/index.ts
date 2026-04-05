@@ -593,7 +593,7 @@ export class NoumenServer {
     return session;
   }
 
-  private makeThread(session: SessionState, resume: boolean) {
+  private async makeThread(session: SessionState, resume: boolean) {
     const handlers = {
       cwd: session.cwd,
       permissionHandler: (req: import("../permissions/types.js").PermissionRequest) =>
@@ -610,7 +610,7 @@ export class NoumenServer {
   private runAgentSse(session: SessionState, prompt: string, resume: boolean): void {
     const run = async () => {
       try {
-        const thread = this.makeThread(session, resume);
+        const thread = await this.makeThread(session, resume);
         for await (const event of thread.run(prompt, { signal: session.abortController.signal })) {
           this.emitSseEvent(session, event);
           session.lastActivity = Date.now();
@@ -632,7 +632,7 @@ export class NoumenServer {
   private runAgentWs(session: SessionState, prompt: string, ws: WsWebSocket, resume: boolean): void {
     const run = async () => {
       try {
-        const thread = this.makeThread(session, resume);
+        const thread = await this.makeThread(session, resume);
         for await (const event of thread.run(prompt, { signal: session.abortController.signal })) {
           session.sequenceNum++;
           wsSend(ws, { ...serializeEvent(event), sessionId: session.id, seq: session.sequenceNum });

@@ -443,6 +443,7 @@ export class Thread {
       let currentMaxTokens = this.config.maxTokens;
 
       this.microcompactTokensFreed = 0;
+      this.hasAttemptedReactiveCompact = false;
 
       while (!signal.aborted) {
         // --- Pre-call compaction pipeline ---
@@ -539,6 +540,8 @@ export class Thread {
         });
 
         const accumulatedContent: string[] = [];
+        const accumulatedThinking: string[] = [];
+        let accumulatedThinkingSignature: string | undefined;
         const accumulatedToolCalls = new Map<
           number,
           { id: string; name: string; arguments: string; complete: boolean; malformedJson?: boolean }
@@ -741,7 +744,12 @@ export class Thread {
             const delta = choice.delta;
 
             if (delta.thinking_content) {
+              accumulatedThinking.push(delta.thinking_content);
               yield { type: "thinking_delta", text: delta.thinking_content };
+            }
+
+            if (delta.thinking_signature) {
+              accumulatedThinkingSignature = (accumulatedThinkingSignature ?? "") + delta.thinking_signature;
             }
 
             if (delta.content) {
@@ -944,10 +952,13 @@ export class Thread {
           })),
         ];
 
+        const thinkingContent = accumulatedThinking.join("") || undefined;
         const assistantMsg: AssistantMessage = {
           role: "assistant",
           content: textContent || null,
           ...(allToolCalls.length > 0 ? { tool_calls: allToolCalls } : {}),
+          ...(thinkingContent ? { thinking_content: thinkingContent } : {}),
+          ...(accumulatedThinkingSignature ? { thinking_signature: accumulatedThinkingSignature } : {}),
         };
 
         this.messages.push(assistantMsg);
@@ -974,7 +985,6 @@ export class Thread {
         // When only malformed calls exist, continue the loop to give the
         // model another chance without entering the tool execution path.
         if (toolCalls.length === 0 && malformedToolCalls.length > 0) {
-          callCount++;
           if (opts?.maxTurns !== undefined && callCount >= opts.maxTurns) {
             await runNotificationHooks(hooks, "TurnEnd", {
               event: "TurnEnd",

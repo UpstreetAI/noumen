@@ -199,10 +199,10 @@ export class AcpHandler {
     };
   }
 
-  private handleSessionNew(
+  private async handleSessionNew(
     params: AcpSessionNewParams,
-  ): { sessionId: string } {
-    const thread = this.code.createThread({
+  ): Promise<{ sessionId: string }> {
+    const thread = await this.code.createThread({
       sessionId: params.sessionId,
       permissionHandler: (req: PermissionRequest) =>
         this.bridgePermission(thread.sessionId, req),
@@ -258,10 +258,10 @@ export class AcpHandler {
     }
   }
 
-  private handleSessionLoad(
+  private async handleSessionLoad(
     params: AcpSessionLoadParams,
-  ): { sessionId: string } {
-    const thread = this.code.resumeThread(params.sessionId, {
+  ): Promise<{ sessionId: string }> {
+    const thread = await this.code.resumeThread(params.sessionId, {
       permissionHandler: (req: PermissionRequest) =>
         this.bridgePermission(params.sessionId, req),
       userInputHandler: (question: string) =>

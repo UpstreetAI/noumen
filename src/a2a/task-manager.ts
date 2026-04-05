@@ -40,7 +40,7 @@ export class TaskManager {
   async sendTask(params: TaskSendParams): Promise<Task> {
     const taskId = params.id ?? generateUUID();
 
-    const thread = this.code.createThread({
+    const thread = await this.code.createThread({
       sessionId: params.sessionId,
     });
 
@@ -69,7 +69,7 @@ export class TaskManager {
   ): AsyncGenerator<TaskStreamEvent> {
     const taskId = params.id ?? generateUUID();
 
-    const thread = this.code.createThread({
+    const thread = await this.code.createThread({
       sessionId: params.sessionId,
     });
 

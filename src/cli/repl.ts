@@ -17,7 +17,7 @@ export async function startRepl(
     terminal: true,
   });
 
-  let thread = code.createThread({
+  let thread = await code.createThread({
     userInputHandler: (q) => promptPermission(rl, "agent", q).then((ok) => ok ? "yes" : "no"),
   });
 
@@ -60,7 +60,7 @@ export async function startRepl(
         );
         if (result === "quit") break;
         if (result === "new") {
-          thread = code.createThread({
+          thread = await code.createThread({
             userInputHandler: (q) => promptPermission(rl, "agent", q).then((ok) => ok ? "yes" : "no"),
           });
           currentThread = thread;

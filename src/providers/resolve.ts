@@ -78,7 +78,7 @@ export async function resolveProvider(
     case "gemini": {
       if (!key) throw new Error("Gemini requires an API key. Set GEMINI_API_KEY or pass apiKey.");
       const { GeminiProvider } = await import("./gemini.js");
-      return new GeminiProvider({ apiKey: key, model: opts?.model });
+      return new GeminiProvider({ apiKey: key, model: opts?.model, baseURL: opts?.baseURL });
     }
     case "openrouter": {
       if (!key) throw new Error("OpenRouter requires an API key. Set OPENROUTER_API_KEY or pass apiKey.");
@@ -87,7 +87,7 @@ export async function resolveProvider(
     }
     case "bedrock": {
       const { BedrockAnthropicProvider } = await import("./bedrock.js");
-      return new BedrockAnthropicProvider({ model: opts?.model });
+      return new BedrockAnthropicProvider({ model: opts?.model, baseURL: opts?.baseURL });
     }
     case "vertex": {
       const { VertexAnthropicProvider } = await import("./vertex.js");

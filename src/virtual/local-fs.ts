@@ -15,27 +15,55 @@ export interface LocalFsOptions {
  */
 export class LocalFs implements VirtualFs {
   private basePath: string;
+  private resolvedBasePath: string;
+  private realBasePathPromise: Promise<string> | null = null;
 
   constructor(opts?: LocalFsOptions) {
     this.basePath = opts?.basePath ?? process.cwd();
+    this.resolvedBasePath = path.resolve(this.basePath);
   }
 
-  private resolve(p: string): string {
+  private async getRealBasePath(): Promise<string> {
+    if (!this.realBasePathPromise) {
+      this.realBasePathPromise = (async () => {
+        try {
+          return await fs.realpath(this.resolvedBasePath);
+        } catch {
+          // Base path may not exist yet; resolve its closest existing ancestor.
+          const parentReal = await fs.realpath(path.dirname(this.resolvedBasePath)).catch(() => path.dirname(this.resolvedBasePath));
+          return path.join(parentReal, path.basename(this.resolvedBasePath));
+        }
+      })();
+    }
+    return this.realBasePathPromise;
+  }
+
+  private async resolve(p: string): Promise<string> {
+    if (p.includes("\0")) {
+      throw new Error(`Path contains null bytes`);
+    }
     const resolved = path.isAbsolute(p) ? path.normalize(p) : path.resolve(this.basePath, p);
-    const normalizedBase = path.resolve(this.basePath);
-    if (resolved !== normalizedBase && !resolved.startsWith(normalizedBase + path.sep)) {
+    if (resolved !== this.resolvedBasePath && !resolved.startsWith(this.resolvedBasePath + path.sep)) {
       throw new Error(`Path "${p}" resolves outside base directory "${this.basePath}"`);
+    }
+    // Resolve symlinks to prevent escaping the base directory via symlink chains.
+    // Walk up from the target until we find an existing ancestor, then re-append
+    // the non-existent tail so the comparison uses real paths on both sides.
+    const realBase = await this.getRealBasePath();
+    const realTarget = await realpathWalkUp(resolved);
+    if (realTarget !== realBase && !realTarget.startsWith(realBase + path.sep)) {
+      throw new Error(`Path "${p}" resolves outside base directory via symlink`);
     }
     return resolved;
   }
 
   async readFile(filePath: string, opts?: ReadOptions): Promise<string> {
     const encoding = opts?.encoding ?? "utf-8";
-    return fs.readFile(this.resolve(filePath), { encoding });
+    return fs.readFile(await this.resolve(filePath), { encoding });
   }
 
   async readFileBytes(filePath: string, maxBytes?: number): Promise<Buffer> {
-    const resolved = this.resolve(filePath);
+    const resolved = await this.resolve(filePath);
     if (maxBytes === undefined) {
       return fs.readFile(resolved);
     }
@@ -50,13 +78,13 @@ export class LocalFs implements VirtualFs {
   }
 
   async writeFile(filePath: string, content: string): Promise<void> {
-    const resolved = this.resolve(filePath);
+    const resolved = await this.resolve(filePath);
     await fs.mkdir(path.dirname(resolved), { recursive: true });
     await fs.writeFile(resolved, content, "utf-8");
   }
 
   async appendFile(filePath: string, content: string): Promise<void> {
-    const resolved = this.resolve(filePath);
+    const resolved = await this.resolve(filePath);
     await fs.mkdir(path.dirname(resolved), { recursive: true });
     await fs.appendFile(resolved, content, "utf-8");
   }
@@ -65,14 +93,14 @@ export class LocalFs implements VirtualFs {
     filePath: string,
     opts?: { recursive?: boolean },
   ): Promise<void> {
-    await fs.rm(this.resolve(filePath), {
+    await fs.rm(await this.resolve(filePath), {
       recursive: opts?.recursive ?? false,
       force: true,
     });
   }
 
   async mkdir(dirPath: string, opts?: { recursive?: boolean }): Promise<void> {
-    await fs.mkdir(this.resolve(dirPath), {
+    await fs.mkdir(await this.resolve(dirPath), {
       recursive: opts?.recursive ?? false,
     });
   }
@@ -81,7 +109,7 @@ export class LocalFs implements VirtualFs {
     dirPath: string,
     opts?: { recursive?: boolean },
   ): Promise<FileEntry[]> {
-    const resolved = this.resolve(dirPath);
+    const resolved = await this.resolve(dirPath);
     const entries = await fs.readdir(resolved, { withFileTypes: true });
     const results: FileEntry[] = [];
 
@@ -105,7 +133,7 @@ export class LocalFs implements VirtualFs {
 
   async exists(filePath: string): Promise<boolean> {
     try {
-      await fs.access(this.resolve(filePath));
+      await fs.access(await this.resolve(filePath));
       return true;
     } catch {
       return false;
@@ -113,7 +141,7 @@ export class LocalFs implements VirtualFs {
   }
 
   async stat(filePath: string): Promise<FileStat> {
-    const stats = await fs.stat(this.resolve(filePath));
+    const stats = await fs.stat(await this.resolve(filePath));
     return {
       size: stats.size,
       isDirectory: stats.isDirectory(),
@@ -122,4 +150,21 @@ export class LocalFs implements VirtualFs {
       modifiedAt: stats.mtime,
     };
   }
+}
+
+/**
+ * Resolve symlinks in a path, walking up to the nearest existing ancestor when
+ * the path (or intermediate directories) don't exist yet. Non-existent tail
+ * segments are appended to the resolved ancestor.
+ */
+async function realpathWalkUp(target: string): Promise<string> {
+  try {
+    return await fs.realpath(target);
+  } catch (e: unknown) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+  }
+  const parent = path.dirname(target);
+  if (parent === target) return target;
+  const resolvedParent = await realpathWalkUp(parent);
+  return path.join(resolvedParent, path.basename(target));
 }

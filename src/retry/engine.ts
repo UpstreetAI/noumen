@@ -38,6 +38,7 @@ export async function* withRetry(
   };
 
   let consecutiveOverloaded = 0;
+  let fallbackUsed = false;
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
@@ -90,11 +91,13 @@ export async function* withRetry(
         consecutiveOverloaded++;
         if (
           consecutiveOverloaded >= maxConsecutiveOverloaded &&
-          options.fallbackModel
+          options.fallbackModel &&
+          !fallbackUsed
         ) {
           const previousModel = retryContext.model;
           retryContext.model = options.fallbackModel;
           consecutiveOverloaded = 0;
+          fallbackUsed = true;
 
           yield {
             type: "retry_attempt",

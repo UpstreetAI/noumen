@@ -15,34 +15,34 @@ beforeEach(() => {
 });
 
 describe("Agent", () => {
-  it("createThread returns a Thread instance", () => {
+  it("createThread returns a Thread instance", async () => {
     const code = new Agent({
       provider: provider,
       sandbox: { fs, computer },
     });
 
-    const thread = code.createThread();
+    const thread = await code.createThread();
     expect(thread).toBeInstanceOf(Thread);
     expect(thread.sessionId).toBeTruthy();
   });
 
-  it("defaults sandbox to LocalSandbox when only cwd is provided", () => {
+  it("defaults sandbox to LocalSandbox when only cwd is provided", async () => {
     const code = new Agent({
       provider: provider,
       cwd: "/tmp/test",
     });
 
-    const thread = code.createThread();
+    const thread = await code.createThread();
     expect(thread).toBeInstanceOf(Thread);
   });
 
-  it("createThread uses provided sessionId", () => {
+  it("createThread uses provided sessionId", async () => {
     const code = new Agent({
       provider: provider,
       sandbox: { fs, computer },
     });
 
-    const thread = code.createThread({ sessionId: "my-session" });
+    const thread = await code.createThread({ sessionId: "my-session" });
     expect(thread.sessionId).toBe("my-session");
   });
 
@@ -64,7 +64,7 @@ describe("Agent", () => {
 
     provider.addResponse(textResponse("reply"));
 
-    const thread = code.createThread({ sessionId: "s1" });
+    const thread = await code.createThread({ sessionId: "s1" });
     for await (const _ of thread.run("hi")) {
       // consume
     }
@@ -86,7 +86,7 @@ describe("Agent", () => {
 
     provider.addResponse(textResponse("ok"));
 
-    const thread = code.createThread({ sessionId: "s1" });
+    const thread = await code.createThread({ sessionId: "s1" });
     for await (const _ of thread.run("do something")) {
       // consume
     }
@@ -112,7 +112,7 @@ describe("Agent", () => {
     await code.init();
 
     provider.addResponse(textResponse("ok"));
-    const thread = code.createThread({ sessionId: "s1" });
+    const thread = await code.createThread({ sessionId: "s1" });
     for await (const _ of thread.run("hi")) {
       // consume
     }
@@ -131,7 +131,7 @@ describe("Agent", () => {
     });
 
     provider.addResponse(textResponse("Arrr"));
-    const thread = code.createThread({ sessionId: "s1" });
+    const thread = await code.createThread({ sessionId: "s1" });
     for await (const _ of thread.run("hi")) {
       // consume
     }
@@ -151,7 +151,7 @@ describe("Agent", () => {
     });
 
     provider.addResponse(textResponse("ok"));
-    const thread = code.createThread({ sessionId: "s1" });
+    const thread = await code.createThread({ sessionId: "s1" });
     for await (const _ of thread.run("hi")) {
       // consume
     }

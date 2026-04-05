@@ -113,7 +113,7 @@ export async function runHeadless(code: Agent, _config: MergedConfig): Promise<v
         existing.running = true;
         thread = existing.thread;
       } else {
-        thread = code.createThread({
+        thread = await code.createThread({
           sessionId,
           permissionHandler,
           userInputHandler,
