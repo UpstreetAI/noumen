@@ -694,7 +694,7 @@ export class Agent {
 
     // --- Sandbox Runtime (OS-level sandboxing) ------------------------------
     let sandboxRuntimeCheck: DiagnoseResult["sandboxRuntime"];
-    {
+    try {
       const { SandboxManager } = await import("@anthropic-ai/sandbox-runtime");
       const supported = SandboxManager.isSupportedPlatform();
       const deps = SandboxManager.checkDependencies();
@@ -717,6 +717,13 @@ export class Agent {
           platform: process.platform,
         };
       }
+    } catch (err) {
+      sandboxRuntimeCheck = {
+        ok: false,
+        latencyMs: 0,
+        warning: `@anthropic-ai/sandbox-runtime not available: ${err instanceof Error ? err.message : String(err)}`,
+        platform: process.platform,
+      };
     }
 
     // --- MCP servers -------------------------------------------------------

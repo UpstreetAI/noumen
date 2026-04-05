@@ -91,6 +91,7 @@ export class ToolRegistry {
       };
     }
 
+    let validatedArgs = args;
     if (tool.inputSchema) {
       const parsed = tool.inputSchema.safeParse(args);
       if (!parsed.success) {
@@ -99,9 +100,17 @@ export class ToolRegistry {
           isError: true,
         };
       }
+      validatedArgs = parsed.data as Record<string, unknown>;
     }
 
-    return tool.call(args, ctx);
+    try {
+      return await tool.call(validatedArgs, ctx);
+    } catch (err) {
+      return {
+        content: `Error executing ${name}: ${err instanceof Error ? err.message : String(err)}`,
+        isError: true,
+      };
+    }
   }
 
   toToolDefinitions(): ToolDefinition[] {

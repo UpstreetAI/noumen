@@ -41,7 +41,10 @@ export async function classifyPermission(
     signal?: AbortSignal;
   },
 ): Promise<ClassifierResult> {
-  const model = opts?.classifierModel ?? opts?.model ?? "gpt-4o-mini";
+  const model = opts?.classifierModel ?? opts?.model;
+  if (!model) {
+    return { shouldBlock: true, reason: "No model configured for classifier." };
+  }
 
   const contextWindow = recentMessages.slice(-6);
   const contextText = contextWindow
@@ -84,6 +87,10 @@ export async function classifyPermission(
           text += choice.delta.content;
         }
       }
+    }
+
+    if (opts?.signal?.aborted) {
+      throw new DOMException("Aborted", "AbortError");
     }
 
     const parsed = JSON.parse(text) as ClassifierResult;

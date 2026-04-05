@@ -284,8 +284,18 @@ function mergeConsecutiveSameRole(messages: ChatMessage[]): ChatMessage[] {
     } else if (prev.role === "assistant" && curr.role === "assistant") {
       const prevAsst = prev as AssistantMessage;
       const currAsst = curr as AssistantMessage;
-      const mergedContent = (prevAsst.content || currAsst.content)
-        ? ((prevAsst.content ?? "") + (currAsst.content ? "\n" + currAsst.content : ""))
+      const prevText = typeof prevAsst.content === "string"
+        ? prevAsst.content
+        : Array.isArray(prevAsst.content)
+          ? contentToString(prevAsst.content as ContentPart[])
+          : "";
+      const currText = typeof currAsst.content === "string"
+        ? currAsst.content
+        : Array.isArray(currAsst.content)
+          ? contentToString(currAsst.content as ContentPart[])
+          : "";
+      const mergedContent = (prevText || currText)
+        ? (prevText + (currText ? "\n" + currText : ""))
         : null;
       const mergedToolCalls = [
         ...(prevAsst.tool_calls ?? []),

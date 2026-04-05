@@ -33,16 +33,19 @@ export function partitionToolCalls(
 ): Batch[] {
   return toolCalls.reduce<Batch[]>((batches, tc) => {
     let parsedArgs: Record<string, unknown> = {};
+    let jsonMalformed = false;
     try {
       parsedArgs = JSON.parse(tc.function.arguments);
     } catch {
-      // malformed JSON — treat as not concurrency-safe
+      jsonMalformed = true;
     }
 
     const tool = getTool(tc.function.name);
-    const isConcurrencySafe = tool
-      ? resolveToolFlag(tool.isConcurrencySafe, parsedArgs)
-      : false;
+    const isConcurrencySafe = jsonMalformed
+      ? false
+      : tool
+        ? resolveToolFlag(tool.isConcurrencySafe, parsedArgs)
+        : false;
 
     const item = { toolCall: tc, parsedArgs };
 

@@ -446,13 +446,15 @@ export class Thread {
 
       while (!signal.aborted) {
         // --- Pre-call compaction pipeline ---
+        // Apply budget to a snapshot so the canonical this.messages is not mutated
+        let messagesForApi: ChatMessage[] = this.messages;
         if (this.config.toolResultBudget?.enabled) {
           const budgetResult = enforceToolResultBudget(
-            this.messages,
+            [...this.messages],
             this.config.toolResultBudget,
             this.budgetState,
           );
-          this.messages = budgetResult.messages;
+          messagesForApi = budgetResult.messages;
           this.budgetState = budgetResult.state;
           this.microcompactTokensFreed += budgetResult.tokensFreed;
           for (const entry of budgetResult.truncatedEntries) {
@@ -559,7 +561,7 @@ export class Thread {
 
         const chatParams = {
           model: this.model,
-          messages: this.messages,
+          messages: messagesForApi,
           tools: sortedToolDefs,
           system: systemPrompt,
           max_tokens: currentMaxTokens,
@@ -920,12 +922,13 @@ export class Thread {
         for (const tc of accumulatedToolCalls.values()) {
           if (tc.malformedJson) {
             malformedToolCalls.push({ id: tc.id, name: tc.name });
+          } else {
+            toolCalls.push({
+              id: tc.id,
+              type: "function" as const,
+              function: { name: tc.name, arguments: tc.arguments },
+            });
           }
-          toolCalls.push({
-            id: tc.id,
-            type: "function" as const,
-            function: { name: tc.name, arguments: tc.arguments },
-          });
         }
 
         const assistantMsg: AssistantMessage = {
@@ -1352,6 +1355,8 @@ export class Thread {
               await storage.appendContentReplacement(sessionId, batchSpilledRecords);
             }
           }
+
+          if (signal.aborted) break;
 
           if (touchedFilePaths.length > 0) {
             let needsRebuild = false;

@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import type { Tool, ToolContext } from "../tools/types.js";
 import type { AIProvider } from "../providers/types.js";
 import type { ChatMessage } from "../session/types.js";
@@ -152,9 +153,9 @@ export async function resolvePermission(
     if (toolResult.behavior === "ask") {
       const isSafetyCheck = toolResult.reason === "safetyCheck";
       const isInteractive = !!tool.requiresUserInteraction;
-      const isContentSpecificRule = toolResult.reason === "rule";
 
-      if (isSafetyCheck || isInteractive || isContentSpecificRule || permCtx.mode !== "bypassPermissions") {
+      // Bypass-immune: always prompt regardless of mode
+      if (isSafetyCheck || isInteractive) {
         return {
           behavior: "ask",
           message: toolResult.message,
@@ -162,8 +163,14 @@ export async function resolvePermission(
           suggestions: toolResult.suggestions,
         };
       }
+
+      // bypassPermissions skips the tool ask; all other modes fall through
+      // so dontAsk can convert to deny and auto can run the classifier.
+      if (permCtx.mode !== "bypassPermissions") {
+        // toolResult.behavior === "ask" is preserved; modes below handle it
+      }
     }
-    // tool "allow" falls through to mode checks — do NOT short-circuit here
+    // tool "allow" / non-bypass "ask" falls through to mode checks
   }
 
   // Prefer any sanitized input the tool produced (e.g. resolved paths),
@@ -172,7 +179,7 @@ export async function resolvePermission(
   const effectiveInput =
     (toolResult?.behavior === "allow" && toolResult.updatedInput)
       ? toolResult.updatedInput
-      : (toolResult?.behavior === "passthrough" ? input : input);
+      : input;
 
   // 3b. Interactive tool guard (bypass-immune)
   if (tool.requiresUserInteraction && permCtx.mode === "bypassPermissions") {
@@ -270,6 +277,7 @@ export async function resolvePermission(
       };
     }
 
+    opts?.denialTracker?.recordSuccess();
     return {
       behavior: "allow",
       updatedInput: effectiveInput,
@@ -330,6 +338,16 @@ export async function resolvePermission(
     };
   }
 
+  // If tool raised ask and no mode overrode it, surface the tool's ask
+  if (toolResult?.behavior === "ask") {
+    return {
+      behavior: "ask",
+      message: toolResult.message,
+      reason: toolResult.reason ?? "tool",
+      suggestions: toolResult.suggestions,
+    };
+  }
+
   // 6. Fallback: passthrough → ask
   const message =
     toolResult?.behavior === "passthrough"
@@ -369,6 +387,8 @@ function extractContentHint(
  * prompt regardless of permission mode (bypass-immune safety check).
  */
 export function isDangerousPath(filePath: string): boolean {
-  const normalized = filePath.replace(/^\/+/, "");
-  return DANGEROUS_PATH_PATTERNS.some((p) => p.test(normalized));
+  const resolved = path.resolve(filePath);
+  const relative = path.relative(process.cwd(), resolved);
+  const candidate = relative.startsWith("..") ? resolved.replace(/^\/+/, "") : relative;
+  return DANGEROUS_PATH_PATTERNS.some((p) => p.test(candidate));
 }

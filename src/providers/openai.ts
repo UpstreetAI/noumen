@@ -44,8 +44,11 @@ export class OpenAIProvider implements AIProvider {
       stream_options: { include_usage: true },
     };
 
-    if (isOSeries && params.thinking?.type === "enabled") {
-      (createParams as unknown as Record<string, unknown>).reasoning_effort = "high";
+    if (isOSeries) {
+      (createParams as unknown as Record<string, unknown>).max_completion_tokens = params.max_tokens;
+      if (params.thinking?.type === "enabled") {
+        (createParams as unknown as Record<string, unknown>).reasoning_effort = "high";
+      }
     } else {
       createParams.max_tokens = params.max_tokens;
       createParams.temperature = params.temperature;
