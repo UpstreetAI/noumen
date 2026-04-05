@@ -39,7 +39,7 @@ function MascotOverlay({
         <div className="absolute inset-0 rounded-2xl bg-gradient-to-t from-[var(--color-accent-blue-dim)] to-transparent opacity-40 mix-blend-overlay" />
       </div>
       <p className="mt-8 font-mono text-xs text-[var(--color-text-tertiary)] tracking-widest uppercase">
-        the serpent sees you
+        the lisk sees you
       </p>
     </div>,
     document.body,
