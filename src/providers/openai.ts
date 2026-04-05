@@ -97,6 +97,7 @@ export class OpenAIProvider implements AIProvider {
           delta: {
             role: c.delta.role as "assistant" | undefined,
             content: c.delta.content,
+            thinking_content: (c.delta as Record<string, unknown>).reasoning_content as string | undefined,
             tool_calls: c.delta.tool_calls?.map((tc) => ({
               index: tc.index,
               id: tc.id,

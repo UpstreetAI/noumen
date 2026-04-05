@@ -23,7 +23,7 @@ const DANGEROUS_PATH_PATTERNS = [
   /^\.git\/config$/,
   /^\.git\/objects\//,
   /^\.git\/refs\//,
-  /^\.git\/HEAD$/,
+  /^\.git\/head$/,
   /(?:^|\/)\.bashrc$/,
   /(?:^|\/)\.bash_profile$/,
   /(?:^|\/)\.zshrc$/,
@@ -32,6 +32,12 @@ const DANGEROUS_PATH_PATTERNS = [
   /(?:^|\/)\.ssh\//,
   /(?:^|\/)\.env$/,
   /(?:^|\/)\.npmrc$/,
+  /(?:^|\/)\.vscode\//,
+  /(?:^|\/)\.idea\//,
+  /(?:^|\/)\.claude\//,
+  /(?:^|\/)\.gitconfig$/,
+  /(?:^|\/)\.gitmodules$/,
+  /(?:^|\/)\.mcp\.json$/,
 ];
 
 /**
@@ -412,6 +418,6 @@ function extractContentHint(
 export function isDangerousPath(filePath: string): boolean {
   const resolved = path.resolve(filePath);
   const relative = path.relative(process.cwd(), resolved);
-  const candidate = relative.startsWith("..") ? resolved.replace(/^\/+/, "") : relative;
+  const candidate = (relative.startsWith("..") ? resolved.replace(/^\/+/, "") : relative).toLowerCase();
   return DANGEROUS_PATH_PATTERNS.some((p) => p.test(candidate));
 }

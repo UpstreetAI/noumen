@@ -49,12 +49,16 @@ export interface AssistantMessage {
   thinking_content?: string;
   /** Thinking signature required by Anthropic to verify thinking blocks across turns. */
   thinking_signature?: string;
+  /** Opaque data for Anthropic redacted_thinking blocks — must be echoed back verbatim. */
+  redacted_thinking_data?: string;
 }
 
 export interface ToolResultMessage {
   role: "tool";
   tool_call_id: string;
   content: string | ContentPart[];
+  /** When true, signals to the provider that this tool result is an error. */
+  isError?: boolean;
 }
 
 export interface SystemMessage {

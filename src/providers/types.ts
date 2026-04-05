@@ -30,6 +30,8 @@ export interface ChatStreamDelta {
   content?: string | null;
   thinking_content?: string | null;
   thinking_signature?: string | null;
+  /** Opaque data payload for Anthropic redacted_thinking blocks. */
+  redacted_thinking_data?: string | null;
   tool_calls?: Array<{
     index: number;
     id?: string;

@@ -22,6 +22,8 @@ export type { SandboxConfig } from "./sandboxed-local-computer.js";
 export interface Sandbox {
   fs: VirtualFs;
   computer: VirtualComputer;
+  /** Optional cleanup — called by Agent.close() to tear down OS-level sandbox state. */
+  dispose?(): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------

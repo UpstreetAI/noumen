@@ -57,6 +57,11 @@ export const grepTool: Tool = {
       "--color=never",
       "--hidden",
       "--glob", "'!.git'",
+      "--glob", "'!.svn'",
+      "--glob", "'!.hg'",
+      "--glob", "'!.bzr'",
+      "--glob", "'!.jj'",
+      "--glob", "'!.sl'",
       "--max-columns", "500",
       `--max-count=${MAX_MATCHES}`,
     ];

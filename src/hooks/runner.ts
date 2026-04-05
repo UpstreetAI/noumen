@@ -134,6 +134,12 @@ export async function runPostToolUseHooks(
         merged.preventContinuation = output.preventContinuation;
       }
     } catch (err) {
+      if (hook.blocking) {
+        return {
+          updatedOutput: `Blocking hook error: ${err instanceof Error ? err.message : String(err)}`,
+          preventContinuation: true,
+        };
+      }
       console.warn(`[noumen/hooks] PostToolUse hook failed:`, err instanceof Error ? err.message : err);
     }
   }

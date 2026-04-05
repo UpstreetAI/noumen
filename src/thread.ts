@@ -324,16 +324,6 @@ export class Thread {
             };
           }
 
-          // Inject continuation prompt for interrupted tool turns
-          if (payload.interruption.kind === "interrupted_tool") {
-            const continuationMsg: ChatMessage = {
-              role: "user",
-              content: "Continue from where you left off.",
-            };
-            this.messages.push(continuationMsg);
-            await this.storage.appendMessage(this.sessionId, continuationMsg);
-          }
-
           this.resumeRequested = false;
           yield { type: "session_resumed", sessionId: this.sessionId, messageCount: this.messages.length };
         } else {
@@ -518,6 +508,7 @@ export class Thread {
               event: "PostCompact",
               sessionId: this.sessionId,
             });
+            continue; // re-enter loop to recompute messagesForApi from compacted this.messages
           } catch (compactErr) {
             recordAutoCompactFailure(this.autoCompactTracking);
             const error = compactErr instanceof Error
@@ -542,6 +533,7 @@ export class Thread {
         const accumulatedContent: string[] = [];
         const accumulatedThinking: string[] = [];
         let accumulatedThinkingSignature: string | undefined;
+        let accumulatedRedactedThinkingData: string | undefined;
         const accumulatedToolCalls = new Map<
           number,
           { id: string; name: string; arguments: string; complete: boolean; malformedJson?: boolean }
@@ -752,6 +744,10 @@ export class Thread {
               accumulatedThinkingSignature = (accumulatedThinkingSignature ?? "") + delta.thinking_signature;
             }
 
+            if (delta.redacted_thinking_data) {
+              accumulatedRedactedThinkingData = (accumulatedRedactedThinkingData ?? "") + delta.redacted_thinking_data;
+            }
+
             if (delta.content) {
               accumulatedContent.push(delta.content);
               yield { type: "text_delta", text: delta.content };
@@ -959,6 +955,7 @@ export class Thread {
           ...(allToolCalls.length > 0 ? { tool_calls: allToolCalls } : {}),
           ...(thinkingContent ? { thinking_content: thinkingContent } : {}),
           ...(accumulatedThinkingSignature ? { thinking_signature: accumulatedThinkingSignature } : {}),
+          ...(accumulatedRedactedThinkingData ? { redacted_thinking_data: accumulatedRedactedThinkingData } : {}),
         };
 
         this.messages.push(assistantMsg);
@@ -971,6 +968,7 @@ export class Thread {
             role: "tool",
             tool_call_id: malformed.id,
             content: `Error: Invalid tool call arguments for ${malformed.name} (malformed JSON)`,
+            isError: true,
           };
           this.messages.push(errorResult);
           await this.storage.appendMessage(this.sessionId, errorResult);
@@ -1068,6 +1066,7 @@ export class Thread {
                 role: "tool",
                 tool_call_id: execResult.toolCall.id,
                 content: resultContent,
+                ...(execResult.result.isError ? { isError: true } : {}),
               };
               messages.push(toolResultMsg);
               await storage.appendMessage(sessionId, toolResultMsg);
@@ -1378,6 +1377,7 @@ export class Thread {
               role: "tool",
               tool_call_id: tc.id,
               content: resultContent,
+              ...(result.isError ? { isError: true } : {}),
             };
 
             messages.push(toolResultMsg);

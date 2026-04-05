@@ -155,6 +155,12 @@ export function convertAnthropicMessages(
         }
         content.push(thinkingBlock);
       }
+      if (msg.redacted_thinking_data) {
+        content.push({
+          type: "redacted_thinking",
+          data: msg.redacted_thinking_data,
+        });
+      }
       if (msg.content && (typeof msg.content !== "string" || msg.content.trim() !== "")) {
         content.push({ type: "text", text: msg.content });
       }
@@ -178,8 +184,13 @@ export function convertAnthropicMessages(
         content.push({ type: "text", text: "" });
       }
       if (addCache && caching && content.length > 0) {
-        const lastBlock = content[content.length - 1] as Record<string, unknown>;
-        lastBlock.cache_control = buildCacheControlBlock(cacheConfig);
+        for (let i = content.length - 1; i >= 0; i--) {
+          const block = content[i] as Record<string, unknown>;
+          if (block.type !== "thinking" && block.type !== "redacted_thinking") {
+            block.cache_control = buildCacheControlBlock(cacheConfig);
+            break;
+          }
+        }
       }
       result.push({ role: "assistant", content });
     } else if (msg.role === "tool") {
@@ -193,6 +204,9 @@ export function convertAnthropicMessages(
         tool_use_id: msg.tool_call_id,
         content: toolContent,
       };
+      if (msg.isError) {
+        toolResultBlock.is_error = true;
+      }
       if (addCache && caching) {
         toolResultBlock.cache_control = buildCacheControlBlock(cacheConfig);
       }
@@ -392,7 +406,8 @@ export async function* streamAnthropicChat(
       if (block.type === "thinking") {
         yield makeChunk(chunkId, model, { thinking_content: "" });
       } else if (block.type === "redacted_thinking") {
-        yield makeChunk(chunkId, model, { thinking_content: "" });
+        const redactedData = (block as Record<string, unknown>).data as string | undefined;
+        yield makeChunk(chunkId, model, { redacted_thinking_data: redactedData ?? "" });
       } else if (block.type === "text") {
         yield makeChunk(chunkId, model, { content: "" });
       } else if (block.type === "tool_use") {

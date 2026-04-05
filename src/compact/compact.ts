@@ -121,10 +121,13 @@ export async function compactConversation(
     role: "user",
     content: `[Conversation Summary]\n\n${summaryText}`,
   };
-  // Write summary before boundary so a crash between the two is recoverable:
-  // on load, a boundary with no summary after it falls back to the prior boundary.
-  await storage.appendSummary(sessionId, summaryMessage);
+  // Write boundary first, then summary, so the summary lands in the
+  // active-entries window (everything after the last boundary).
+  // Crash safety: if we crash after the boundary but before the summary,
+  // the orphaned-boundary validator in loadMessages skips it and falls
+  // back to the prior boundary.
   await storage.appendCompactBoundary(sessionId);
+  await storage.appendSummary(sessionId, summaryMessage);
 
   // Re-append session metadata (custom title) after the boundary so it stays
   // discoverable in the active-entries window.

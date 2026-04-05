@@ -172,6 +172,7 @@ export class Agent {
   private resolvedProvider: AIProvider | null = null;
   private fs: VirtualFs;
   private computer: VirtualComputer;
+  private sandbox: import("./virtual/sandbox.js").Sandbox;
   private sessionDir: string;
   private skills: SkillDefinition[];
   private skillsPaths: string[];
@@ -235,6 +236,7 @@ export class Agent {
     const effectiveCwd = opts.cwd ?? opts.options?.cwd ?? process.cwd();
     const resolvedSandbox = opts.sandbox ?? UnsandboxedLocal({ cwd: effectiveCwd });
 
+    this.sandbox = resolvedSandbox;
     this.fs = resolvedSandbox.fs;
     this.computer = resolvedSandbox.computer;
     this.sessionDir = opts.options?.sessionDir ?? ".noumen/sessions";
@@ -809,6 +811,9 @@ export class Agent {
           this.lspToolRef = null;
         }),
       );
+    }
+    if (this.sandbox.dispose) {
+      tasks.push(this.sandbox.dispose());
     }
     await Promise.all(tasks);
     this.initPromise = null;

@@ -9,6 +9,7 @@ export default defineConfig({
     "src/providers/openrouter.ts",
     "src/providers/bedrock.ts",
     "src/providers/vertex.ts",
+    "src/providers/ollama.ts",
     "src/mcp/index.ts",
     "src/lsp/index.ts",
     "src/server/index.ts",

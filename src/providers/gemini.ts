@@ -266,6 +266,9 @@ export class GeminiProvider implements AIProvider {
         }
       } else if (msg.role === "assistant") {
         const parts: GeminiPart[] = [];
+        if (msg.thinking_content) {
+          parts.push({ text: msg.thinking_content, thought: true });
+        }
         if (msg.content) {
           parts.push({ text: msg.content });
         }

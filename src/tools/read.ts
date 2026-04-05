@@ -81,6 +81,15 @@ export const readFileTool: Tool = {
           isError: true,
         };
       }
+      if (
+        resolved.startsWith("/proc/") &&
+        (resolved.endsWith("/fd/0") || resolved.endsWith("/fd/1") || resolved.endsWith("/fd/2"))
+      ) {
+        return {
+          content: `Error: Cannot read process file descriptor ${filePath}.`,
+          isError: true,
+        };
+      }
 
       const ext = path.extname(filePath).toLowerCase();
 

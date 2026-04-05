@@ -1,3 +1,4 @@
+import * as nodePath from "node:path";
 import type { Tool, ToolResult, ToolContext } from "./types.js";
 import { WRITE_PROMPT } from "./prompts/write.js";
 import { isDangerousPath } from "../permissions/pipeline.js";
@@ -60,6 +61,11 @@ export const writeFileTool: Tool = {
             isError: true,
           };
         }
+      }
+
+      const dir = nodePath.dirname(filePath);
+      if (dir && dir !== "." && dir !== "/") {
+        await ctx.fs.mkdir(dir, { recursive: true }).catch(() => {});
       }
 
       await ctx.fs.writeFile(filePath, content);
