@@ -56,6 +56,10 @@ export class E2BFs implements VirtualFs {
     await this.sandbox.files.write(this.resolvePath(path), content);
   }
 
+  /**
+   * @warning Not atomic. Concurrent appends may lose data due to
+   * read-then-write TOCTOU. The E2B SDK does not expose an append primitive.
+   */
   async appendFile(path: string, content: string): Promise<void> {
     let existing = "";
     try {

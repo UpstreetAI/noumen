@@ -94,7 +94,7 @@ export class DockerFs implements VirtualFs {
       const { exitCode, stderr } = await this.exec([
         "bash",
         "-c",
-        `echo '${encoded}' | base64 -d > ${shellEscape(resolved)}`,
+        `echo ${shellEscape(encoded)} | base64 -d > ${shellEscape(resolved)}`,
       ]);
       if (exitCode !== 0) {
         throw new Error(`DockerFs writeFile failed: ${stderr.trim()}`);

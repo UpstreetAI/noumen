@@ -21,7 +21,10 @@ import {
 import type { HookDefinition } from "../hooks/types.js";
 import { classifyError, isRetryable } from "../retry/classify.js";
 import { DEFAULT_RETRY_CONFIG } from "../retry/types.js";
-import { isPrivateHost } from "../tools/web-fetch.js";
+import { isPrivateHost, isPrivateIP } from "../tools/web-fetch.js";
+import { resolvePermission, isDangerousPath } from "../permissions/pipeline.js";
+import type { PermissionContext } from "../permissions/types.js";
+import { withRetry, CannotRetryError } from "../retry/engine.js";
 
 let fs: MockFs;
 let computer: MockComputer;
@@ -529,5 +532,150 @@ describe("ToolContext receives signal", () => {
 
     expect(receivedSignal).toBeDefined();
     expect(receivedSignal).toBeInstanceOf(AbortSignal);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Comparison fix: acceptEdits returns "ask" not "deny" for out-of-cwd paths
+// ---------------------------------------------------------------------------
+describe("acceptEdits working-directory enforcement", () => {
+  it("returns ask (not deny) for paths outside working directories", async () => {
+    const tool = {
+      name: "WriteFile",
+      description: "Write a file",
+      parameters: { type: "object" as const, properties: { file_path: { type: "string" } } },
+      async call() { return { content: "ok" }; },
+    };
+    const permCtx: PermissionContext = {
+      mode: "acceptEdits",
+      rules: [],
+      workingDirectories: ["/home/user/project"],
+    };
+    const toolCtx = { fs: new MockFs(), computer: new MockComputer(), cwd: "/home/user/project" };
+
+    const decision = await resolvePermission(
+      tool,
+      { file_path: "/etc/outside/file.txt" },
+      toolCtx,
+      permCtx,
+    );
+
+    expect(decision.behavior).toBe("ask");
+    expect(decision.reason).toBe("workingDirectory");
+  });
+
+  it("allows paths inside working directories in acceptEdits mode", async () => {
+    const tool = {
+      name: "WriteFile",
+      description: "Write a file",
+      parameters: { type: "object" as const, properties: { file_path: { type: "string" } } },
+      async call() { return { content: "ok" }; },
+    };
+    const permCtx: PermissionContext = {
+      mode: "acceptEdits",
+      rules: [],
+      workingDirectories: ["/home/user/project"],
+    };
+    const toolCtx = { fs: new MockFs(), computer: new MockComputer(), cwd: "/home/user/project" };
+
+    const decision = await resolvePermission(
+      tool,
+      { file_path: "/home/user/project/src/file.txt" },
+      toolCtx,
+      permCtx,
+    );
+
+    expect(decision.behavior).toBe("allow");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Comparison fix: retry engine totalAttempts budget
+// ---------------------------------------------------------------------------
+describe("retry engine totalAttempts budget", () => {
+  it("does not exceed maxRetries total attempts even after fallback", async () => {
+    let callCount = 0;
+
+    async function* mockStream(): AsyncIterable<ChatStreamChunk> {
+      callCount++;
+      throw Object.assign(new Error("Overloaded"), { status: 529 });
+    }
+
+    const gen = withRetry(
+      () => mockStream(),
+      {
+        ...DEFAULT_RETRY_CONFIG,
+        model: "primary",
+        fallbackModel: "fallback",
+        maxConsecutiveOverloaded: 2,
+        maxRetries: 6,
+        baseDelayMs: 1,
+      },
+    );
+
+    const events: StreamEvent[] = [];
+    try {
+      let result = await gen.next();
+      while (!result.done) {
+        events.push(result.value);
+        result = await gen.next();
+      }
+    } catch {
+      // expected exhaustion
+    }
+
+    expect(callCount).toBeLessThanOrEqual(7);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Comparison fix: .noumen/ in dangerous path patterns
+// ---------------------------------------------------------------------------
+describe("dangerous path patterns include .noumen/", () => {
+  it("detects .noumen/ as dangerous", () => {
+    expect(isDangerousPath(".noumen/config.json")).toBe(true);
+  });
+
+  it("detects .noumen/sessions/ as dangerous", () => {
+    expect(isDangerousPath(".noumen/sessions/abc.jsonl")).toBe(true);
+  });
+
+  it("still detects .claude/ as dangerous", () => {
+    expect(isDangerousPath(".claude/settings.json")).toBe(true);
+  });
+
+  it("still detects .ssh/ as dangerous", () => {
+    expect(isDangerousPath(".ssh/id_rsa")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Comparison fix: isPrivateIP for DNS rebinding prevention
+// ---------------------------------------------------------------------------
+describe("isPrivateIP for DNS rebinding", () => {
+  it("blocks loopback IPs", () => {
+    expect(isPrivateIP("127.0.0.1")).toBe(true);
+    expect(isPrivateIP("127.0.0.2")).toBe(true);
+  });
+
+  it("blocks RFC-1918 ranges", () => {
+    expect(isPrivateIP("10.0.0.1")).toBe(true);
+    expect(isPrivateIP("172.16.0.1")).toBe(true);
+    expect(isPrivateIP("192.168.1.1")).toBe(true);
+  });
+
+  it("blocks link-local", () => {
+    expect(isPrivateIP("169.254.169.254")).toBe(true);
+  });
+
+  it("blocks IPv6 loopback", () => {
+    expect(isPrivateIP("::1")).toBe(true);
+    expect(isPrivateIP("[::1]")).toBe(true);
+  });
+
+  it("allows public IPs", () => {
+    expect(isPrivateIP("8.8.8.8")).toBe(false);
+    expect(isPrivateIP("1.1.1.1")).toBe(false);
+    expect(isPrivateIP("93.184.216.34")).toBe(false);
   });
 });

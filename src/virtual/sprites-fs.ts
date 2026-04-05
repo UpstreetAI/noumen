@@ -113,6 +113,10 @@ export class SpritesFs implements VirtualFs {
     }
   }
 
+  /**
+   * @warning Not atomic. Concurrent appends may lose data due to
+   * read-then-write TOCTOU. The Sprites API does not expose an append primitive.
+   */
   async appendFile(filePath: string, content: string): Promise<void> {
     let existing = "";
     try {

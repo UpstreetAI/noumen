@@ -35,6 +35,7 @@ const DANGEROUS_PATH_PATTERNS = [
   /(?:^|\/)\.vscode\//,
   /(?:^|\/)\.idea\//,
   /(?:^|\/)\.claude\//,
+  /(?:^|\/)\.noumen\//,
   /(?:^|\/)\.gitconfig$/,
   /(?:^|\/)\.gitmodules$/,
   /(?:^|\/)\.mcp\.json$/,
@@ -120,22 +121,7 @@ export async function resolvePermission(
     };
   }
 
-  // 2b. Working directory enforcement for file paths
-  if (permCtx.workingDirectories.length > 0) {
-    const filePath =
-      typeof input.file_path === "string" ? input.file_path
-      : typeof input.path === "string" ? input.path
-      : undefined;
-    if (filePath && !isPathInWorkingDirectories(filePath, permCtx.workingDirectories)) {
-      return {
-        behavior: "deny",
-        message: `Path "${filePath}" is outside configured working directories.`,
-        reason: "workingDirectory",
-      };
-    }
-  }
-
-  // 2c. Dangerous path safety check (bypass-immune)
+  // 2b. Dangerous path safety check (bypass-immune)
   const dangerousFilePath =
     typeof input.file_path === "string" ? input.file_path
     : typeof input.path === "string" ? input.path
@@ -370,6 +356,22 @@ export async function resolvePermission(
       updatedInput: effectiveInput,
       reason: "rule",
     };
+  }
+
+  // Working directory enforcement (after mode-specific blocks so acceptEdits
+  // can return "ask" instead of hard "deny").
+  if (permCtx.workingDirectories.length > 0) {
+    const filePath =
+      typeof input.file_path === "string" ? input.file_path
+      : typeof input.path === "string" ? input.path
+      : undefined;
+    if (filePath && !isPathInWorkingDirectories(filePath, permCtx.workingDirectories)) {
+      return {
+        behavior: "ask",
+        message: `Path "${filePath}" is outside configured working directories.`,
+        reason: "workingDirectory",
+      };
+    }
   }
 
   // dontAsk mode: deny anything that would prompt (reads already allowed above)

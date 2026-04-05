@@ -1,3 +1,4 @@
+import * as dns from "node:dns";
 import type { Tool, ToolResult, ToolContext } from "./types.js";
 import { WEB_FETCH_PROMPT } from "./prompts/web-fetch.js";
 
@@ -6,16 +7,14 @@ const FETCH_TIMEOUT_MS = 30_000;
 const MAX_OUTPUT_CHARS = 100_000;
 const MAX_REDIRECTS = 5;
 
-export function isPrivateHost(hostname: string): boolean {
-  if (
-    hostname === "localhost" ||
-    hostname === "[::1]" ||
-    hostname === "0.0.0.0"
-  ) {
-    return true;
-  }
+export function isPrivateIP(ip: string): boolean {
+  const stripped = ip.replace(/^\[|\]$/g, "");
 
-  const parts = hostname.split(".");
+  if (stripped === "::1" || stripped === "0.0.0.0" || stripped === "::") return true;
+
+  if (stripped.startsWith("fe80:") || stripped.startsWith("::ffff:")) return true;
+
+  const parts = stripped.split(".");
   if (parts.length === 4 && parts.every((p) => /^\d+$/.test(p))) {
     const [a, b] = parts.map(Number);
     if (a === 127) return true;
@@ -26,10 +25,54 @@ export function isPrivateHost(hostname: string): boolean {
     if (a === 0) return true;
   }
 
+  return false;
+}
+
+export function isPrivateHost(hostname: string): boolean {
+  if (
+    hostname === "localhost" ||
+    hostname === "[::1]" ||
+    hostname === "0.0.0.0"
+  ) {
+    return true;
+  }
+
+  if (isPrivateIP(hostname)) return true;
+
   if (hostname.startsWith("fe80:") || hostname.startsWith("[fe80:")) return true;
-  if (hostname === "::1") return true;
 
   return false;
+}
+
+/**
+ * Resolve a hostname via DNS and check that none of the resolved IPs are
+ * private. Prevents DNS rebinding attacks where a public hostname resolves
+ * to a loopback or RFC-1918 address.
+ */
+export async function checkDnsRebinding(hostname: string): Promise<string | null> {
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(hostname) || hostname.includes(":")) {
+    return isPrivateIP(hostname) ? hostname : null;
+  }
+
+  try {
+    const addrs = await dns.promises.resolve4(hostname);
+    for (const addr of addrs) {
+      if (isPrivateIP(addr)) return addr;
+    }
+  } catch {
+    // resolve4 failed — try resolve6
+  }
+
+  try {
+    const addrs6 = await dns.promises.resolve6(hostname);
+    for (const addr of addrs6) {
+      if (isPrivateIP(addr)) return addr;
+    }
+  } catch {
+    // no AAAA records either — allow (DNS may just not resolve yet)
+  }
+
+  return null;
 }
 
 export const webFetchTool: Tool = {
@@ -75,6 +118,11 @@ export const webFetchTool: Tool = {
       return { content: `Blocked: "${parsedUrl.hostname}" resolves to a private/internal address`, isError: true };
     }
 
+    const rebindIP = await checkDnsRebinding(parsedUrl.hostname);
+    if (rebindIP) {
+      return { content: `Blocked: "${parsedUrl.hostname}" resolves to private address ${rebindIP}`, isError: true };
+    }
+
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -98,6 +146,11 @@ export const webFetchTool: Tool = {
           if (isPrivateHost(redirectUrl.hostname)) {
             clearTimeout(timeoutId);
             return { content: `Blocked: redirect to private/internal address "${redirectUrl.hostname}"`, isError: true };
+          }
+          const redirectRebind = await checkDnsRebinding(redirectUrl.hostname);
+          if (redirectRebind) {
+            clearTimeout(timeoutId);
+            return { content: `Blocked: redirect target "${redirectUrl.hostname}" resolves to private address ${redirectRebind}`, isError: true };
           }
           currentUrl = redirectUrl.toString();
           continue;

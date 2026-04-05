@@ -140,7 +140,7 @@ export class NoumenServer {
     this.ensureIdleReaper();
 
     return new Promise<void>((resolve, reject) => {
-      const host = this.options.host ?? "0.0.0.0";
+      const host = this.options.host ?? "127.0.0.1";
       this.httpServer!.listen(this.options.port, host, () => resolve());
       this.httpServer!.once("error", reject);
     });

@@ -355,7 +355,7 @@ describe("baseDelayMs parameter", () => {
 });
 
 describe("Attempt counter reset on fallback", () => {
-  it("gives fallback model full retry budget after switching", async () => {
+  it("gives fallback model retries within the global budget", async () => {
     let callCount = 0;
     const models: string[] = [];
 
@@ -363,14 +363,11 @@ describe("Attempt counter reset on fallback", () => {
       callCount++;
       models.push(ctx.model);
       if (models.length <= 3) {
-        // First 3 calls: overloaded on primary
         throw Object.assign(new Error("Overloaded"), { status: 529 });
       }
       if (models.length === 4) {
-        // First call on fallback: also fails with retryable
         throw Object.assign(new Error("Rate limited"), { status: 429 });
       }
-      // Second call on fallback succeeds
       yield textChunk("success");
       yield stopChunk();
     }
@@ -382,7 +379,7 @@ describe("Attempt counter reset on fallback", () => {
         model: "primary",
         fallbackModel: "fallback",
         maxConsecutiveOverloaded: 3,
-        maxRetries: 3,
+        maxRetries: 5,
         baseDelayMs: 1,
       },
     );
@@ -392,8 +389,9 @@ describe("Attempt counter reset on fallback", () => {
       result = await gen.next();
     }
 
-    // Should have: 3 primary overloaded + 1 fallback 429 + 1 fallback success = 5
+    // 3 primary overloaded + 1 fallback 429 + 1 fallback success = 5 total
     expect(callCount).toBe(5);
+    expect(callCount).toBeLessThanOrEqual(6);
     expect(models[3]).toBe("fallback");
     expect(models[4]).toBe("fallback");
   });

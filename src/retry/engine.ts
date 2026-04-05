@@ -40,13 +40,15 @@ export async function* withRetry(
   let consecutiveOverloaded = 0;
   let fallbackUsed = false;
   let lastError: unknown;
+  let totalAttempts = 0;
 
   for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
     if (options.signal?.aborted) {
       throw new DOMException("Aborted", "AbortError");
     }
 
-    retryContext.attempt = attempt;
+    totalAttempts++;
+    retryContext.attempt = totalAttempts;
 
     try {
       const stream = operation(retryContext);
@@ -107,7 +109,7 @@ export async function* withRetry(
 
           yield {
             type: "retry_attempt",
-            attempt,
+            attempt: totalAttempts,
             maxRetries,
             delayMs: 0,
             error: new Error(
@@ -115,6 +117,8 @@ export async function* withRetry(
             ),
           };
 
+          // Reset backoff counter for the fallback model but totalAttempts
+          // keeps growing to enforce the global budget.
           attempt = Math.max(attempt - Math.floor(maxRetries / 2), 1);
           continue;
         }
@@ -126,11 +130,11 @@ export async function* withRetry(
         throw new CannotRetryError(error, retryContext);
       }
 
-      if (attempt > maxRetries) {
+      if (totalAttempts > maxRetries) {
         const exhaustedError = error instanceof Error ? error : new Error(String(error));
         yield {
           type: "retry_exhausted",
-          attempts: attempt,
+          attempts: totalAttempts,
           error: exhaustedError,
         };
         throw new CannotRetryError(error, retryContext);
@@ -145,11 +149,11 @@ export async function* withRetry(
 
       const retryError = error instanceof Error ? error : new Error(String(error));
 
-      options.onRetry?.(attempt, retryError, delayMs);
+      options.onRetry?.(totalAttempts, retryError, delayMs);
 
       yield {
         type: "retry_attempt",
-        attempt,
+        attempt: totalAttempts,
         maxRetries,
         delayMs,
         error: retryError,
