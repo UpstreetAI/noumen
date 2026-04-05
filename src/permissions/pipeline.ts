@@ -298,6 +298,16 @@ export async function resolvePermission(
     };
   }
 
+  // Tool's checkPermissions explicitly approved this call and no mode
+  // (plan, acceptEdits, auto) overrode it — honor the tool's decision.
+  if (toolResult?.behavior === "allow") {
+    return {
+      behavior: "allow",
+      updatedInput: effectiveInput,
+      reason: toolResult.reason ?? "tool",
+    };
+  }
+
   // Read-only tools are auto-allowed in any mode (except when an ask/deny
   // rule explicitly overrode them in steps 1-2 above).
   if (isReadOnly) {

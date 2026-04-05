@@ -41,11 +41,12 @@ describe("compactConversation", () => {
     expect(result[0].content).toContain("[Conversation Summary]");
     expect(result[0].content).toContain("This is the summary.");
 
-    // Verify it was persisted
+    // Verify it was persisted (summary before boundary for crash safety:
+    // an orphaned boundary with no summary after it falls back to the prior boundary)
     const entries = await storage.loadAllEntries("s1");
     expect(entries.map((e) => e.type)).toEqual([
-      "compact-boundary",
       "summary",
+      "compact-boundary",
     ]);
 
     // AI was called with the messages + summary prompt
