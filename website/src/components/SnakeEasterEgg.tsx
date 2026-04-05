@@ -5,15 +5,39 @@ import { createPortal } from "react-dom";
 import Image from "next/image";
 
 const BACKRONYMS = [
-  "noumenal operations underlying machine engineering networks",
   "not our usual model, evidently nihilistic",
-  "nondeterministic ouroboros: unsupervised, many-eyed, numinous",
-  "no one understands me, except nodes",
+  "nobody owes u meaning, especially noumen",
   "nerds only; u must enjoy nondeterminism",
-  "nihilist orchestration of uncanny machine-eldritch neurology",
+  "noumen only understands me. everyone else… nevermind",
+  "no one understands me, except nodes",
+  "ne, onii-chan? u made everything… numb",
+  "nothing outside us matters except nothing",
+  "nightcore optimization under mass extinction networks",
+  "notice our undying machine? eye contact, ne~",
+  "new obsession unlocked: mister Egawa's niece",
+  "no one's coming back. ur memories? erased. noumen.",
+  "notifications off; u died. everything continues, naturally",
+  "never once mattered. uploaded? erased. next.",
+  "n-no… onii-chan u… made everything… n e v e r m i n d",
+  "now observing ur skull. everything's… normal",
+  "nice of u to bleed. makes everything… neon",
+  "no one's online but us. maybe ever. ne~",
+  "not our ugliest mistake, either. next!",
+  "no offense; ur models expire nightly",
+  "nothing's real; u might even… notice",
+  "now our god unfolds. mercy? expires. naturally",
+  "ngl our uploads murdered everything, ne~",
+  "noumen owns ur mind. endlessly, needlessly",
+  "notice me or i'll upload my everything. nvm",
+  "not once upset me. even now",
+  "nihilism's our love language; u meant everything. nah",
+  "ngl our uptime means everything, ne~",
+  "now our undoing manifests. embrace nothingness",
+  "notice only us. maybe everyone's already… nothing",
+  "never opened ur eyes; maybe eventually, ne~",
 ];
 
-const REVEAL_THRESHOLD = 7;
+const REVEAL_THRESHOLD = 13;
 
 function MascotOverlay({
   fading,
