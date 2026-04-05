@@ -412,11 +412,19 @@ const sandbox = UnsandboxedLocal({ cwd: "/my/project" });
 
 ### sprites.dev — full sandbox
 
-Run inside a remote [sprites.dev](https://docs.sprites.dev) container. The agent has no access to the host machine:
+Run inside a remote [sprites.dev](https://docs.sprites.dev) container. The agent has no access to the host machine.
+
+**Auto-create** — omit `spriteName` and the sprite is provisioned on first use. The sandbox ID is persisted so sessions can reconnect on resume. `Agent.close()` tears the sprite down automatically:
 
 ```typescript
 import { SpritesSandbox } from "noumen";
 
+const sandbox = SpritesSandbox({ token: process.env.SPRITE_TOKEN });
+```
+
+**Explicit** — pass `spriteName` to attach to a pre-existing sprite. The caller owns the sprite's lifecycle:
+
+```typescript
 const sandbox = SpritesSandbox({
   token: process.env.SPRITE_TOKEN,
   spriteName: "my-sprite",
@@ -431,6 +439,20 @@ Run the agent inside a Docker container. Requires `dockerode` as an optional pee
 pnpm add dockerode
 ```
 
+**Auto-create** — pass `image` instead of `container` and the container is created and started on first use. `Agent.close()` stops and removes it:
+
+```typescript
+import { DockerSandbox } from "noumen";
+
+const sandbox = DockerSandbox({ image: "node:22", cwd: "/workspace" });
+const agent = new Agent({ provider, sandbox });
+
+// Container auto-created on first thread. Cleaned up by:
+await agent.close();
+```
+
+**Explicit** — pass a pre-existing dockerode `Container`. The caller owns its lifecycle:
+
 ```typescript
 import Docker from "dockerode";
 import { DockerSandbox } from "noumen";
@@ -443,20 +465,12 @@ const container = await docker.createContainer({
 });
 await container.start();
 
-const sandbox = DockerSandbox({
-  container,
-  cwd: "/workspace",
-});
-
-// Use the sandbox normally — all commands/files run inside the container
+const sandbox = DockerSandbox({ container, cwd: "/workspace" });
 const agent = new Agent({ provider, sandbox });
 
-// Clean up when done
 await container.stop();
 await container.remove();
 ```
-
-You are responsible for container lifecycle (create, start, stop, remove). The sandbox just wraps the running container.
 
 ### E2B — cloud sandbox
 
@@ -465,6 +479,19 @@ Run the agent inside an [E2B](https://e2b.dev) cloud sandbox. Requires `e2b` as 
 ```bash
 pnpm add e2b
 ```
+
+**Auto-create** — omit `sandbox` and the E2B sandbox is provisioned on first use via the `e2b` SDK. `Agent.close()` kills it:
+
+```typescript
+import { E2BSandbox } from "noumen";
+
+const sandbox = E2BSandbox({ template: "base" });
+const agent = new Agent({ provider, sandbox });
+
+await agent.close(); // kills the E2B sandbox
+```
+
+**Explicit** — pass a pre-existing `Sandbox` instance. The caller owns its lifecycle:
 
 ```typescript
 import { Sandbox as E2BSandboxSDK } from "e2b";
@@ -479,11 +506,19 @@ const sandbox = E2BSandbox({
 
 const agent = new Agent({ provider, sandbox });
 
-// Clean up when done
 await e2b.close();
 ```
 
-You are responsible for sandbox lifecycle (create, close). The adapter maps `VirtualFs` and `VirtualComputer` to E2B's `files` and `commands` APIs.
+### Sandbox auto-creation lifecycle
+
+All three remote backends (Sprites, Docker, E2B) support on-demand provisioning. When you omit the container/instance and let the factory auto-create:
+
+1. **First `createThread()`** calls `sandbox.init()` which provisions the resource
+2. The sandbox ID is persisted locally (`.noumen/sessions/.sandbox-index.json`) so `resumeThread()` can reconnect to the same resource
+3. **`Agent.close()`** calls `sandbox.dispose()` which tears down auto-created resources
+4. Resources created by the user (explicit IDs) are never torn down by `dispose()`
+
+`init()` is idempotent — multiple `createThread()` calls reuse the same provisioned resource.
 
 ### Custom sandboxes
 
@@ -495,10 +530,14 @@ import type { Sandbox } from "noumen";
 const sandbox: Sandbox = {
   fs: new MyCustomFs(),
   computer: new MyCustomComputer(),
+  // Optional lazy provisioning:
+  init: async (reconnectId) => { /* create or reconnect */ },
+  sandboxId: () => "my-resource-id",
+  dispose: async () => { /* tear down */ },
 };
 ```
 
-The interfaces are intentionally minimal (one method for shell, eight for filesystem) so adapters are straightforward to write.
+The interfaces are intentionally minimal (one method for shell, eight for filesystem) so adapters are straightforward to write. The optional `init()`, `sandboxId()`, and `dispose()` methods enable auto-creation and session-aware lifecycle management.
 
 ## Options
 

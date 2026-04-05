@@ -9,10 +9,13 @@ A `Sandbox` bundles a `VirtualFs` (filesystem) and `VirtualComputer` (shell exec
 interface Sandbox {
   fs: VirtualFs;
   computer: VirtualComputer;
+  dispose?(): Promise<void>;
+  init?(sandboxId?: string): Promise<void>;
+  sandboxId?(): string | undefined;
 }
 ```
 
-noumen ships five sandbox factories. You can also implement your own.
+noumen ships five sandbox factories. The three remote backends (Sprites, Docker, E2B) support **auto-creation** — omit the container/instance ID and the resource is provisioned on first use, persisted across sessions, and disposed automatically. You can also implement your own.
 
 ## LocalSandbox — OS-level sandboxing
 
@@ -91,11 +94,23 @@ const sandbox = UnsandboxedLocal({ cwd: "/my/project" });
 
 ## SpritesSandbox — remote containers
 
-Run inside a remote [sprites.dev](https://docs.sprites.dev) container. The agent has no access to the host machine:
+Run inside a remote [sprites.dev](https://docs.sprites.dev) container. The agent has no access to the host machine.
+
+**Auto-create** — omit `spriteName` and the sprite is provisioned on first use:
 
 ```typescript
 import { SpritesSandbox } from "noumen";
 
+const sandbox = SpritesSandbox({ token: process.env.SPRITE_TOKEN! });
+const agent = new Agent({ provider, sandbox });
+
+// Sprite created automatically on first createThread(). Cleaned up by:
+await agent.close();
+```
+
+**Explicit** — attach to a pre-existing sprite (lifecycle is yours):
+
+```typescript
 const sandbox = SpritesSandbox({
   token: process.env.SPRITE_TOKEN!,
   spriteName: "my-sprite",
@@ -104,12 +119,13 @@ const sandbox = SpritesSandbox({
 
 ### Options
 
-| Option | Type | Description |
-|--------|------|-------------|
-| `token` | `string` | sprites.dev API token |
-| `spriteName` | `string` | Name of the sprite container |
-| `baseURL` | `string` | API base URL (optional) |
-| `workingDir` | `string` | Working directory inside the container (optional) |
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `token` | `string` | — | sprites.dev API token (required) |
+| `spriteName` | `string` | — | Attach to this sprite. When omitted, auto-created on `init()` |
+| `baseURL` | `string` | `https://api.sprites.dev` | API base URL |
+| `workingDir` | `string` | `/home/sprite` | Working directory inside the container |
+| `namePrefix` | `string` | `noumen-` | Prefix for auto-generated sprite names |
 
 ## DockerSandbox — container isolation
 
@@ -118,6 +134,20 @@ Run the agent inside a Docker container. Requires `dockerode` as an optional pee
 ```bash
 pnpm add dockerode
 ```
+
+**Auto-create** — pass `image` and the container is created on first use:
+
+```typescript
+import { DockerSandbox } from "noumen";
+
+const sandbox = DockerSandbox({ image: "node:22", cwd: "/workspace" });
+const agent = new Agent({ provider, sandbox });
+
+// Container created and started on first createThread(). Cleaned up by:
+await agent.close();
+```
+
+**Explicit** — pass a pre-existing dockerode `Container` (lifecycle is yours):
 
 ```typescript
 import Docker from "dockerode";
@@ -131,27 +161,24 @@ const container = await docker.createContainer({
 });
 await container.start();
 
-const sandbox = DockerSandbox({
-  container,
-  cwd: "/workspace",
-});
+const sandbox = DockerSandbox({ container, cwd: "/workspace" });
+const agent = new Agent({ provider, sandbox });
 
-const code = new Agent({ provider, sandbox });
-
-// Clean up when done
 await container.stop();
 await container.remove();
 ```
 
-You are responsible for container lifecycle (create, start, stop, remove). The sandbox just wraps the running container.
-
 ### Options
 
-| Option | Type | Description |
-|--------|------|-------------|
-| `container` | `Docker.Container` | A running Docker container instance |
-| `cwd` | `string` | Working directory inside the container (optional) |
-| `defaultTimeout` | `number` | Command timeout in milliseconds (optional) |
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `container` | `Docker.Container` | — | Attach to this container. When omitted, auto-created from `image` |
+| `image` | `string` | — | Docker image for auto-creation (required when `container` is omitted) |
+| `cmd` | `string[]` | `["sleep", "infinity"]` | Command for auto-created container |
+| `env` | `string[]` | — | Environment variables for auto-created container |
+| `dockerOptions` | `Record` | — | Extra options passed to `createContainer` |
+| `cwd` | `string` | `/` | Working directory inside the container |
+| `defaultTimeout` | `number` | `30000` | Command timeout in milliseconds |
 
 ## E2BSandbox — cloud sandbox
 
@@ -161,32 +188,59 @@ Run the agent inside an [E2B](https://e2b.dev) cloud sandbox. Requires `e2b` as 
 pnpm add e2b
 ```
 
+**Auto-create** — omit `sandbox` and the E2B sandbox is provisioned on first use:
+
+```typescript
+import { E2BSandbox } from "noumen";
+
+const sandbox = E2BSandbox({ template: "base" });
+const agent = new Agent({ provider, sandbox });
+
+// E2B sandbox created on first createThread(). Cleaned up by:
+await agent.close();
+```
+
+**Explicit** — pass a pre-existing `Sandbox` instance (lifecycle is yours):
+
 ```typescript
 import { Sandbox as E2BSandboxSDK } from "e2b";
 import { E2BSandbox } from "noumen";
 
 const e2b = await E2BSandboxSDK.create();
+const sandbox = E2BSandbox({ sandbox: e2b, cwd: "/home/user" });
+const agent = new Agent({ provider, sandbox });
 
-const sandbox = E2BSandbox({
-  sandbox: e2b,
-  cwd: "/home/user",
-});
-
-const code = new Agent({ provider, sandbox });
-
-// Clean up when done
 await e2b.close();
 ```
 
-You are responsible for sandbox lifecycle (create, close). The adapter maps `VirtualFs` and `VirtualComputer` to E2B's `files` and `commands` APIs.
-
 ### Options
 
-| Option | Type | Description |
-|--------|------|-------------|
-| `sandbox` | `E2B.Sandbox` | An E2B sandbox instance |
-| `cwd` | `string` | Working directory inside the sandbox (optional) |
-| `defaultTimeout` | `number` | Command timeout in milliseconds (optional) |
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `sandbox` | `E2B.Sandbox` | — | Attach to this instance. When omitted, auto-created from `template` |
+| `template` | `string` | `base` | E2B template for auto-creation |
+| `apiKey` | `string` | `$E2B_API_KEY` | E2B API key (falls back to env var) |
+| `timeoutMs` | `number` | E2B default | Timeout for the auto-created sandbox |
+| `cwd` | `string` | — | Working directory inside the sandbox |
+| `defaultTimeout` | `number` | `30000` | Command timeout in milliseconds |
+
+## Sandbox auto-creation lifecycle
+
+All three remote backends support on-demand provisioning when you omit the explicit resource handle. Here is how the lifecycle works:
+
+1. **Provisioning** — the first call to `Agent.createThread()` triggers `sandbox.init()`. For auto-create factories this provisions the remote resource (creates a sprite, starts a Docker container, or creates an E2B sandbox).
+
+2. **Session binding** — the sandbox identifier is written to a local index file (`.noumen/sessions/.sandbox-index.json`) keyed by session ID. This mapping lives on the **host** filesystem so it is always readable, even when the sandbox itself is remote.
+
+3. **Reconnection** — when you call `agent.resumeThread(sessionId)`, the agent reads the local index, finds the stored sandbox ID, and passes it to `sandbox.init(storedId)` so the sandbox reconnects to the same resource instead of creating a new one.
+
+4. **Disposal** — `Agent.close()` calls `sandbox.dispose()`. For auto-created resources this tears down the remote resource (deletes the sprite, stops and removes the Docker container, or kills the E2B sandbox). Resources created by the user (explicit IDs) are never torn down.
+
+5. **Idempotency** — `init()` uses a single-flight promise. Calling `createThread()` multiple times reuses the same provisioned resource.
+
+<Callout type="info" title="Single-agent, single-sandbox">
+  Each `Agent` instance has one sandbox shared across all threads. For multi-tenant deployments where each user needs isolated containers, create a separate `Agent` per user.
+</Callout>
 
 ## Custom sandboxes
 
@@ -204,10 +258,21 @@ class MyComputer implements VirtualComputer {
 const sandbox: Sandbox = {
   fs: new MyCustomFs(),
   computer: new MyComputer(),
+
+  // Optional: enable auto-creation and session-aware lifecycle
+  async init(sandboxId?: string) {
+    // Create a new resource or reconnect to sandboxId
+  },
+  sandboxId() {
+    return "my-resource-id"; // persisted in session metadata
+  },
+  async dispose() {
+    // Tear down auto-created resources
+  },
 };
 ```
 
-The interfaces are intentionally minimal (one method for shell, eight for filesystem) so adapters are straightforward to write.
+The interfaces are intentionally minimal (one method for shell, eight for filesystem) so adapters are straightforward to write. The optional `init()`, `sandboxId()`, and `dispose()` methods enable auto-creation and session-aware lifecycle management.
 
 ## VirtualFs interface
 

@@ -47,7 +47,7 @@ const FEATURES = [
     icon: "💻",
     title: "Five sandbox backends",
     description:
-      "LocalSandbox (OS-level), UnsandboxedLocal, sprites.dev, Docker, or E2B cloud. Swap one line to change the isolation boundary — from raw host access to a remote container.",
+      "LocalSandbox (OS-level), UnsandboxedLocal, sprites.dev, Docker, or E2B cloud. Remote backends auto-provision on first use and reconnect on session resume. Swap one line to change the isolation boundary.",
   },
   {
     icon: "🛠️",

@@ -34,7 +34,7 @@ for await (const event of agent.run("Add a health-check endpoint to server.ts"))
     OpenAI, Anthropic, Google Gemini, OpenRouter, AWS Bedrock, Google Vertex AI, and Ollama. Same streaming interface, same tool dispatch. Cloud or local.
   </Card>
   <Card title="Sandboxed by default" href="/docs/virtual">
-    All tool I/O routes through a Sandbox — the isolation boundary. Five built-in backends: `LocalSandbox` (OS-level), `UnsandboxedLocal`, sprites.dev containers, Docker, and E2B cloud. Or implement your own.
+    All tool I/O routes through a Sandbox — the isolation boundary. Five built-in backends: `LocalSandbox` (OS-level), `UnsandboxedLocal`, sprites.dev containers, Docker, and E2B cloud. Remote backends auto-provision on first use and reconnect on session resume. Or implement your own.
   </Card>
   <Card title="Read, write, edit, execute" href="/docs/tools">
     ReadFile, WriteFile, EditFile, Bash, Glob, Grep, WebFetch, NotebookEdit, AskUser — nine tools for any agent that interacts with a computer.
