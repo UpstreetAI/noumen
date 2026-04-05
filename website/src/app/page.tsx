@@ -132,7 +132,7 @@ export default function Home() {
           {/* Left: copy */}
           <div className="min-w-0 flex flex-col gap-6">
             <div className="inline-flex w-fit items-center gap-2 rounded-full border border-[var(--color-accent-blue-dim)] bg-[var(--color-accent-blue-dim)] px-3 py-1 text-xs font-medium text-[var(--color-accent-blue)]">
-              <span>⚡</span> agent runtime
+              <span>🤲</span> hands for your LLM
             </div>
 
             <h1 className="font-[family-name:var(--font-display)] text-4xl font-extrabold leading-[1.08] tracking-tight text-[var(--color-text-primary)] sm:text-5xl lg:text-6xl">
