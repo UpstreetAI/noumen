@@ -210,5 +210,10 @@ export interface HookDefinition {
   event: HookEvent;
   /** Optional tool name glob filter (e.g. "Bash", "mcp__*") */
   matcher?: string;
+  /**
+   * When true, errors thrown by this hook propagate as denials instead of
+   * being silently swallowed. Use for security-critical hooks.
+   */
+  blocking?: boolean;
   handler: (input: HookInput) => Promise<HookOutput> | HookOutput;
 }

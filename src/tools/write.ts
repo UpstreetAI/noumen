@@ -1,5 +1,6 @@
 import type { Tool, ToolResult, ToolContext } from "./types.js";
 import { WRITE_PROMPT } from "./prompts/write.js";
+import { isDangerousPath } from "../permissions/pipeline.js";
 
 export const writeFileTool: Tool = {
   name: "WriteFile",
@@ -10,6 +11,13 @@ export const writeFileTool: Tool = {
   isReadOnly: false,
   checkPermissions(args) {
     const filePath = args.file_path as string;
+    if (isDangerousPath(filePath)) {
+      return {
+        behavior: "ask" as const,
+        message: `Write targets sensitive path: ${filePath}`,
+        reason: "safetyCheck",
+      };
+    }
     return {
       behavior: "passthrough" as const,
       message: `Write to ${filePath}`,

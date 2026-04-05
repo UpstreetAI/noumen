@@ -7,6 +7,7 @@
  */
 
 import type { ChatParams, ChatStreamChunk } from "./types.js";
+import { ChatStreamError } from "./types.js";
 import type { ChatMessage, ContentPart } from "../session/types.js";
 import type { CacheControlConfig } from "./cache.js";
 import { getMessageCacheBreakpointIndex } from "./cache.js";
@@ -252,7 +253,7 @@ export async function* streamAnthropicChat(
 
   const modelMaxOutput = getMaxOutputTokensForModel(model);
   const maxOutputTokens = thinkingEnabled
-    ? Math.min(budgetTokens + (params.max_tokens ?? 8192), modelMaxOutput)
+    ? (params.max_tokens ?? modelMaxOutput)
     : (params.max_tokens ?? 8192);
   const clampedBudget = thinkingEnabled
     ? Math.min(budgetTokens, maxOutputTokens - 1)
@@ -308,7 +309,20 @@ export async function* streamAnthropicChat(
     }
   }
 
-  const stream = client.messages.stream(streamParams);
+  let stream: AsyncIterable<Record<string, unknown>>;
+  try {
+    stream = client.messages.stream(streamParams);
+  } catch (err: unknown) {
+    const apiErr = err as { status?: number; headers?: { get?(k: string): string | null } };
+    throw new ChatStreamError(
+      err instanceof Error ? err.message : String(err),
+      {
+        status: apiErr.status,
+        retryAfter: apiErr.headers?.get?.("retry-after") ?? undefined,
+        cause: err,
+      },
+    );
+  }
 
   let chunkIndex = 0;
   const toolIndexMap = new Map<string, number>();
@@ -322,6 +336,7 @@ export async function* streamAnthropicChat(
   let thinkingTokens = 0;
   let stopReason: string | undefined;
 
+  try {
   for await (const event of stream) {
     const ev = event as Record<string, unknown>;
     const chunkId = `chatcmpl-${chunkIndex++}`;
@@ -430,7 +445,9 @@ export async function* streamAnthropicChat(
         case "end_turn": finishReason = "stop"; break;
         case "tool_use": finishReason = "tool_calls"; break;
         case "max_tokens": finishReason = "length"; break;
+        case "model_context_window_exceeded": finishReason = "length"; break;
         case "stop_sequence": finishReason = "stop"; break;
+        case "refusal": finishReason = "content_filter"; break;
         default: finishReason = toolIndexMap.size > 0 ? "tool_calls" : "stop"; break;
       }
       yield {
@@ -453,5 +470,17 @@ export async function* streamAnthropicChat(
         },
       };
     }
+  }
+  } catch (err: unknown) {
+    if (err instanceof ChatStreamError) throw err;
+    const apiErr = err as { status?: number; headers?: { get?(k: string): string | null } };
+    throw new ChatStreamError(
+      err instanceof Error ? err.message : String(err),
+      {
+        status: apiErr.status,
+        retryAfter: apiErr.headers?.get?.("retry-after") ?? undefined,
+        cause: err,
+      },
+    );
   }
 }

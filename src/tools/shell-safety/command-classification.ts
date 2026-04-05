@@ -101,7 +101,10 @@ const CONDITIONAL_READ_ONLY: Record<
   (command: string, tokens: string[]) => boolean
 > = {
   awk: () => false, // awk has system() — never read-only
-  sed: (cmd) => !/\bsed\s+(-[a-zA-Z]*i[a-zA-Z]*|--in-place)\b/.test(cmd),
+  sed: (_cmd, tokens) => !tokens.some((t) =>
+    t === "-i" || t === "--in-place" ||
+    (t.startsWith("-") && !t.startsWith("--") && t.includes("i"))
+  ),
   find: (cmd) => !/\b(-exec\b|-execdir\b|-ok\b|-okdir\b|-delete\b|-fprint\b|-fls\b|-fprintf\b)/.test(cmd),
   fd: (_cmd, tokens) => !tokens.some((t) => ["-x", "--exec", "-X", "--exec-batch"].includes(t)),
   fdfind: (_cmd, tokens) => !tokens.some((t) => ["-x", "--exec", "-X", "--exec-batch"].includes(t)),
@@ -201,8 +204,8 @@ const DESTRUCTIVE_PATTERNS: RegExp[] = [
   /\bDROP\s+(TABLE|DATABASE|SCHEMA)\b/i,
   /\bTRUNCATE\s+TABLE\b/i,
   /\bDELETE\s+FROM\b/i,
-  // sed in-place
-  /\bsed\s+(-[a-zA-Z]*i[a-zA-Z]*|--in-place)\b/,
+  // sed in-place (matches -i anywhere in args, not just first flag)
+  /\bsed\b.*\s(-[a-zA-Z]*i[a-zA-Z]*|--in-place)\b/,
   // Container/system destruction
   /\bdocker\s+(rm|rmi|system\s+prune|volume\s+rm)\b/,
   /\bkubectl\s+delete\b/,

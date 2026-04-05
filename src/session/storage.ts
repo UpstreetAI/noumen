@@ -21,10 +21,21 @@ import { jsonStringify, parseJSONL } from "../utils/json.js";
 export class SessionStorage {
   private fs: VirtualFs;
   private sessionDir: string;
+  private writeLock: Promise<void> = Promise.resolve();
 
   constructor(fs: VirtualFs, sessionDir: string) {
     this.fs = fs;
     this.sessionDir = sessionDir;
+  }
+
+  /**
+   * Serialize writes through a simple promise chain so parallel
+   * appendEntry calls don't interleave large JSONL records.
+   */
+  private serializedWrite(fn: () => Promise<void>): Promise<void> {
+    const next = this.writeLock.then(fn, fn);
+    this.writeLock = next.then(() => {}, () => {});
+    return next;
   }
 
   private getTranscriptPath(sessionId: string): string {
@@ -39,9 +50,11 @@ export class SessionStorage {
   }
 
   async appendEntry(sessionId: string, entry: Entry): Promise<void> {
-    await this.ensureDir();
-    const line = jsonStringify(entry) + "\n";
-    await this.fs.appendFile(this.getTranscriptPath(sessionId), line);
+    return this.serializedWrite(async () => {
+      await this.ensureDir();
+      const line = jsonStringify(entry) + "\n";
+      await this.fs.appendFile(this.getTranscriptPath(sessionId), line);
+    });
   }
 
   async appendMessage(
@@ -167,6 +180,30 @@ export class SessionStorage {
     await this.appendEntry(sessionId, entry);
   }
 
+  /**
+   * Re-append custom-title and key metadata entries after a compact boundary
+   * so they remain discoverable in the active-entries window.
+   */
+  async reAppendMetadataAfterCompact(sessionId: string): Promise<void> {
+    const entries = await this.loadAllEntries(sessionId);
+    let customTitle: string | undefined;
+
+    for (const entry of entries) {
+      if (entry.type === "custom-title") {
+        customTitle = entry.title;
+      }
+    }
+
+    if (customTitle) {
+      await this.appendEntry(sessionId, {
+        type: "custom-title",
+        sessionId,
+        title: customTitle,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+
   async loadMessages(sessionId: string): Promise<ChatMessage[]> {
     const path = this.getTranscriptPath(sessionId);
 
@@ -179,8 +216,17 @@ export class SessionStorage {
     let lastBoundaryIdx = -1;
     for (let i = entries.length - 1; i >= 0; i--) {
       if (entries[i].type === "compact-boundary") {
-        lastBoundaryIdx = i;
-        break;
+        // Validate: boundary must have at least one summary or message after it.
+        // If not (crash between boundary + summary write), skip to the prior boundary.
+        const afterBoundary = entries.slice(i + 1);
+        const hasSummaryOrMessage = afterBoundary.some(
+          (e) => e.type === "summary" || e.type === "message",
+        );
+        if (hasSummaryOrMessage) {
+          lastBoundaryIdx = i;
+          break;
+        }
+        // else: orphaned boundary — keep searching backwards
       }
     }
 
@@ -224,69 +270,60 @@ export class SessionStorage {
   async listSessions(): Promise<SessionInfo[]> {
     await this.ensureDir();
 
-    let entries;
+    let dirEntries;
     try {
-      entries = await this.fs.readdir(this.sessionDir);
+      dirEntries = await this.fs.readdir(this.sessionDir);
     } catch {
       return [];
     }
 
     const sessions: SessionInfo[] = [];
+    const LITE_READ_LIMIT = 32_768;
 
-    for (const entry of entries) {
-      if (!entry.name.endsWith(".jsonl")) continue;
+    for (const dirEntry of dirEntries) {
+      if (!dirEntry.name.endsWith(".jsonl")) continue;
 
-      const sessionId = entry.name.replace(".jsonl", "");
+      const sessionId = dirEntry.name.replace(".jsonl", "");
       try {
-        const content = await this.fs.readFile(
-          this.getTranscriptPath(sessionId),
-        );
-        const allEntries = parseJSONL<Entry>(content);
+        const filePath = this.getTranscriptPath(sessionId);
+        const content = await this.fs.readFile(filePath);
 
-        // Find last compact boundary to mirror loadMessages behavior
-        let lastBoundaryIdx = -1;
-        for (let i = allEntries.length - 1; i >= 0; i--) {
-          if (allEntries[i].type === "compact-boundary") {
-            lastBoundaryIdx = i;
-            break;
-          }
-        }
-        const activeEntries = allEntries.slice(lastBoundaryIdx + 1);
-
-        // Collect snipped UUIDs
-        const snippedUuids = new Set<string>();
-        for (const e of activeEntries) {
-          if (e.type === "snip-boundary") {
-            for (const uuid of e.snipMetadata.removedUuids) {
-              snippedUuids.add(uuid);
-            }
-          }
+        // For large files, extract metadata from head + tail slices only
+        let headSlice: string;
+        let tailSlice: string;
+        if (content.length > LITE_READ_LIMIT * 2) {
+          headSlice = content.slice(0, LITE_READ_LIMIT);
+          tailSlice = content.slice(-LITE_READ_LIMIT);
+        } else {
+          headSlice = content;
+          tailSlice = content;
         }
 
-        let messageCount = 0;
+        const headEntries = parseJSONL<Entry>(headSlice);
+        const tailEntries = content.length > LITE_READ_LIMIT * 2
+          ? parseJSONL<Entry>(tailSlice)
+          : headEntries;
+
         let title: string | undefined;
         let firstTimestamp: string | undefined;
         let lastTimestamp: string | undefined;
+        let messageCount = 0;
 
-        for (const e of activeEntries) {
-          if ((e.type === "message" || e.type === "summary") && !snippedUuids.has(e.uuid)) {
+        for (const e of headEntries) {
+          if (e.type === "message" || e.type === "summary") {
             messageCount++;
             if (!firstTimestamp) firstTimestamp = e.timestamp;
             lastTimestamp = e.timestamp;
           }
-          if (e.type === "custom-title") {
-            title = e.title;
-          }
+          if (e.type === "custom-title") title = e.title;
         }
 
-        // Fall back to full entries for timestamps if all messages were compacted
-        if (!firstTimestamp) {
-          for (const e of allEntries) {
-            if (e.type === "message" || e.type === "summary") {
-              if (!firstTimestamp) firstTimestamp = e.timestamp;
-              lastTimestamp = e.timestamp;
-            }
+        // Scan tail for latest timestamps and title overrides
+        for (const e of tailEntries) {
+          if (e.type === "message" || e.type === "summary") {
+            if (e.timestamp) lastTimestamp = e.timestamp;
           }
+          if (e.type === "custom-title") title = e.title;
         }
 
         sessions.push({

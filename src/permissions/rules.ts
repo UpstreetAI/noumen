@@ -42,6 +42,48 @@ function parseMcpServerPrefix(ruleName: string): string | null {
   return parts[1];
 }
 
+const SAFE_WRAPPERS = ["timeout", "time", "nice", "nohup", "stdbuf"];
+
+const COMPOUND_OPERATORS_RE = /\s*(?:;|&&|\|\||\|)\s*/;
+
+/**
+ * Strip leading env var assignments and safe wrapper commands from a
+ * shell command so that deny/ask rules match the underlying command.
+ */
+export function stripForRuleMatching(command: string): string {
+  let cmd = command.trim();
+  // Strip env var prefixes
+  while (/^[A-Za-z_][A-Za-z0-9_]*=\S*\s/.test(cmd)) {
+    cmd = cmd.replace(/^[A-Za-z_][A-Za-z0-9_]*=\S*\s+/, "");
+  }
+  // Strip safe wrapper commands (and their flags)
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const wrapper of SAFE_WRAPPERS) {
+      if (cmd.startsWith(wrapper + " ")) {
+        cmd = cmd.slice(wrapper.length).trim();
+        // Skip flags belonging to the wrapper
+        while (cmd.startsWith("-")) {
+          const spaceIdx = cmd.indexOf(" ");
+          if (spaceIdx === -1) break;
+          cmd = cmd.slice(spaceIdx).trim();
+        }
+        // Strip another round of env vars after the wrapper
+        while (/^[A-Za-z_][A-Za-z0-9_]*=\S*\s/.test(cmd)) {
+          cmd = cmd.replace(/^[A-Za-z_][A-Za-z0-9_]*=\S*\s+/, "");
+        }
+        changed = true;
+      }
+    }
+  }
+  return cmd;
+}
+
+function isCompoundCommand(content: string): boolean {
+  return COMPOUND_OPERATORS_RE.test(content);
+}
+
 /**
  * Match a content string against a rule's `ruleContent`.
  *
@@ -49,6 +91,9 @@ function parseMcpServerPrefix(ruleName: string): string | null {
  *  - **exact**: `ruleContent === content`
  *  - **prefix**: `ruleContent` ends with `:*` → prefix match
  *  - **glob**: `ruleContent` contains `*` or `**` → simple glob match
+ *
+ * For deny/ask rules, also tries matching after stripping env vars and
+ * safe wrapper commands from the content.
  */
 export function contentMatchesRule(
   content: string,
@@ -56,14 +101,29 @@ export function contentMatchesRule(
 ): boolean {
   if (ruleContent.endsWith(":*")) {
     const prefix = ruleContent.slice(0, -2);
-    return content === prefix || content.startsWith(prefix + " ");
+    const matches = content === prefix || content.startsWith(prefix + " ");
+    if (matches && isCompoundCommand(content)) return false;
+    if (matches) return true;
+    // Retry after stripping env vars / wrappers
+    const stripped = stripForRuleMatching(content);
+    if (stripped !== content) {
+      const strippedMatches = stripped === prefix || stripped.startsWith(prefix + " ");
+      if (strippedMatches && isCompoundCommand(stripped)) return false;
+      return strippedMatches;
+    }
+    return false;
   }
 
   if (ruleContent.includes("*")) {
-    return matchSimpleGlob(ruleContent, content);
+    if (matchSimpleGlob(ruleContent, content)) return true;
+    const stripped = stripForRuleMatching(content);
+    if (stripped !== content) return matchSimpleGlob(ruleContent, stripped);
+    return false;
   }
 
-  return ruleContent === content;
+  if (ruleContent === content) return true;
+  const stripped = stripForRuleMatching(content);
+  return stripped !== content && ruleContent === stripped;
 }
 
 /**

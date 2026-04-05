@@ -1,5 +1,5 @@
 import type { AIProvider, ChatParams } from "../providers/types.js";
-import type { ChatMessage, ContentPart } from "../session/types.js";
+import type { ChatMessage, AssistantMessage, ContentPart } from "../session/types.js";
 import type { SessionStorage } from "../session/storage.js";
 import { estimateMessagesTokens } from "../utils/tokens.js";
 import { contentToString, hasImageContent, stripImageContent } from "../utils/content.js";
@@ -117,14 +117,22 @@ export async function compactConversation(
     throw new DOMException("Compaction aborted", "AbortError");
   }
 
-  await storage.appendCompactBoundary(sessionId);
   const summaryMessage: ChatMessage = {
     role: "user",
     content: `[Conversation Summary]\n\n${summaryText}`,
   };
+  // Write summary before boundary so a crash between the two is recoverable:
+  // on load, a boundary with no summary after it falls back to the prior boundary.
   await storage.appendSummary(sessionId, summaryMessage);
+  await storage.appendCompactBoundary(sessionId);
 
-  return [summaryMessage, ...tail];
+  // Re-append session metadata (custom title) after the boundary so it stays
+  // discoverable in the active-entries window.
+  await storage.reAppendMetadataAfterCompact(sessionId);
+
+  // Ensure role alternation is valid after inserting the summary
+  const merged = mergeConsecutiveSameRoleForCompact([summaryMessage, ...tail]);
+  return merged;
 }
 
 /**
@@ -190,4 +198,40 @@ function stripBinaryFromMessages(messages: ChatMessage[]): ChatMessage[] {
     }
     return msg;
   });
+}
+
+/**
+ * Merge consecutive same-role messages to restore valid role alternation
+ * after compaction inserts a user-role summary before potentially user-role tail.
+ */
+function mergeConsecutiveSameRoleForCompact(messages: ChatMessage[]): ChatMessage[] {
+  if (messages.length <= 1) return messages;
+  const result: ChatMessage[] = [messages[0]];
+
+  for (let i = 1; i < messages.length; i++) {
+    const prev = result[result.length - 1];
+    const curr = messages[i];
+
+    if (prev.role === "user" && curr.role === "user") {
+      const prevText = typeof prev.content === "string" ? prev.content : contentToString(prev.content as string | ContentPart[]);
+      const currText = typeof curr.content === "string" ? curr.content : contentToString(curr.content as string | ContentPart[]);
+      result[result.length - 1] = { role: "user", content: prevText + "\n" + currText };
+    } else if (prev.role === "assistant" && curr.role === "assistant") {
+      const prevAsst = prev as AssistantMessage;
+      const currAsst = curr as AssistantMessage;
+      const mergedContent = (prevAsst.content || currAsst.content)
+        ? ((prevAsst.content ?? "") + (currAsst.content ? "\n" + currAsst.content : ""))
+        : null;
+      const mergedToolCalls = [...(prevAsst.tool_calls ?? []), ...(currAsst.tool_calls ?? [])];
+      result[result.length - 1] = {
+        role: "assistant",
+        content: mergedContent,
+        ...(mergedToolCalls.length > 0 ? { tool_calls: mergedToolCalls } : {}),
+      } as AssistantMessage;
+    } else {
+      result.push(curr);
+    }
+  }
+
+  return result;
 }

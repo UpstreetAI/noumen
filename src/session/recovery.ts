@@ -168,7 +168,7 @@ export function detectTurnInterruption(messages: ChatMessage[]): TurnInterruptio
       return { kind: "interrupted_tool" };
     }
     if (msg.role === "user") {
-      const text = typeof msg.content === "string" ? msg.content : "";
+      const text = typeof msg.content === "string" ? msg.content : contentToString(msg.content as string | import("./types.js").ContentPart[]);
       if (text.startsWith("[Conversation Summary]")) {
         return { kind: "none" };
       }
@@ -284,15 +284,16 @@ function mergeConsecutiveSameRole(messages: ChatMessage[]): ChatMessage[] {
     } else if (prev.role === "assistant" && curr.role === "assistant") {
       const prevAsst = prev as AssistantMessage;
       const currAsst = curr as AssistantMessage;
-      const mergedContent =
-        (prevAsst.content ?? "") + (currAsst.content ? "\n" + currAsst.content : "");
+      const mergedContent = (prevAsst.content || currAsst.content)
+        ? ((prevAsst.content ?? "") + (currAsst.content ? "\n" + currAsst.content : ""))
+        : null;
       const mergedToolCalls = [
         ...(prevAsst.tool_calls ?? []),
         ...(currAsst.tool_calls ?? []),
       ];
       result[result.length - 1] = {
         role: "assistant",
-        content: mergedContent || null,
+        content: mergedContent,
         ...(mergedToolCalls.length > 0 ? { tool_calls: mergedToolCalls } : {}),
       } as AssistantMessage;
     } else {

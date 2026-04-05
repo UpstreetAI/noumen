@@ -93,6 +93,12 @@ export async function runPreToolUseHooks(
         merged.preventContinuation = output.preventContinuation;
       }
     } catch (err) {
+      if (hook.blocking) {
+        return {
+          decision: "deny",
+          message: `Blocking hook error: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
       console.warn(`[noumen/hooks] PreToolUse hook failed:`, err instanceof Error ? err.message : err);
     }
   }

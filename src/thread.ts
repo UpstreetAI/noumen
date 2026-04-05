@@ -188,6 +188,7 @@ export class Thread {
   private budgetState: BudgetState;
   private hasAttemptedReactiveCompact = false;
   private microcompactTokensFreed = 0;
+  private querySource: string | undefined;
   private resumeRequested = false;
   private fileStateCache: FileStateCache | null = null;
   private contentReplacementState: ContentReplacementState;
@@ -257,6 +258,7 @@ export class Thread {
   ): AsyncGenerator<StreamEvent, void, unknown> {
     this.abortController = new AbortController();
     const signal = opts?.signal ?? this.abortController.signal;
+    this.querySource = "main";
 
     const interactionSpan = this.tracer.startSpan("noumen.interaction", {
       attributes: {
@@ -483,6 +485,7 @@ export class Thread {
             this.lastUsage,
             this.anchorMessageIndex,
             this.microcompactTokensFreed,
+            this.querySource,
           )
         ) {
           await runNotificationHooks(hooks, "PreCompact", {
@@ -535,7 +538,7 @@ export class Thread {
         const accumulatedContent: string[] = [];
         const accumulatedToolCalls = new Map<
           number,
-          { id: string; name: string; arguments: string; complete: boolean }
+          { id: string; name: string; arguments: string; complete: boolean; malformedJson?: boolean }
         >();
         let finishReason: string | null = null;
         let lastUsage: ChatCompletionUsage | undefined;
@@ -622,7 +625,10 @@ export class Thread {
           }
 
           stream = retryResult.value;
-          if (retryResult.value === undefined) break;
+          if (retryResult.value === undefined) {
+            yield { type: "error", error: new Error("All retry attempts exhausted") };
+            break;
+          }
         } else {
           stream = this.config.provider.chat(chatParams);
         }
@@ -708,6 +714,10 @@ export class Thread {
             }
           }
 
+          providerSpan.setStatus(SpanStatusCode.ERROR, providerErr instanceof Error ? providerErr.message : String(providerErr));
+          providerSpan.end();
+          yield { type: "span_end", name: "noumen.provider.chat", spanId: providerSpanId, durationMs: Date.now() - providerStart, error: String(providerErr) };
+
           throw providerErr;
         }
 
@@ -762,12 +772,15 @@ export class Thread {
                     const prevTc = accumulatedToolCalls.get(tc.index - 1);
                     if (prevTc && !prevTc.complete) {
                       prevTc.complete = true;
-                      let parsedArgs: Record<string, unknown> = {};
-                      try { parsedArgs = JSON.parse(prevTc.arguments); } catch {}
-                      streamingExec.addTool(
-                        { id: prevTc.id, type: "function", function: { name: prevTc.name, arguments: prevTc.arguments } },
-                        parsedArgs,
-                      );
+                      try {
+                        const parsedArgs = JSON.parse(prevTc.arguments);
+                        streamingExec.addTool(
+                          { id: prevTc.id, type: "function", function: { name: prevTc.name, arguments: prevTc.arguments } },
+                          parsedArgs,
+                        );
+                      } catch {
+                        prevTc.malformedJson = true;
+                      }
                     }
                   }
                 } else {
@@ -807,16 +820,19 @@ export class Thread {
           }
         }
 
-        if (streamingExec) {
+        if (streamingExec && !signal.aborted) {
           for (const [, tc] of accumulatedToolCalls) {
             if (!tc.complete) {
               tc.complete = true;
-              let parsedArgs: Record<string, unknown> = {};
-              try { parsedArgs = JSON.parse(tc.arguments); } catch {}
-              streamingExec.addTool(
-                { id: tc.id, type: "function", function: { name: tc.name, arguments: tc.arguments } },
-                parsedArgs,
-              );
+              try {
+                const parsedArgs = JSON.parse(tc.arguments);
+                streamingExec.addTool(
+                  { id: tc.id, type: "function", function: { name: tc.name, arguments: tc.arguments } },
+                  parsedArgs,
+                );
+              } catch {
+                tc.malformedJson = true;
+              }
             }
           }
         }
@@ -868,6 +884,13 @@ export class Thread {
               apiDurationMs,
             );
             yield { type: "cost_update", summary };
+
+            // Persist cost state on every usage update so it survives crashes/aborts
+            await this.storage.appendMetadata(
+              this.sessionId,
+              "costState",
+              this.config.costTracker.getState(),
+            ).catch(() => {});
           }
 
           providerSpan.setAttribute("tokens.input", lastUsage.prompt_tokens);
@@ -891,16 +914,19 @@ export class Thread {
         yield { type: "span_end", name: "noumen.provider.chat", spanId: providerSpanId, durationMs: Date.now() - providerStart };
 
         const textContent = accumulatedContent.join("");
-        const toolCalls: ToolCallContent[] = Array.from(
-          accumulatedToolCalls.values(),
-        ).map((tc) => ({
-          id: tc.id,
-          type: "function" as const,
-          function: {
-            name: tc.name,
-            arguments: tc.arguments,
-          },
-        }));
+        // Separate valid tool calls from ones with malformed JSON
+        const malformedToolCalls: Array<{ id: string; name: string }> = [];
+        const toolCalls: ToolCallContent[] = [];
+        for (const tc of accumulatedToolCalls.values()) {
+          if (tc.malformedJson) {
+            malformedToolCalls.push({ id: tc.id, name: tc.name });
+          }
+          toolCalls.push({
+            id: tc.id,
+            type: "function" as const,
+            function: { name: tc.name, arguments: tc.arguments },
+          });
+        }
 
         const assistantMsg: AssistantMessage = {
           role: "assistant",
@@ -912,6 +938,23 @@ export class Thread {
         await this.storage.appendMessage(this.sessionId, assistantMsg);
 
         if (toolCalls.length > 0) {
+          // Generate error results for tool calls with malformed JSON args
+          for (const malformed of malformedToolCalls) {
+            const errorResult: ChatMessage = {
+              role: "tool",
+              tool_call_id: malformed.id,
+              content: `Error: Invalid tool call arguments for ${malformed.name} (malformed JSON)`,
+            };
+            this.messages.push(errorResult);
+            await this.storage.appendMessage(this.sessionId, errorResult);
+            yield {
+              type: "tool_result",
+              toolUseId: malformed.id,
+              toolName: malformed.name,
+              result: { content: errorResult.content, isError: true },
+            };
+          }
+
           const touchedFilePaths: string[] = [];
           const registry = this.toolRegistry;
           const storage = this.storage;
@@ -1004,6 +1047,7 @@ export class Thread {
             tc: ToolCallContent,
             parsedArgs: Record<string, unknown>,
           ): Promise<ToolCallExecResult> => {
+            try {
             let currentArgs = parsedArgs;
 
             // --- Permission gate ---
@@ -1229,6 +1273,10 @@ export class Thread {
             }
 
             return { toolCall: tc, parsedArgs: currentArgs, result };
+            } catch (execErr) {
+              const msg = execErr instanceof Error ? execErr.message : String(execErr);
+              return { toolCall: tc, parsedArgs, result: { content: `Error executing tool: ${msg}`, isError: true } };
+            }
           };
 
           const batchSpilledRecords: import("./compact/tool-result-storage.js").ContentReplacementRecord[] = [];
@@ -1378,6 +1426,10 @@ export class Thread {
             break;
           }
           this.hasAttemptedReactiveCompact = false;
+          await runNotificationHooks(hooks, "TurnEnd", {
+            event: "TurnEnd",
+            sessionId: this.sessionId,
+          });
           continue;
         }
 

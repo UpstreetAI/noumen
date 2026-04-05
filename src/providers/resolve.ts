@@ -73,7 +73,7 @@ export async function resolveProvider(
     case "anthropic": {
       if (!key) throw new Error("Anthropic requires an API key. Set ANTHROPIC_API_KEY or pass apiKey.");
       const { AnthropicProvider } = await import("./anthropic.js");
-      return new AnthropicProvider({ apiKey: key, model: opts?.model });
+      return new AnthropicProvider({ apiKey: key, model: opts?.model, baseURL: opts?.baseURL });
     }
     case "gemini": {
       if (!key) throw new Error("Gemini requires an API key. Set GEMINI_API_KEY or pass apiKey.");

@@ -11,6 +11,27 @@ import { getMatchingRules, isPathInWorkingDirectories } from "./rules.js";
 import { resolveToolFlag } from "../tools/registry.js";
 import { classifyPermission } from "./classifier.js";
 import type { DenialTracker } from "./denial-tracking.js";
+import { extractCommandName } from "../tools/shell-safety/command-classification.js";
+
+const ACCEPT_EDITS_BASH_ALLOWLIST = new Set([
+  "mkdir", "touch", "rm", "rmdir", "mv", "cp", "sed", "chmod", "ln",
+]);
+
+const DANGEROUS_PATH_PATTERNS = [
+  /^\.git\/hooks\//,
+  /^\.git\/config$/,
+  /^\.git\/objects\//,
+  /^\.git\/refs\//,
+  /^\.git\/HEAD$/,
+  /(?:^|\/)\.bashrc$/,
+  /(?:^|\/)\.bash_profile$/,
+  /(?:^|\/)\.zshrc$/,
+  /(?:^|\/)\.zprofile$/,
+  /(?:^|\/)\.profile$/,
+  /(?:^|\/)\.ssh\//,
+  /(?:^|\/)\.env$/,
+  /(?:^|\/)\.npmrc$/,
+];
 
 /**
  * Resolve the permission decision for a tool invocation.
@@ -142,13 +163,7 @@ export async function resolvePermission(
         };
       }
     }
-    if (toolResult.behavior === "allow") {
-      return {
-        behavior: "allow",
-        updatedInput: toolResult.updatedInput,
-        reason: toolResult.reason ?? "tool",
-      };
-    }
+    // tool "allow" falls through to mode checks — do NOT short-circuit here
   }
 
   // Prefer any sanitized input the tool produced (e.g. resolved paths),
@@ -157,7 +172,7 @@ export async function resolvePermission(
   const effectiveInput =
     (toolResult?.behavior === "allow" && toolResult.updatedInput)
       ? toolResult.updatedInput
-      : input;
+      : (toolResult?.behavior === "passthrough" ? input : input);
 
   // 3b. Interactive tool guard (bypass-immune)
   if (tool.requiresUserInteraction && permCtx.mode === "bypassPermissions") {
@@ -196,6 +211,17 @@ export async function resolvePermission(
         reason: "mode",
       };
     }
+    if (toolName === "Bash") {
+      const cmd = typeof input.command === "string" ? input.command : "";
+      const baseName = extractCommandName(cmd);
+      if (!ACCEPT_EDITS_BASH_ALLOWLIST.has(baseName)) {
+        return {
+          behavior: "ask",
+          message: `Tool "${toolName}" (${baseName}) is not in the acceptEdits allowlist.`,
+          reason: "mode",
+        };
+      }
+    }
     return {
       behavior: "allow",
       updatedInput: effectiveInput,
@@ -227,6 +253,16 @@ export async function resolvePermission(
     );
 
     if (result.shouldBlock) {
+      if (opts.denialTracker) {
+        opts.denialTracker.recordDenial();
+        if (opts.denialTracker.shouldFallback()) {
+          return {
+            behavior: "ask",
+            message: `Auto-mode classifier denied too many consecutive actions. Falling back to user prompt.`,
+            reason: "denial_limit",
+          };
+        }
+      }
       return {
         behavior: "ask",
         message: `Auto-mode classifier flagged this call: ${result.reason}`,
@@ -326,4 +362,13 @@ function extractContentHint(
   if (typeof input.command === "string") return input.command;
   if (typeof input.path === "string") return input.path;
   return undefined;
+}
+
+/**
+ * Check whether a file path targets a sensitive location that should always
+ * prompt regardless of permission mode (bypass-immune safety check).
+ */
+export function isDangerousPath(filePath: string): boolean {
+  const normalized = filePath.replace(/^\/+/, "");
+  return DANGEROUS_PATH_PATTERNS.some((p) => p.test(normalized));
 }

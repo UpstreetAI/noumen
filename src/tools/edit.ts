@@ -1,6 +1,8 @@
+import * as nodePath from "node:path";
 import type { Tool, ToolResult, ToolContext } from "./types.js";
 import { findActualString, preserveQuoteStyle } from "./edit-utils.js";
 import { EDIT_PROMPT } from "./prompts/edit.js";
+import { isDangerousPath } from "../permissions/pipeline.js";
 
 export const editFileTool: Tool = {
   name: "EditFile",
@@ -12,6 +14,13 @@ export const editFileTool: Tool = {
   isReadOnly: false,
   checkPermissions(args) {
     const filePath = args.file_path as string;
+    if (isDangerousPath(filePath)) {
+      return {
+        behavior: "ask" as const,
+        message: `Edit targets sensitive path: ${filePath}`,
+        reason: "safetyCheck",
+      };
+    }
     return {
       behavior: "passthrough" as const,
       message: `Edit ${filePath}`,
@@ -64,7 +73,52 @@ export const editFileTool: Tool = {
       };
     }
 
+    if (oldString === "") {
+      const exists = await ctx.fs.exists(filePath);
+      if (!exists) {
+        if (ctx.checkpointManager && ctx.currentMessageId) {
+          await ctx.checkpointManager.trackEdit(filePath, ctx.currentMessageId, ctx.sessionId ?? "");
+        }
+        await ctx.fs.writeFile(filePath, newString);
+        ctx.notifyHook?.("FileWrite", {
+          event: "FileWrite", sessionId: ctx.sessionId ?? "",
+          toolName: "EditFile", filePath, isNew: true,
+        }).catch(() => {});
+        if (ctx.fileStateCache) {
+          ctx.fileStateCache.set(filePath, { content: newString, timestamp: Date.now() });
+        }
+        return { content: `Created new file ${filePath}.` };
+      }
+      const existing = await ctx.fs.readFile(filePath);
+      if (existing.trim() !== "") {
+        return {
+          content: "Error: old_string is empty but file already has content. Use WriteFile to overwrite, or provide the exact text to replace.",
+          isError: true,
+        };
+      }
+      await ctx.fs.writeFile(filePath, newString);
+      if (ctx.fileStateCache) {
+        ctx.fileStateCache.set(filePath, { content: newString, timestamp: Date.now() });
+      }
+      return { content: `File ${filePath} has been updated successfully.` };
+    }
+
+    const MAX_EDIT_FILE_SIZE = 1024 * 1024 * 1024; // 1 GiB
+
     try {
+      // File size guard
+      try {
+        const stat = await ctx.fs.stat(filePath);
+        if (stat.size !== undefined && stat.size > MAX_EDIT_FILE_SIZE) {
+          return {
+            content: `Error: File is too large to edit (${Math.round(stat.size / 1024 / 1024)} MiB). Max: 1 GiB.`,
+            isError: true,
+          };
+        }
+      } catch {
+        // stat failure — file might not exist, which is fine for creation
+      }
+
       // Read-before-edit enforcement
       if (ctx.fileStateCache) {
         const cached = ctx.fileStateCache.get(filePath);
@@ -135,6 +189,10 @@ export const editFileTool: Tool = {
         updated = content.replace(actualOldString, () => actualNewString);
       }
 
+      const dir = nodePath.dirname(filePath);
+      if (dir && dir !== "." && dir !== "/") {
+        await ctx.fs.mkdir(dir, { recursive: true }).catch(() => {});
+      }
       await ctx.fs.writeFile(filePath, updated);
 
       ctx.notifyHook?.("FileWrite", {

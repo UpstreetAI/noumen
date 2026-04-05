@@ -122,10 +122,16 @@ export async function restoreSession(
   const contentReplacements: ContentReplacementRecord[] = [];
   const metadata: Record<string, unknown> = {};
 
-  for (const entry of activeEntries) {
+  // Collect checkpoints from ALL entries (not just activeEntries) so
+  // pre-compaction snapshots survive across compact boundaries.
+  for (const entry of entries) {
     if (entry.type === "file-checkpoint") {
       checkpointsByMessageId.set(entry.messageId, entry);
-    } else if (entry.type === "tool-result-overflow") {
+    }
+  }
+
+  for (const entry of activeEntries) {
+    if (entry.type === "tool-result-overflow") {
       overflowEntries.push(entry);
     } else if (entry.type === "content-replacement") {
       contentReplacements.push(...entry.replacements);

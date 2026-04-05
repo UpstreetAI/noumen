@@ -40,11 +40,12 @@ export const globTool: Tool = {
       ? pattern
       : `**/${pattern}`;
 
-    const command = `rg --files --glob ${shellEscape(fullPattern)} --sort=modified | head -n ${String(MAX_RESULTS + 1)}`;
+    const resolvedPath = searchPath === ctx.cwd ? "." : searchPath;
+    const command = `rg --files --glob ${shellEscape(fullPattern)} --sort=modified ${shellEscape(resolvedPath)} | head -n ${String(MAX_RESULTS + 1)}`;
 
     try {
       const result = await ctx.computer.executeCommand(command, {
-        cwd: searchPath,
+        cwd: ctx.cwd,
       });
 
       // rg exits with 1 when no matches; exit > 1 is a real error

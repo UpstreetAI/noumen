@@ -55,6 +55,9 @@ export const grepTool: Tool = {
       "--line-number",
       "--no-heading",
       "--color=never",
+      "--hidden",
+      "--glob", "'!.git'",
+      "--max-columns", "500",
       `--max-count=${MAX_MATCHES}`,
     ];
 
@@ -62,13 +65,14 @@ export const grepTool: Tool = {
     if (contextLines !== undefined) rgArgs.push(`-C${contextLines}`);
     if (glob) rgArgs.push(`--glob`, shellEscape(glob));
 
-    rgArgs.push("--", shellEscape(pattern), ".");
+    const resolvedPath = searchPath === ctx.cwd ? "." : searchPath;
+    rgArgs.push("--", shellEscape(pattern), shellEscape(resolvedPath));
 
     const command = rgArgs.join(" ");
 
     try {
       const result = await ctx.computer.executeCommand(command, {
-        cwd: searchPath,
+        cwd: ctx.cwd,
       });
 
       if (result.exitCode === 1 && !result.stdout.trim()) {

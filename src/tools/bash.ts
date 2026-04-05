@@ -86,10 +86,13 @@ export const bashTool: Tool = {
       }
 
       if (output.length > MAX_OUTPUT_CHARS) {
-        const totalChars = output.length;
+        const headSize = Math.floor(MAX_OUTPUT_CHARS * 0.8);
+        const tailSize = MAX_OUTPUT_CHARS - headSize;
+        const dropped = output.length - MAX_OUTPUT_CHARS;
         output =
-          output.slice(0, MAX_OUTPUT_CHARS) +
-          `\n... output truncated (${totalChars} total chars)`;
+          output.slice(0, headSize) +
+          `\n\n... ${dropped} chars truncated ...\n\n` +
+          output.slice(-tailSize);
       }
 
       if (result.exitCode !== 0) {
