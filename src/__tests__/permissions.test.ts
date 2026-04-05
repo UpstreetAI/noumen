@@ -1214,6 +1214,47 @@ describe("acceptEdits bash allowlist: ln removed", () => {
 });
 
 // ---------------------------------------------------------------------------
+// acceptEdits mode: non-file tools require approval
+// ---------------------------------------------------------------------------
+describe("acceptEdits non-file tools", () => {
+  it("requires approval for non-file, non-bash tools in acceptEdits mode", async () => {
+    const tool: Tool = {
+      name: "McpNetworkTool",
+      description: "Makes network requests",
+      parameters: { type: "object" as const, properties: {} },
+      async call() { return { content: "ok" }; },
+    };
+    const permCtx: PermissionContext = {
+      mode: "acceptEdits",
+      rules: [],
+      workingDirectories: [],
+    };
+    const toolCtx = { fs: new MockFs(), computer: new MockComputer(), cwd: "/project" } as any;
+
+    const decision = await resolvePermission(tool, {}, toolCtx, permCtx);
+    expect(decision.behavior).toBe("ask");
+  });
+
+  it("auto-allows file tools with file_path in acceptEdits mode", async () => {
+    const tool: Tool = {
+      name: "WriteFile",
+      description: "Write a file",
+      parameters: { type: "object" as const, properties: { file_path: { type: "string" } } },
+      async call() { return { content: "ok" }; },
+    };
+    const permCtx: PermissionContext = {
+      mode: "acceptEdits",
+      rules: [],
+      workingDirectories: [],
+    };
+    const toolCtx = { fs: new MockFs(), computer: new MockComputer(), cwd: "/project" } as any;
+
+    const decision = await resolvePermission(tool, { file_path: "/project/test.txt" }, toolCtx, permCtx);
+    expect(decision.behavior).toBe("allow");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // New dangerous path patterns (.ripgreprc, .noumen.json)
 // ---------------------------------------------------------------------------
 describe("new dangerous path patterns", () => {

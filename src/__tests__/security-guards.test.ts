@@ -32,11 +32,18 @@ describe("sandbox path traversal prevention", () => {
     expect(() => (sfs as any).resolvePath("../../etc/passwd")).toThrow("escapes working directory");
   });
 
-  it("absolute paths are allowed through in remote FS backends", async () => {
+  it("absolute paths within workingDir are allowed in remote FS backends", async () => {
     const { DockerFs } = await import("../virtual/docker-fs.js");
     const mockContainer = {} as any;
     const dfs = new DockerFs({ container: mockContainer, workingDir: "/home/user" });
-    expect((dfs as any).resolvePath("/etc/passwd")).toBe("/etc/passwd");
+    expect((dfs as any).resolvePath("/home/user/file.txt")).toBe("/home/user/file.txt");
+  });
+
+  it("absolute paths outside workingDir are blocked in remote FS backends", async () => {
+    const { DockerFs } = await import("../virtual/docker-fs.js");
+    const mockContainer = {} as any;
+    const dfs = new DockerFs({ container: mockContainer, workingDir: "/home/user" });
+    expect(() => (dfs as any).resolvePath("/etc/passwd")).toThrow("outside working directory");
   });
 });
 

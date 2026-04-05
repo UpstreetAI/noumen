@@ -124,6 +124,34 @@ describe("DockerFs", () => {
     expect(deletedPaths).toContain("/tmp/old.txt");
   });
 
+  it("allows absolute paths within working directory", async () => {
+    const container = createMockContainer((cmd) => {
+      return { exitCode: 0, stdout: "ok", stderr: "" };
+    });
+
+    const fs = new DockerFs({ container, workingDir: "/app" });
+    const content = await fs.readFile("/app/sub/test.txt");
+    expect(content).toBe("ok");
+  });
+
+  it("rejects absolute paths outside working directory", async () => {
+    const container = createMockContainer(() => {
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const fs = new DockerFs({ container, workingDir: "/app" });
+    await expect(fs.readFile("/etc/shadow")).rejects.toThrow("outside working directory");
+  });
+
+  it("rejects relative path traversal", async () => {
+    const container = createMockContainer(() => {
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const fs = new DockerFs({ container, workingDir: "/app" });
+    await expect(fs.readFile("../../etc/passwd")).rejects.toThrow("escapes working directory");
+  });
+
   it("creates directories with mkdir", async () => {
     const createdDirs: string[][] = [];
     const container = createMockContainer((cmd) => {

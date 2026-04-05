@@ -315,3 +315,52 @@ describe("WriteFile content comparison on mtime mismatch", () => {
     expect(result.content).toContain("modified since last read");
   });
 });
+
+describe("ReadFile — large file with limit", () => {
+  it("allows reading a large file when limit is specified", async () => {
+    const bigContent = "line\n".repeat(100_000);
+    fs.files.set("/project/big.txt", bigContent);
+    fs.stats.set("/project/big.txt", { size: 20 * 1024 * 1024 });
+
+    const result = await readFileTool.call(
+      { file_path: "/project/big.txt", offset: 1, limit: 10 },
+      ctx,
+    );
+    expect(result.isError).toBeFalsy();
+  });
+
+  it("blocks reading a large file without limit", async () => {
+    fs.files.set("/project/big.txt", "content");
+    fs.stats.set("/project/big.txt", { size: 20 * 1024 * 1024 });
+
+    const result = await readFileTool.call(
+      { file_path: "/project/big.txt" },
+      ctx,
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("too large");
+  });
+});
+
+describe("EditFile — checkpoint tracking on empty file", () => {
+  it("calls trackEdit when writing to an empty existing file", async () => {
+    fs.files.set("/project/empty.txt", "");
+    const trackEditCalls: string[] = [];
+    const checkpointManager = {
+      trackEdit: async (path: string) => { trackEditCalls.push(path); },
+    };
+    const editCtx = {
+      ...ctx,
+      checkpointManager,
+      currentMessageId: "msg-1",
+      sessionId: "sess-1",
+    } as any;
+
+    const result = await editFileTool.call(
+      { file_path: "/project/empty.txt", old_string: "", new_string: "new content" },
+      editCtx,
+    );
+    expect(result.isError).toBeFalsy();
+    expect(trackEditCalls).toContain("/project/empty.txt");
+  });
+});

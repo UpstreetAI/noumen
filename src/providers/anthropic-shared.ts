@@ -397,10 +397,10 @@ export async function* streamAnthropicChat(
       const usage = (ev as Record<string, unknown>).usage as
         | Record<string, unknown>
         | undefined;
-      if (usage?.output_tokens) {
+      if (usage?.output_tokens != null) {
         outputTokens = usage.output_tokens as number;
       }
-      if (usage?.thinking_tokens) {
+      if (usage?.thinking_tokens != null) {
         thinkingTokens = usage.thinking_tokens as number;
       }
       continue;

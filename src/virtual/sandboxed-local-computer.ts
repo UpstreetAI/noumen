@@ -108,7 +108,7 @@ export class SandboxedLocalComputer implements VirtualComputer {
           const result: CommandResult = {
             exitCode:
               error && "code" in error
-                ? (error.code as number) ?? 1
+                ? (typeof error.code === "number" ? error.code : 1)
                 : child.exitCode ?? 0,
             stdout: stdout ?? "",
             stderr: stderr ?? "",

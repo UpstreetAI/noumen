@@ -109,7 +109,7 @@ export const readFileTool: Tool = {
       // File size guard
       try {
         const stat = await ctx.fs.stat(filePath);
-        if (stat.size !== undefined && stat.size > MAX_FILE_SIZE) {
+        if (stat.size !== undefined && stat.size > MAX_FILE_SIZE && !limit) {
           return {
             content: `Error: File is too large (${Math.round(stat.size / 1024)}KB, max ${MAX_FILE_SIZE / 1024}KB). Use offset/limit to read specific portions.`,
             isError: true,

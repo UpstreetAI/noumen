@@ -267,6 +267,15 @@ export async function resolvePermission(
         };
       }
     }
+    // Non-file, non-bash, non-read-only tools require approval in acceptEdits
+    const hasFilePath = typeof input.file_path === "string" || typeof input.path === "string";
+    if (!isReadOnly && !hasFilePath && toolName !== "Bash") {
+      return {
+        behavior: "ask",
+        message: `Tool "${toolName}" requires approval in acceptEdits mode.`,
+        reason: "mode",
+      };
+    }
     return {
       behavior: "allow",
       updatedInput: effectiveInput,

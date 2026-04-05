@@ -152,7 +152,11 @@ function isConnectionError(error: unknown): boolean {
       const name = typeof e.name === "string" ? e.name : "";
       if (name === "APIConnectionError" || name === "APIConnectionTimeoutError") return true;
       const code = typeof e.code === "string" ? e.code : "";
-      if (code === "ECONNRESET" || code === "EPIPE" || code === "ECONNREFUSED" || code === "ETIMEDOUT") return true;
+      if (
+        code === "ECONNRESET" || code === "EPIPE" || code === "ECONNREFUSED" ||
+        code === "ETIMEDOUT" || code === "ENOTFOUND" || code === "ECONNABORTED" ||
+        code === "EAI_AGAIN" || code === "EHOSTUNREACH"
+      ) return true;
       current = e.cause;
     } else {
       break;

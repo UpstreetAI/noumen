@@ -268,19 +268,26 @@ export function SpritesSandbox(opts: SpritesSandboxOptions): Sandbox {
 
     init(sandboxId?: string): Promise<void> {
       if (!initPromise) {
-        initPromise = doInit(sandboxId);
+        initPromise = doInit(sandboxId).catch((err) => {
+          initPromise = null;
+          throw err;
+        });
       }
       return initPromise;
     },
 
     async dispose(): Promise<void> {
       if (!autoCreated || !resolvedName) return;
-      const res = await fetch(`${baseURL}/v1/sprites/${resolvedName}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${opts.token}` },
-      });
-      if (!res.ok && res.status !== 404) {
-        throw new Error(`Sprites dispose failed (${res.status}): ${await res.text()}`);
+      try {
+        const res = await fetch(`${baseURL}/v1/sprites/${resolvedName}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${opts.token}` },
+        });
+        if (!res.ok && res.status !== 404) {
+          throw new Error(`Sprites dispose failed (${res.status}): ${await res.text()}`);
+        }
+      } catch {
+        // Best-effort cleanup — network errors during dispose are non-fatal
       }
     },
   };
@@ -398,7 +405,10 @@ export function DockerSandbox(opts: DockerSandboxOptions): Sandbox {
 
     init(sandboxId?: string): Promise<void> {
       if (!initPromise) {
-        initPromise = doInit(sandboxId);
+        initPromise = doInit(sandboxId).catch((err) => {
+          initPromise = null;
+          throw err;
+        });
       }
       return initPromise;
     },
@@ -522,7 +532,10 @@ export function E2BSandbox(opts: E2BSandboxOptions): Sandbox {
 
     init(sandboxId?: string): Promise<void> {
       if (!initPromise) {
-        initPromise = doInit(sandboxId);
+        initPromise = doInit(sandboxId).catch((err) => {
+          initPromise = null;
+          throw err;
+        });
       }
       return initPromise;
     },

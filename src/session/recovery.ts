@@ -297,7 +297,7 @@ function fillPartiallyResolvedToolCalls(messages: ChatMessage[]): {
  * Merge consecutive messages with the same role to restore valid
  * role alternation after removing messages from the middle.
  */
-function mergeConsecutiveSameRole(messages: ChatMessage[]): ChatMessage[] {
+export function mergeConsecutiveSameRole(messages: ChatMessage[]): ChatMessage[] {
   if (messages.length <= 1) return messages;
 
   const result: ChatMessage[] = [messages[0]];
@@ -341,13 +341,14 @@ function mergeConsecutiveSameRole(messages: ChatMessage[]): ChatMessage[] {
         ...(prevAsst.tool_calls ?? []),
         ...(currAsst.tool_calls ?? []),
       ];
+      const mergedThinking = [prevAsst.thinking_content, currAsst.thinking_content].filter(Boolean).join("\n") || undefined;
       result[result.length - 1] = {
         role: "assistant",
         content: mergedContent,
         ...(mergedToolCalls.length > 0 ? { tool_calls: mergedToolCalls } : {}),
-        ...(prevAsst.thinking_content ? { thinking_content: prevAsst.thinking_content } : {}),
-        ...(prevAsst.thinking_signature ? { thinking_signature: prevAsst.thinking_signature } : {}),
-        ...(prevAsst.redacted_thinking_data ? { redacted_thinking_data: prevAsst.redacted_thinking_data } : {}),
+        ...(mergedThinking ? { thinking_content: mergedThinking } : {}),
+        ...(currAsst.thinking_signature ?? prevAsst.thinking_signature ? { thinking_signature: currAsst.thinking_signature ?? prevAsst.thinking_signature } : {}),
+        ...(currAsst.redacted_thinking_data ?? prevAsst.redacted_thinking_data ? { redacted_thinking_data: currAsst.redacted_thinking_data ?? prevAsst.redacted_thinking_data } : {}),
       } as AssistantMessage;
     } else {
       result.push(curr);

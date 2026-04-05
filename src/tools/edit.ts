@@ -96,6 +96,9 @@ export const editFileTool: Tool = {
           isError: true,
         };
       }
+      if (ctx.checkpointManager && ctx.currentMessageId) {
+        await ctx.checkpointManager.trackEdit(filePath, ctx.currentMessageId, ctx.sessionId ?? "");
+      }
       await ctx.fs.writeFile(filePath, newString);
       if (ctx.fileStateCache) {
         ctx.fileStateCache.set(filePath, { content: newString, timestamp: Date.now() });

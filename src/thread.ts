@@ -264,7 +264,8 @@ export class Thread {
       if (opts.signal.aborted) {
         this.abortController.abort();
       } else {
-        opts.signal.addEventListener("abort", () => this.abortController?.abort(), { once: true });
+        const localController = this.abortController;
+        opts.signal.addEventListener("abort", () => localController.abort(), { once: true });
       }
     }
     const signal = this.abortController.signal;
@@ -936,11 +937,13 @@ export class Thread {
         // Handle truncated responses (max output tokens reached)
         if (finishReason === "length") {
           yield { type: "text_delta", text: "\n\n[Response truncated due to max output tokens]" };
+          streamingExec?.discard();
           accumulatedToolCalls.clear();
         }
 
         if (finishReason === "content_filter") {
           yield { type: "text_delta", text: "\n\n[Response blocked by content filter]" };
+          streamingExec?.discard();
           accumulatedToolCalls.clear();
         }
 
@@ -1637,6 +1640,11 @@ export class Thread {
 
       // --- Memory extraction (skip on abort) ---
       if (signal.aborted) {
+        await runNotificationHooks(hooks, "TurnEnd", {
+          event: "TurnEnd",
+          sessionId: this.sessionId,
+        });
+        yield { type: "turn_complete", usage: turnUsage, model: this.model, callCount };
         interactionSpan.setStatus(SpanStatusCode.OK);
         interactionSpan.end();
         yield { type: "span_end", name: "noumen.interaction", spanId: this.sessionId, durationMs: Date.now() - interactionStart };
@@ -2053,8 +2061,14 @@ export class Thread {
     let lastBoundaryIdx = -1;
     for (let i = entries.length - 1; i >= 0; i--) {
       if (entries[i].type === "compact-boundary") {
-        lastBoundaryIdx = i;
-        break;
+        const afterBoundary = entries.slice(i + 1);
+        const hasSummaryOrMessage = afterBoundary.some(
+          (e) => e.type === "summary" || e.type === "message",
+        );
+        if (hasSummaryOrMessage) {
+          lastBoundaryIdx = i;
+          break;
+        }
       }
     }
 

@@ -8,6 +8,7 @@ import {
   sanitizeForResume,
   generateMissingToolResults,
   ensureToolResultPairing,
+  mergeConsecutiveSameRole,
 } from "../session/recovery.js";
 
 describe("filterUnresolvedToolUses", () => {
@@ -466,6 +467,22 @@ describe("ensureToolResultPairing", () => {
 
     const result = ensureToolResultPairing(messages);
     expect(result).toBe(messages);
+  });
+
+  it("preserves thinking data from both merged assistant messages", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "first", thinking_content: "thought A", thinking_signature: "sig_old" } as any,
+      { role: "assistant", content: "second", thinking_content: "thought B", thinking_signature: "sig_new", redacted_thinking_data: "redacted_B" } as any,
+    ];
+
+    const result = mergeConsecutiveSameRole(messages);
+    expect(result).toHaveLength(2);
+    const merged = result[1] as any;
+    expect(merged.thinking_content).toContain("thought A");
+    expect(merged.thinking_content).toContain("thought B");
+    expect(merged.thinking_signature).toBe("sig_new");
+    expect(merged.redacted_thinking_data).toBe("redacted_B");
   });
 
   it("only fills missing results, not already resolved ones", () => {

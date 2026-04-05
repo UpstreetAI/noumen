@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { estimateTokens, estimateMessagesTokens } from "../utils/tokens.js";
 import { jsonStringify, parseJSONL } from "../utils/json.js";
 import { generateUUID } from "../utils/uuid.js";
+import { getMaxOutputTokensForModel } from "../utils/context.js";
 
 describe("estimateTokens", () => {
   it("estimates roughly 1 token per 4 chars", () => {
@@ -79,5 +80,27 @@ describe("generateUUID", () => {
     const a = generateUUID();
     const b = generateUUID();
     expect(a).not.toBe(b);
+  });
+});
+
+describe("getMaxOutputTokensForModel", () => {
+  it("returns 64000 for claude-sonnet-4", () => {
+    expect(getMaxOutputTokensForModel("claude-sonnet-4")).toBe(64_000);
+  });
+
+  it("returns 64000 for claude-opus-4", () => {
+    expect(getMaxOutputTokensForModel("claude-opus-4")).toBe(64_000);
+  });
+
+  it("returns 128000 for claude-sonnet-4-6 variants", () => {
+    expect(getMaxOutputTokensForModel("claude-sonnet-4-6-20260401")).toBe(128_000);
+  });
+
+  it("returns 128000 for claude-opus-4-6 variants", () => {
+    expect(getMaxOutputTokensForModel("claude-opus-4-6-20260401")).toBe(128_000);
+  });
+
+  it("returns 64000 for bedrock model prefix", () => {
+    expect(getMaxOutputTokensForModel("us.anthropic.claude-3-5-sonnet-20240620")).toBe(64_000);
   });
 });

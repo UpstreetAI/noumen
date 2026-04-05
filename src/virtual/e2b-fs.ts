@@ -25,10 +25,15 @@ export class E2BFs implements VirtualFs {
   }
 
   private resolvePath(p: string): string {
-    if (p.startsWith("/")) return p;
     if (!this.workingDir) return p;
-    const resolved = path.resolve(this.workingDir, p);
     const normalizedBase = this.workingDir.endsWith("/") ? this.workingDir : this.workingDir + "/";
+    if (p.startsWith("/")) {
+      if (p !== this.workingDir && !p.startsWith(normalizedBase)) {
+        throw new Error(`Absolute path "${p}" is outside working directory "${this.workingDir}"`);
+      }
+      return p;
+    }
+    const resolved = path.resolve(this.workingDir, p);
     if (resolved !== this.workingDir && !resolved.startsWith(normalizedBase)) {
       throw new Error(`Path "${p}" escapes working directory "${this.workingDir}"`);
     }

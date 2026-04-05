@@ -43,6 +43,7 @@ export class DenialTracker {
 
   resetAfterFallback(): void {
     this.state.consecutiveDenials = 0;
+    this.state.totalDenials = 0;
   }
 
   getState(): Readonly<DenialState> {

@@ -522,13 +522,13 @@ describe("withRetry — empty stream triggers retry", () => {
   });
 });
 
-describe("Backoff — Retry-After capped by maxDelayMs", () => {
-  it("caps Retry-After at maxDelayMs instead of 6 hours", () => {
+describe("Backoff — Retry-After honors server directive", () => {
+  it("does not cap Retry-After at maxDelayMs (server directive takes precedence)", () => {
     const delay = getRetryDelay(1, "3600", 32000);
-    expect(delay).toBe(32000);
+    expect(delay).toBe(3600000);
   });
 
-  it("allows Retry-After below maxDelayMs", () => {
+  it("returns Retry-After below maxDelayMs unchanged", () => {
     const delay = getRetryDelay(1, "5", 32000);
     expect(delay).toBe(5000);
   });
@@ -552,6 +552,44 @@ describe("Error classification — 401 not retryable by default", () => {
 // ---------------------------------------------------------------------------
 // Retry engine default status codes
 // ---------------------------------------------------------------------------
+describe("504 Gateway Timeout is retryable", () => {
+  it("504 is in default retryable statuses", () => {
+    expect(DEFAULT_RETRY_CONFIG.retryableStatuses).toContain(504);
+  });
+
+  it("classifies 504 as retryable", () => {
+    const error = { status: 504, message: "Gateway Timeout" };
+    const classified = classifyError(error);
+    expect(isRetryable(classified, DEFAULT_RETRY_CONFIG)).toBe(true);
+  });
+});
+
+describe("additional connection error codes", () => {
+  it("classifies ENOTFOUND as retryable", () => {
+    const error = { code: "ENOTFOUND", message: "DNS lookup failed" };
+    const classified = classifyError(error);
+    expect(isRetryable(classified, DEFAULT_RETRY_CONFIG)).toBe(true);
+  });
+
+  it("classifies ECONNABORTED as retryable", () => {
+    const error = { code: "ECONNABORTED", message: "Connection aborted" };
+    const classified = classifyError(error);
+    expect(isRetryable(classified, DEFAULT_RETRY_CONFIG)).toBe(true);
+  });
+
+  it("classifies EAI_AGAIN as retryable", () => {
+    const error = { code: "EAI_AGAIN", message: "DNS timeout" };
+    const classified = classifyError(error);
+    expect(isRetryable(classified, DEFAULT_RETRY_CONFIG)).toBe(true);
+  });
+
+  it("classifies EHOSTUNREACH as retryable", () => {
+    const error = { code: "EHOSTUNREACH", message: "Network unreachable" };
+    const classified = classifyError(error);
+    expect(isRetryable(classified, DEFAULT_RETRY_CONFIG)).toBe(true);
+  });
+});
+
 describe("retry engine fixes", () => {
   it("401 is not in default retryable statuses", () => {
     expect(DEFAULT_RETRY_CONFIG.retryableStatuses).not.toContain(401);

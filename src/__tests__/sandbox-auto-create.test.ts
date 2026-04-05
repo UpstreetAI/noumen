@@ -160,8 +160,45 @@ describe("SpritesSandbox auto-creation", () => {
     const sandbox = SpritesSandbox({ token: "tok" });
     await sandbox.init!();
 
-    const content = await sandbox.fs.readFile("/test.txt");
+    const content = await sandbox.fs.readFile("test.txt");
     expect(content).toBe("file contents");
+  });
+
+  it("init() can retry after transient failure", async () => {
+    let callCount = 0;
+    globalThis.fetch = vi.fn().mockImplementation(async () => {
+      callCount++;
+      if (callCount === 1) {
+        throw new Error("Network timeout");
+      }
+      return { ok: true, text: () => Promise.resolve("{}") };
+    }) as unknown as typeof fetch;
+
+    const { SpritesSandbox } = await import("../virtual/sandbox.js");
+    const sandbox = SpritesSandbox({ token: "tok" });
+
+    await expect(sandbox.init!()).rejects.toThrow("Network timeout");
+    // Second call should retry (initPromise was reset)
+    await sandbox.init!();
+    expect(sandbox.sandboxId?.()).toBeDefined();
+    expect(callCount).toBe(2);
+  });
+
+  it("dispose() swallows network errors gracefully", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      text: () => Promise.resolve("{}"),
+    }) as unknown as typeof fetch;
+
+    const { SpritesSandbox } = await import("../virtual/sandbox.js");
+    const sandbox = SpritesSandbox({ token: "tok" });
+    await sandbox.init!();
+
+    // Make dispose fail with network error
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error("Network error")) as unknown as typeof fetch;
+
+    // Should not throw
+    await expect(sandbox.dispose!()).resolves.toBeUndefined();
   });
 
   it("namePrefix is used for generated names", async () => {

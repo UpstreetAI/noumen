@@ -372,6 +372,31 @@ describe("compactConversation preserves thinking fields on merge", () => {
     expect((assistants[0] as any).thinking_signature).toBe("sig_xyz");
   });
 
+  it("preserves thinking data from both assistant messages when merging", async () => {
+    provider.addResponse([
+      { id: "c", model: "m", choices: [{ index: 0, delta: { content: "Summary of conversation." }, finish_reason: null }] },
+      { id: "c", model: "m", choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } },
+    ]);
+
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "first", thinking_content: "thinking A", thinking_signature: "sig_A" } as any,
+      { role: "assistant", content: "second", thinking_content: "thinking B", thinking_signature: "sig_B" } as any,
+    ];
+
+    const result = await compactConversation(provider, "mock-model", messages, storage, "s1", {
+      tailMessagesToKeep: 3,
+    });
+
+    const assistants = result.filter((m) => m.role === "assistant");
+    if (assistants.length === 1) {
+      const merged = assistants[0] as any;
+      expect(merged.thinking_content).toContain("thinking A");
+      expect(merged.thinking_content).toContain("thinking B");
+      expect(merged.thinking_signature).toBe("sig_B");
+    }
+  });
+
   it("throws when compact summary is empty", async () => {
     // Provider returns empty content
     provider.addResponse([

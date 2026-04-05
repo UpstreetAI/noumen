@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { classifyCommand } from "../tools/shell-safety/command-classification.js";
+import { classifyCommand, extractCommandName } from "../tools/shell-safety/command-classification.js";
 
 describe("classifyCommand", () => {
   describe("read-only commands", () => {
@@ -296,6 +296,28 @@ describe("classifyCommand", () => {
     it("dotnet script malicious.cs is NOT read-only", () => {
       const result = classifyCommand("dotnet script malicious.cs");
       expect(result.isReadOnly).toBe(false);
+    });
+  });
+
+  describe("stripPrefixes multi-layer wrappers", () => {
+    it("strips nested nohup time sudo wrappers", () => {
+      const result = extractCommandName("nohup time sudo rm -rf /");
+      expect(result).toBe("rm");
+    });
+
+    it("strips sudo env nohup chains", () => {
+      const result = extractCommandName("sudo env nohup ls -la");
+      expect(result).toBe("ls");
+    });
+
+    it("strips nice ionice sudo chains", () => {
+      const result = extractCommandName("nice ionice sudo cat /etc/hosts");
+      expect(result).toBe("cat");
+    });
+
+    it("strips env vars interspersed with wrappers", () => {
+      const result = extractCommandName("FOO=bar sudo BAZ=1 env PATH=/usr/bin rm file");
+      expect(result).toBe("rm");
     });
   });
 });

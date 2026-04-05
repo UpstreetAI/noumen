@@ -316,19 +316,20 @@ function hasUnquotedExpansion(command: string): boolean {
  */
 function stripPrefixes(command: string): string {
   let cmd = command.trim();
-  while (/^[A-Za-z_][A-Za-z0-9_]*=\S*\s/.test(cmd)) {
-    cmd = cmd.replace(/^[A-Za-z_][A-Za-z0-9_]*=\S*\s+/, "");
-  }
-  for (const prefix of ["sudo", "env", "nohup", "time", "nice", "ionice", "strace", "ltrace"]) {
-    if (cmd.startsWith(prefix + " ")) {
-      cmd = cmd.slice(prefix.length).trim();
-      while (cmd.startsWith("-")) {
-        const spaceIdx = cmd.indexOf(" ");
-        if (spaceIdx === -1) break;
-        cmd = cmd.slice(spaceIdx).trim();
-      }
-      while (/^[A-Za-z_][A-Za-z0-9_]*=\S*\s/.test(cmd)) {
-        cmd = cmd.replace(/^[A-Za-z_][A-Za-z0-9_]*=\S*\s+/, "");
+  let prev = "";
+  while (prev !== cmd) {
+    prev = cmd;
+    while (/^[A-Za-z_][A-Za-z0-9_]*=\S*\s/.test(cmd)) {
+      cmd = cmd.replace(/^[A-Za-z_][A-Za-z0-9_]*=\S*\s+/, "");
+    }
+    for (const prefix of ["sudo", "env", "nohup", "time", "nice", "ionice", "strace", "ltrace"]) {
+      if (cmd.startsWith(prefix + " ")) {
+        cmd = cmd.slice(prefix.length).trim();
+        while (cmd.startsWith("-")) {
+          const spaceIdx = cmd.indexOf(" ");
+          if (spaceIdx === -1) break;
+          cmd = cmd.slice(spaceIdx).trim();
+        }
       }
     }
   }

@@ -174,14 +174,21 @@ describe("E2BFs", () => {
     );
   });
 
-  it("uses absolute paths as-is", async () => {
+  it("allows absolute paths within working directory", async () => {
     const sandbox = createMockSandbox();
     const fs = new E2BFs({ sandbox, workingDir: "/workspace" });
 
-    await fs.readFile("/absolute/path.txt");
+    await fs.readFile("/workspace/subdir/file.txt");
     expect(sandbox.files.read).toHaveBeenCalledWith(
-      "/absolute/path.txt",
+      "/workspace/subdir/file.txt",
       { format: "text" },
     );
+  });
+
+  it("rejects absolute paths outside working directory", async () => {
+    const sandbox = createMockSandbox();
+    const fs = new E2BFs({ sandbox, workingDir: "/workspace" });
+
+    await expect(fs.readFile("/etc/shadow")).rejects.toThrow("outside working directory");
   });
 });
