@@ -42,7 +42,6 @@ export class DenialTracker {
   }
 
   resetAfterFallback(): void {
-    this.state.totalDenials = 0;
     this.state.consecutiveDenials = 0;
   }
 

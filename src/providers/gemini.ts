@@ -83,6 +83,10 @@ export class GeminiProvider implements AIProvider {
       config.responseMimeType = "application/json";
     }
 
+    if (params.signal) {
+      (config as Record<string, unknown>).abortSignal = params.signal;
+    }
+
     try {
     const stream = await this.client.models.generateContentStream({
       model: params.model ?? this.defaultModel,

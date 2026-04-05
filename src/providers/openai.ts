@@ -12,6 +12,8 @@ export interface OpenAIProviderOptions {
   baseURL?: string;
   model?: string;
   defaultHeaders?: Record<string, string | undefined>;
+  /** When true, omits `stream_options` that some OpenAI-compatible endpoints don't support. */
+  compatMode?: boolean;
 }
 
 const O_SERIES_PATTERN = /^o[1-9]/;
@@ -19,6 +21,7 @@ const O_SERIES_PATTERN = /^o[1-9]/;
 export class OpenAIProvider implements AIProvider {
   private client: OpenAI;
   private defaultModel: string;
+  protected compatMode: boolean;
 
   constructor(opts: OpenAIProviderOptions) {
     this.client = new OpenAI({
@@ -27,6 +30,7 @@ export class OpenAIProvider implements AIProvider {
       defaultHeaders: opts.defaultHeaders,
     });
     this.defaultModel = opts.model ?? "gpt-5.4";
+    this.compatMode = opts.compatMode ?? false;
   }
 
   async *chat(params: ChatParams): AsyncIterable<ChatStreamChunk> {
@@ -42,7 +46,7 @@ export class OpenAIProvider implements AIProvider {
         function: t.function,
       })),
       stream: true,
-      stream_options: { include_usage: true },
+      ...(this.compatMode ? {} : { stream_options: { include_usage: true } }),
     };
 
     if (isOSeries) {
@@ -71,7 +75,9 @@ export class OpenAIProvider implements AIProvider {
     }
 
     try {
-    const stream = await this.client.chat.completions.create(createParams);
+    const stream = await this.client.chat.completions.create(createParams, {
+      ...(params.signal ? { signal: params.signal } : {}),
+    });
 
     for await (const chunk of stream) {
       const usage = chunk.usage;

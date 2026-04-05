@@ -115,8 +115,7 @@ export async function* withRetry(
             ),
           };
 
-          // Reset attempt counter so the fallback model gets a full retry budget
-          attempt = 0;
+          attempt = Math.max(attempt - Math.floor(maxRetries / 2), 1);
           continue;
         }
       } else {

@@ -294,7 +294,7 @@ async function runAgent(config: MergedConfig): Promise<void> {
         );
         process.exit(1);
       }
-      await startRepl(agent, config);
+      await startRepl(agent, config, () => agent.close());
     }
   } finally {
     await agent.close();

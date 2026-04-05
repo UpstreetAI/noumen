@@ -520,11 +520,21 @@ export class NoumenServer {
         wsSend(ws, { type: "error", error: "Maximum sessions reached" });
         return;
       }
-      const overrides = await this.resolveConnectionOverrides(req);
-      const session = this.createSessionState(msg.sessionId as string | undefined, overrides);
+      if (typeof msg.prompt !== "string" || !msg.prompt.trim()) {
+        wsSend(ws, { type: "error", error: "Missing or empty prompt" });
+        return;
+      }
+      let session: SessionState;
+      try {
+        const overrides = await this.resolveConnectionOverrides(req);
+        session = this.createSessionState(msg.sessionId as string | undefined, overrides);
+      } catch (err) {
+        wsSend(ws, { type: "error", error: err instanceof Error ? err.message : String(err) });
+        return;
+      }
       wsSessions.add(session.id);
       wsSend(ws, { type: "session_created", sessionId: session.id });
-      this.runAgentWs(session, msg.prompt as string, ws, false);
+      this.runAgentWs(session, msg.prompt, ws, false);
       return;
     }
 
@@ -532,9 +542,13 @@ export class NoumenServer {
       const session = this.sessions.get(msg.sessionId as string);
       if (!session) { wsSend(ws, { type: "error", error: "Session not found" }); return; }
       if (!session.done) { wsSend(ws, { type: "error", error: "Session is still running" }); return; }
+      if (typeof msg.prompt !== "string" || !msg.prompt.trim()) {
+        wsSend(ws, { type: "error", error: "Missing or empty prompt" });
+        return;
+      }
       session.done = false;
       session.abortController = new AbortController();
-      this.runAgentWs(session, msg.prompt as string, ws, true);
+      this.runAgentWs(session, msg.prompt, ws, true);
       return;
     }
 
@@ -571,6 +585,9 @@ export class NoumenServer {
     requestedId: string | undefined,
     overrides: ConnectionOverrides,
   ): SessionState {
+    if (requestedId && this.sessions.has(requestedId)) {
+      throw new Error(`Session ${requestedId} already exists`);
+    }
     const sessionId = requestedId ?? randomUUID();
 
     const session: SessionState = {
@@ -653,14 +670,13 @@ export class NoumenServer {
     session.sequenceNum++;
     const seq = session.sequenceNum;
 
+    if (session.eventBuffer.length >= MAX_EVENT_BUFFER) {
+      session.eventBuffer.shift();
+    }
+    session.eventBuffer.push({ seq, event });
+
     if (session.sseResponse) {
       writeSseEventRaw(session.sseResponse, seq, serializeEvent(event));
-    } else {
-      // Buffer with cap — drop oldest if full
-      if (session.eventBuffer.length >= MAX_EVENT_BUFFER) {
-        session.eventBuffer.shift();
-      }
-      session.eventBuffer.push({ seq, event });
     }
   }
 

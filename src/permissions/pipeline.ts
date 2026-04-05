@@ -15,7 +15,7 @@ import type { DenialTracker } from "./denial-tracking.js";
 import { extractCommandName } from "../tools/shell-safety/command-classification.js";
 
 const ACCEPT_EDITS_BASH_ALLOWLIST = new Set([
-  "mkdir", "touch", "rm", "rmdir", "mv", "cp", "sed", "chmod", "ln",
+  "mkdir", "touch", "mv", "cp", "sed", "chmod", "ln",
 ]);
 
 const DANGEROUS_PATH_PATTERNS = [

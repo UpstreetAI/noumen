@@ -111,6 +111,8 @@ export interface ChatParams {
    * to avoid writing fork-only tails into the shared prompt cache.
    */
   skipCacheWrite?: boolean;
+  /** Abort signal — providers should forward this to cancel in-flight HTTP requests. */
+  signal?: AbortSignal;
 }
 
 export interface AIProvider {

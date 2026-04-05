@@ -10,6 +10,7 @@ import { startSpinner } from "./spinner.js";
 export async function startRepl(
   code: Agent,
   config: MergedConfig,
+  cleanup?: () => Promise<void>,
 ): Promise<void> {
   const rl = readline.createInterface({
     input: process.stdin,
@@ -32,7 +33,7 @@ export async function startRepl(
     } else {
       process.stderr.write(chalk.dim("\nGoodbye.\n"));
       rl.close();
-      process.exit(0);
+      cleanup?.().catch(() => {}).finally(() => process.exit(0));
     }
   };
   process.on("SIGINT", sigintHandler);

@@ -68,6 +68,8 @@ export interface ToolContext {
   fileStateCache?: FileStateCache;
   /** Fire a notification hook from within a tool (populated by Thread). */
   notifyHook?: (event: string, input: Record<string, unknown>) => Promise<void>;
+  /** Abort signal — tools should check this to terminate early on user abort. */
+  signal?: AbortSignal;
 }
 
 export interface ToolParameterProperty {

@@ -15,7 +15,7 @@ export const DEFAULT_RETRY_CONFIG: RetryConfig = {
   maxRetries: 10,
   baseDelayMs: 500,
   maxDelayMs: 32000,
-  retryableStatuses: [401, 408, 409, 429, 500, 502, 503, 529],
+  retryableStatuses: [408, 409, 429, 500, 502, 503, 529],
   maxConsecutiveOverloaded: 3,
 };
 

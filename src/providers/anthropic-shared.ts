@@ -282,10 +282,13 @@ export async function* streamAnthropicChat(
   const clampedBudget = thinkingEnabled
     ? Math.max(1024, Math.min(budgetTokens, maxOutputTokens - 1))
     : 0;
+  const effectiveMaxTokens = thinkingEnabled
+    ? Math.max(maxOutputTokens, clampedBudget + 1)
+    : maxOutputTokens;
 
   const streamParams: Record<string, unknown> = {
     model,
-    max_tokens: maxOutputTokens,
+    max_tokens: effectiveMaxTokens,
     system,
     messages: inputMessages,
     tools,
@@ -336,16 +339,20 @@ export async function* streamAnthropicChat(
     }
   }
 
+  if (params.signal) {
+    streamParams.signal = params.signal;
+  }
+
   let stream: AsyncIterable<Record<string, unknown>>;
   try {
     stream = client.messages.stream(streamParams);
   } catch (err: unknown) {
-    const apiErr = err as { status?: number; headers?: { get?(k: string): string | null } };
+    const apiErr = err as { status?: number; headers?: Record<string, string> & { get?(k: string): string | null } };
     throw new ChatStreamError(
       err instanceof Error ? err.message : String(err),
       {
         status: apiErr.status,
-        retryAfter: apiErr.headers?.get?.("retry-after") ?? undefined,
+        retryAfter: apiErr.headers?.get?.("retry-after") ?? apiErr.headers?.["retry-after"] ?? undefined,
         cause: err,
       },
     );
@@ -512,12 +519,12 @@ export async function* streamAnthropicChat(
   }
   } catch (err: unknown) {
     if (err instanceof ChatStreamError) throw err;
-    const apiErr = err as { status?: number; headers?: { get?(k: string): string | null } };
+    const apiErr = err as { status?: number; headers?: Record<string, string> & { get?(k: string): string | null } };
     throw new ChatStreamError(
       err instanceof Error ? err.message : String(err),
       {
         status: apiErr.status,
-        retryAfter: apiErr.headers?.get?.("retry-after") ?? undefined,
+        retryAfter: apiErr.headers?.get?.("retry-after") ?? apiErr.headers?.["retry-after"] ?? undefined,
         cause: err,
       },
     );

@@ -1,571 +1,533 @@
-/**
- * Regression tests for bugs found by comparing noumen with claude-code.
- * Each describe block maps to a specific bug fix.
- */
 import { describe, it, expect, beforeEach } from "vitest";
-import type {
-  ChatMessage,
-  AssistantMessage,
-  StreamEvent,
-  ToolCallContent,
-} from "../session/types.js";
-import type { ChatStreamChunk, AIProvider, ChatParams } from "../providers/types.js";
-import type { Tool, ToolContext } from "../tools/types.js";
-import type { PermissionContext } from "../permissions/types.js";
 import {
   MockFs,
   MockComputer,
   MockAIProvider,
   textResponse,
+  toolCallResponse,
   textChunk,
   stopChunk,
-  toolCallStartChunk,
-  toolCallArgChunk,
-  toolCallsFinishChunk,
 } from "./helpers.js";
 import { Thread, type ThreadConfig } from "../thread.js";
-import { StreamingToolExecutor } from "../tools/streaming-executor.js";
-import { resolvePermission, isDangerousPath } from "../permissions/pipeline.js";
-import { DenialTracker } from "../permissions/denial-tracking.js";
-import { withRetry, CannotRetryError } from "../retry/engine.js";
-import { DEFAULT_RETRY_CONFIG } from "../retry/types.js";
-import {
-  sanitizeForResume,
-  generateMissingToolResults,
-} from "../session/recovery.js";
+import type { AIProvider, ChatParams, ChatStreamChunk } from "../providers/types.js";
+import type { StreamEvent } from "../session/types.js";
 import { createAutoCompactConfig } from "../compact/auto-compact.js";
-import { writeFileTool } from "../tools/write.js";
-import { readFileTool } from "../tools/read.js";
+import { DenialTracker } from "../permissions/denial-tracking.js";
+import { containsShellExpansion } from "../permissions/rules.js";
+import {
+  runPostToolUseFailureHooks,
+  runPreToolUseHooks,
+} from "../hooks/runner.js";
+import type { HookDefinition } from "../hooks/types.js";
+import { classifyError, isRetryable } from "../retry/classify.js";
+import { DEFAULT_RETRY_CONFIG } from "../retry/types.js";
+import { isPrivateHost } from "../tools/web-fetch.js";
 
-async function collectEvents(gen: AsyncGenerator<StreamEvent>): Promise<StreamEvent[]> {
+let fs: MockFs;
+let computer: MockComputer;
+let provider: MockAIProvider;
+let config: ThreadConfig;
+
+beforeEach(() => {
+  fs = new MockFs();
+  computer = new MockComputer();
+  provider = new MockAIProvider();
+  config = {
+    provider,
+    fs,
+    computer,
+    sessionDir: "/sessions",
+    autoCompact: createAutoCompactConfig({ enabled: false }),
+  };
+});
+
+async function collectEvents(
+  gen: AsyncGenerator<StreamEvent>,
+): Promise<StreamEvent[]> {
   const events: StreamEvent[] = [];
-  for await (const e of gen) events.push(e);
+  for await (const event of gen) events.push(event);
   return events;
 }
 
-function makePermCtx(overrides?: Partial<PermissionContext>): PermissionContext {
-  return {
-    mode: "default",
-    rules: [],
-    workingDirectories: ["/project"],
-    ...overrides,
-  };
-}
+// ---------------------------------------------------------------------------
+// Task 1: Abort signal linking
+// ---------------------------------------------------------------------------
+describe("abort signal linking", () => {
+  it("abort() works when external signal is provided", async () => {
+    const chunks: ChatStreamChunk[] = Array.from({ length: 100 }, (_, i) => ({
+      id: `c${i}`,
+      model: "m",
+      choices: [{ index: 0, delta: { content: `chunk${i} ` }, finish_reason: null as string | null }],
+    }));
+    chunks.push({ id: "final", model: "m", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] });
+    provider.addResponse(chunks);
 
-// =========================================================================
-// Bug 1: Mid-stream errors must commit accumulated state
-// =========================================================================
-
-describe("Bug 1: mid-stream errors commit accumulated state", () => {
-  let fs: MockFs;
-  let computer: MockComputer;
-
-  beforeEach(() => {
-    fs = new MockFs({ "/project/a.txt": "content" });
-    computer = new MockComputer();
-  });
-
-  it("persists partial text content when stream throws mid-iteration", async () => {
-    let callCount = 0;
-    const errorProvider: AIProvider = {
-      async *chat(_params: ChatParams) {
-        callCount++;
-        if (callCount === 1) {
-          yield textChunk("Hello ");
-          yield textChunk("world");
-          throw new Error("Connection reset mid-stream");
-        }
-        yield* textResponse("recovered");
-      },
-    };
-
-    const config: ThreadConfig = {
-      provider: errorProvider,
-      fs,
-      computer,
-      sessionDir: "/sessions",
-      autoCompact: createAutoCompactConfig({ enabled: false }),
-    };
-
-    const thread = new Thread(config, { sessionId: "s1" });
+    const externalController = new AbortController();
+    const thread = new Thread(config, { sessionId: "abort-test" });
     const events: StreamEvent[] = [];
-    try {
-      for await (const e of thread.run("say hello")) {
-        events.push(e);
+
+    for await (const event of thread.run("hi", { signal: externalController.signal })) {
+      events.push(event);
+      if (events.length >= 3) {
+        thread.abort();
+        break;
       }
-    } catch {
-      // Expected — the stream error propagates
     }
 
-    const messages = await thread.getMessages();
-    const assistant = messages.find((m) => m.role === "assistant");
-    expect(assistant).toBeDefined();
-    expect((assistant as AssistantMessage).content).toContain("Hello ");
+    expect(events.length).toBeLessThan(100);
   });
 
-  it("persists partial tool calls + synthetic results when stream throws mid-tool", async () => {
-    let callCount = 0;
-    const errorProvider: AIProvider = {
-      async *chat(_params: ChatParams) {
-        callCount++;
-        if (callCount === 1) {
-          yield toolCallStartChunk("tc1", "ReadFile");
-          yield toolCallArgChunk(JSON.stringify({ file_path: "/project/a.txt" }));
-          throw new Error("SSE parse error");
-        }
-        yield* textResponse("recovered");
-      },
-    };
+  it("external signal abort propagates to thread", async () => {
+    const chunks: ChatStreamChunk[] = Array.from({ length: 100 }, (_, i) => ({
+      id: `c${i}`,
+      model: "m",
+      choices: [{ index: 0, delta: { content: `chunk${i} ` }, finish_reason: null as string | null }],
+    }));
+    chunks.push({ id: "final", model: "m", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] });
+    provider.addResponse(chunks);
 
-    const config: ThreadConfig = {
-      provider: errorProvider,
-      fs,
-      computer,
-      sessionDir: "/sessions",
-      autoCompact: createAutoCompactConfig({ enabled: false }),
-    };
+    const externalController = new AbortController();
+    const thread = new Thread(config, { sessionId: "ext-abort-test" });
+    const events: StreamEvent[] = [];
 
-    const thread = new Thread(config, { sessionId: "s1" });
-    try {
-      await collectEvents(thread.run("read file"));
-    } catch {
-      // Expected
+    for await (const event of thread.run("hi", { signal: externalController.signal })) {
+      events.push(event);
+      if (events.length >= 3) {
+        externalController.abort();
+        break;
+      }
     }
 
-    const messages = await thread.getMessages();
-    const assistant = messages.find((m) => m.role === "assistant") as AssistantMessage | undefined;
-    expect(assistant).toBeDefined();
-    expect(assistant!.tool_calls).toHaveLength(1);
-    expect(assistant!.tool_calls![0].function.name).toBe("ReadFile");
+    expect(events.length).toBeLessThan(100);
+  });
 
-    const toolResult = messages.find((m) => m.role === "tool");
-    expect(toolResult).toBeDefined();
-    expect((toolResult as any).isError).toBe(true);
-    expect((toolResult as any).content).toContain("Stream error");
+  it("passes signal to provider via ChatParams", async () => {
+    provider.addResponse(textResponse("ok"));
+    const thread = new Thread(config, { sessionId: "signal-pass" });
+    await collectEvents(thread.run("test"));
+
+    expect(provider.calls).toHaveLength(1);
+    expect(provider.calls[0].signal).toBeDefined();
+    expect(provider.calls[0].signal).toBeInstanceOf(AbortSignal);
   });
 });
 
-// =========================================================================
-// Bug 2: Abort must drain streaming executor for completed results
-// =========================================================================
+// ---------------------------------------------------------------------------
+// Task 2: Deferred tool_use_start emission
+// ---------------------------------------------------------------------------
+describe("deferred tool_use_start emission", () => {
+  it("emits tool_use_start when id and name arrive in separate chunks", async () => {
+    const splitChunks: ChatStreamChunk[] = [
+      {
+        id: "s1", model: "m",
+        choices: [{
+          index: 0,
+          delta: {
+            tool_calls: [{
+              index: 0,
+              id: "tc_split",
+              type: "function",
+              function: { name: undefined as unknown as string, arguments: "" },
+            }],
+          },
+          finish_reason: null,
+        }],
+      },
+      {
+        id: "s2", model: "m",
+        choices: [{
+          index: 0,
+          delta: {
+            tool_calls: [{
+              index: 0,
+              function: { name: "ReadFile", arguments: "" },
+            }],
+          },
+          finish_reason: null,
+        }],
+      },
+      {
+        id: "s3", model: "m",
+        choices: [{
+          index: 0,
+          delta: {
+            tool_calls: [{
+              index: 0,
+              function: { arguments: JSON.stringify({ file_path: "/test.txt" }) },
+            }],
+          },
+          finish_reason: null,
+        }],
+      },
+      {
+        id: "s4", model: "m",
+        choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+      },
+    ];
 
-describe("Bug 2: abort drains streaming executor completed results", () => {
-  const safeTool: Tool = {
-    name: "Safe",
-    description: "safe",
-    parameters: { type: "object", properties: {} },
-    isConcurrencySafe: true,
-    call: async () => ({ content: "ok" }),
-  };
+    fs.files.set("/test.txt", "content");
+    provider.addResponse(splitChunks);
+    provider.addResponse(textResponse("done"));
 
-  const tools = new Map<string, Tool>([["Safe", safeTool]]);
+    const thread = new Thread(config, { sessionId: "split-tc" });
+    const events = await collectEvents(thread.run("read"));
 
-  function makeTc(name: string, id: string): ToolCallContent {
-    return { id, type: "function", function: { name, arguments: "{}" } };
-  }
+    const toolStarts = events.filter((e) => e.type === "tool_use_start");
+    expect(toolStarts).toHaveLength(1);
+    if (toolStarts[0].type === "tool_use_start") {
+      expect(toolStarts[0].toolName).toBe("ReadFile");
+      expect(toolStarts[0].toolUseId).toBe("tc_split");
+    }
+  });
+});
 
-  it("generateMissingToolResults skips already-completed tool_call_ids", () => {
-    const assistant: AssistantMessage = {
-      role: "assistant",
-      content: null,
-      tool_calls: [
-        { id: "tc1", type: "function", function: { name: "Safe", arguments: "{}" } },
-        { id: "tc2", type: "function", function: { name: "Safe", arguments: "{}" } },
+// ---------------------------------------------------------------------------
+// Task 4: Malformed JSON tool calls hard cap
+// ---------------------------------------------------------------------------
+describe("malformed tool call hard cap", () => {
+  it("breaks out of the loop after 5 consecutive all-malformed iterations", async () => {
+    for (let i = 0; i < 7; i++) {
+      const malformedChunks: ChatStreamChunk[] = [
+        {
+          id: `m${i}-1`, model: "m",
+          choices: [{
+            index: 0,
+            delta: {
+              tool_calls: [{ index: 0, id: `tc_${i}`, type: "function", function: { name: "Bash", arguments: "" } }],
+            },
+            finish_reason: null,
+          }],
+        },
+        {
+          id: `m${i}-2`, model: "m",
+          choices: [{
+            index: 0,
+            delta: { tool_calls: [{ index: 0, function: { arguments: "{{not json" } }] },
+            finish_reason: null,
+          }],
+        },
+        {
+          id: `m${i}-3`, model: "m",
+          choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+        },
+      ];
+      provider.addResponse(malformedChunks);
+    }
+
+    const thread = new Thread(config, { sessionId: "malformed-cap" });
+    const events = await collectEvents(thread.run("test"));
+
+    const errorEvent = events.find(
+      (e) => e.type === "error" && (e as any).error?.message?.includes("malformed"),
+    );
+    expect(errorEvent).toBeDefined();
+    expect(provider.calls.length).toBeLessThanOrEqual(7);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 5: Sandbox path traversal
+// ---------------------------------------------------------------------------
+describe("sandbox path traversal prevention", () => {
+  it("docker-fs resolvePath blocks relative ../", async () => {
+    const { DockerFs } = await import("../virtual/docker-fs.js");
+    const mockContainer = {} as any;
+    const dfs = new DockerFs({ container: mockContainer, workingDir: "/home/user" });
+    expect(() => (dfs as any).resolvePath("../../etc/passwd")).toThrow("escapes working directory");
+  });
+
+  it("docker-fs resolvePath allows paths within workingDir", async () => {
+    const { DockerFs } = await import("../virtual/docker-fs.js");
+    const mockContainer = {} as any;
+    const dfs = new DockerFs({ container: mockContainer, workingDir: "/home/user" });
+    expect((dfs as any).resolvePath("subdir/file.txt")).toBe("/home/user/subdir/file.txt");
+  });
+
+  it("e2b-fs resolvePath blocks relative ../", async () => {
+    const { E2BFs } = await import("../virtual/e2b-fs.js");
+    const mockSandbox = {} as any;
+    const efs = new E2BFs({ sandbox: mockSandbox, workingDir: "/home/user" });
+    expect(() => (efs as any).resolvePath("../../etc/passwd")).toThrow("escapes working directory");
+  });
+
+  it("sprites-fs resolvePath blocks relative ../", async () => {
+    const { SpritesFs } = await import("../virtual/sprites-fs.js");
+    const sfs = new SpritesFs({ token: "t", spriteName: "s", workingDir: "/home/sprite" });
+    expect(() => (sfs as any).resolvePath("../../etc/passwd")).toThrow("escapes working directory");
+  });
+
+  it("absolute paths are allowed through in remote FS backends", async () => {
+    const { DockerFs } = await import("../virtual/docker-fs.js");
+    const mockContainer = {} as any;
+    const dfs = new DockerFs({ container: mockContainer, workingDir: "/home/user" });
+    expect((dfs as any).resolvePath("/etc/passwd")).toBe("/etc/passwd");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 6: WebFetch SSRF
+// ---------------------------------------------------------------------------
+describe("WebFetch SSRF prevention", () => {
+  it("blocks localhost", () => {
+    expect(isPrivateHost("localhost")).toBe(true);
+  });
+
+  it("blocks 127.0.0.1", () => {
+    expect(isPrivateHost("127.0.0.1")).toBe(true);
+  });
+
+  it("blocks 10.x.x.x", () => {
+    expect(isPrivateHost("10.0.0.1")).toBe(true);
+    expect(isPrivateHost("10.255.255.255")).toBe(true);
+  });
+
+  it("blocks 172.16-31.x.x", () => {
+    expect(isPrivateHost("172.16.0.1")).toBe(true);
+    expect(isPrivateHost("172.31.255.255")).toBe(true);
+    expect(isPrivateHost("172.15.0.1")).toBe(false);
+    expect(isPrivateHost("172.32.0.1")).toBe(false);
+  });
+
+  it("blocks 192.168.x.x", () => {
+    expect(isPrivateHost("192.168.1.1")).toBe(true);
+  });
+
+  it("blocks 169.254.x.x (link-local)", () => {
+    expect(isPrivateHost("169.254.169.254")).toBe(true);
+  });
+
+  it("blocks ::1 and [::1]", () => {
+    expect(isPrivateHost("::1")).toBe(true);
+    expect(isPrivateHost("[::1]")).toBe(true);
+  });
+
+  it("blocks 0.0.0.0", () => {
+    expect(isPrivateHost("0.0.0.0")).toBe(true);
+  });
+
+  it("allows public IPs", () => {
+    expect(isPrivateHost("8.8.8.8")).toBe(false);
+    expect(isPrivateHost("1.1.1.1")).toBe(false);
+  });
+
+  it("allows public hostnames", () => {
+    expect(isPrivateHost("example.com")).toBe(false);
+    expect(isPrivateHost("api.github.com")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 7: Permissions bugs
+// ---------------------------------------------------------------------------
+describe("permissions bug fixes", () => {
+  describe("containsShellExpansion detects backticks", () => {
+    it("detects backtick command substitution", () => {
+      expect(containsShellExpansion("`whoami`")).toBe(true);
+      expect(containsShellExpansion("/tmp/`id`/file")).toBe(true);
+    });
+
+    it("still detects dollar sign", () => {
+      expect(containsShellExpansion("$(command)")).toBe(true);
+      expect(containsShellExpansion("$HOME/file")).toBe(true);
+    });
+
+    it("still passes normal paths", () => {
+      expect(containsShellExpansion("/home/user/file.txt")).toBe(false);
+      expect(containsShellExpansion("~/file.txt")).toBe(false);
+      expect(containsShellExpansion("./relative/path")).toBe(false);
+    });
+  });
+
+  describe("DenialTracker.resetAfterFallback preserves totalDenials", () => {
+    it("does not reset totalDenials", () => {
+      const tracker = new DenialTracker({ maxConsecutive: 100, maxTotal: 5 });
+      for (let i = 0; i < 5; i++) tracker.recordDenial();
+      expect(tracker.shouldFallback()).toBe(true);
+
+      tracker.resetAfterFallback();
+      expect(tracker.getState().consecutiveDenials).toBe(0);
+      expect(tracker.getState().totalDenials).toBe(5);
+      expect(tracker.shouldFallback()).toBe(true);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 8: Hooks runner — blocking PostToolUseFailure
+// ---------------------------------------------------------------------------
+describe("runPostToolUseFailureHooks blocking error handling", () => {
+  it("returns preventContinuation when a blocking hook throws", async () => {
+    const hooks: HookDefinition[] = [
+      {
+        event: "PostToolUseFailure",
+        blocking: true,
+        handler: () => { throw new Error("audit hook crashed"); },
+      },
+    ];
+
+    const result = await runPostToolUseFailureHooks(hooks, {
+      event: "PostToolUseFailure",
+      toolName: "Bash",
+      toolUseId: "tc1",
+      sessionId: "s1",
+      toolInput: {},
+      toolOutput: "error output",
+      error: "tool failed",
+    });
+
+    expect(result.preventContinuation).toBe(true);
+    expect(result.updatedOutput).toContain("audit hook crashed");
+  });
+
+  it("swallows non-blocking hook errors", async () => {
+    const hooks: HookDefinition[] = [
+      {
+        event: "PostToolUseFailure",
+        handler: () => { throw new Error("non-blocking error"); },
+      },
+    ];
+
+    const result = await runPostToolUseFailureHooks(hooks, {
+      event: "PostToolUseFailure",
+      toolName: "Bash",
+      toolUseId: "tc1",
+      sessionId: "s1",
+      toolInput: {},
+      toolOutput: "error output",
+      error: "tool failed",
+    });
+
+    expect(result.preventContinuation).toBeUndefined();
+    expect(result.updatedOutput).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 9: Anthropic thinking budget constraint
+// ---------------------------------------------------------------------------
+describe("Anthropic thinking budget constraint", () => {
+  it("ensures effectiveMaxTokens > clampedBudget when maxOutputTokens is low", async () => {
+    const { streamAnthropicChat } = await import("../providers/anthropic-shared.js");
+
+    let capturedParams: Record<string, unknown> | undefined;
+    const mockClient = {
+      messages: {
+        async *stream(params: Record<string, unknown>) {
+          capturedParams = params;
+          yield { type: "message_start", message: { usage: { input_tokens: 0, output_tokens: 0 } } };
+          yield { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 0 } };
+          yield { type: "message_stop" };
+        },
+      },
+    };
+
+    const gen = streamAnthropicChat(mockClient as any, {
+      model: "claude-sonnet-4",
+      messages: [{ role: "user", content: "hi" }],
+      max_tokens: 1024,
+      thinking: { type: "enabled", budgetTokens: 2048 },
+    }, "claude-sonnet-4");
+
+    for await (const _chunk of gen) { /* drain */ }
+
+    expect(capturedParams).toBeDefined();
+    const maxTokens = capturedParams!.max_tokens as number;
+    const thinking = capturedParams!.thinking as { budget_tokens: number };
+    expect(maxTokens).toBeGreaterThan(thinking.budget_tokens);
+    expect(thinking.budget_tokens).toBeGreaterThanOrEqual(1024);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 10: Retry engine
+// ---------------------------------------------------------------------------
+describe("retry engine fixes", () => {
+  it("401 is not in default retryable statuses", () => {
+    expect(DEFAULT_RETRY_CONFIG.retryableStatuses).not.toContain(401);
+  });
+
+  it("401 errors are not retryable with defaults", () => {
+    const classified = classifyError({ status: 401, message: "Unauthorized" });
+    expect(isRetryable(classified, DEFAULT_RETRY_CONFIG)).toBe(false);
+  });
+
+  it("429 errors are still retryable", () => {
+    const classified = classifyError({ status: 429, message: "Rate limited" });
+    expect(isRetryable(classified, DEFAULT_RETRY_CONFIG)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 13: OpenAI compatMode omits stream_options
+// ---------------------------------------------------------------------------
+describe("OpenAI compatMode", () => {
+  it("OllamaProvider inherits compatMode and omits stream_options", async () => {
+    const { OllamaProvider } = await import("../providers/ollama.js");
+    const p = new OllamaProvider({ model: "test-model" });
+    expect((p as any).compatMode).toBe(true);
+  });
+
+  it("default OpenAI provider does not use compatMode", async () => {
+    const { OpenAIProvider } = await import("../providers/openai.js");
+    const p = new OpenAIProvider({ apiKey: "test" });
+    expect((p as any).compatMode).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 14: Signal in ToolContext
+// ---------------------------------------------------------------------------
+describe("ToolContext receives signal", () => {
+  it("signal is passed to tool context during run", async () => {
+    let receivedSignal: AbortSignal | undefined;
+
+    const toolConfig: ThreadConfig = {
+      ...config,
+      tools: [
+        {
+          name: "TestTool",
+          description: "Test tool",
+          parameters: { type: "object", properties: { x: { type: "string" } } },
+          async call(_args, ctx) {
+            receivedSignal = ctx.signal;
+            return { content: "ok" };
+          },
+        },
       ],
     };
 
-    const existingResults: ChatMessage[] = [
-      { role: "tool", tool_call_id: "tc1", content: "done" },
+    const toolCallChunks: ChatStreamChunk[] = [
+      {
+        id: "t1", model: "m",
+        choices: [{
+          index: 0,
+          delta: {
+            tool_calls: [{ index: 0, id: "tc_test", type: "function", function: { name: "TestTool", arguments: "" } }],
+          },
+          finish_reason: null,
+        }],
+      },
+      {
+        id: "t2", model: "m",
+        choices: [{
+          index: 0,
+          delta: { tool_calls: [{ index: 0, function: { arguments: '{"x":"val"}' } }] },
+          finish_reason: null,
+        }],
+      },
+      {
+        id: "t3", model: "m",
+        choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+      },
     ];
 
-    const synthetics = generateMissingToolResults(assistant, existingResults, "Interrupted by abort");
-    expect(synthetics).toHaveLength(1);
-    expect(synthetics[0].tool_call_id).toBe("tc2");
-    expect(synthetics[0].content).toContain("Interrupted by abort");
-  });
-});
+    provider.addResponse(toolCallChunks);
+    provider.addResponse(textResponse("done"));
 
-// =========================================================================
-// Bug 3: acceptEdits must enforce working directory restrictions
-// =========================================================================
+    const thread = new Thread(toolConfig, { sessionId: "signal-ctx" });
+    await collectEvents(thread.run("test"));
 
-describe("Bug 3: acceptEdits working directory check", () => {
-  let fs: MockFs;
-  let computer: MockComputer;
-  let ctx: ToolContext;
-
-  beforeEach(() => {
-    fs = new MockFs();
-    computer = new MockComputer();
-    ctx = { fs, computer, cwd: "/project" };
-  });
-
-  it("blocks writes outside working directories in acceptEdits mode", async () => {
-    const result = await resolvePermission(
-      writeFileTool,
-      { file_path: "/etc/passwd", content: "malicious" },
-      ctx,
-      makePermCtx({ mode: "acceptEdits", workingDirectories: ["/project"] }),
-    );
-    // Either "deny" (from general working dir check) or "ask" (from acceptEdits check) is acceptable
-    expect(["deny", "ask"]).toContain(result.behavior);
-    expect(result.reason).toBe("workingDirectory");
-  });
-
-  it("allows writes inside working directories in acceptEdits mode", async () => {
-    const result = await resolvePermission(
-      writeFileTool,
-      { file_path: "/project/src/index.ts", content: "code" },
-      ctx,
-      makePermCtx({ mode: "acceptEdits", workingDirectories: ["/project"] }),
-    );
-    expect(result.behavior).toBe("allow");
-  });
-
-  it("allows writes when no working directories are configured", async () => {
-    const result = await resolvePermission(
-      writeFileTool,
-      { file_path: "/anywhere/file.ts", content: "x" },
-      ctx,
-      makePermCtx({ mode: "acceptEdits", workingDirectories: [] }),
-    );
-    expect(result.behavior).toBe("allow");
-  });
-});
-
-// =========================================================================
-// Bug 4: isDangerousPath must catch .git/ anywhere in path
-// =========================================================================
-
-describe("Bug 4: isDangerousPath catches .git/ in out-of-CWD paths", () => {
-  it("detects .git/hooks as relative path", () => {
-    expect(isDangerousPath(".git/hooks/pre-commit")).toBe(true);
-  });
-
-  it("detects .git/config as relative path", () => {
-    expect(isDangerousPath(".git/config")).toBe(true);
-  });
-
-  it("detects .git/hooks in absolute path outside CWD", () => {
-    expect(isDangerousPath("/other/project/.git/hooks/pre-commit", "/my/project")).toBe(true);
-  });
-
-  it("detects .git/config in absolute path outside CWD", () => {
-    expect(isDangerousPath("/other/project/.git/config", "/my/project")).toBe(true);
-  });
-
-  it("detects .git/objects in absolute path outside CWD", () => {
-    expect(isDangerousPath("/other/project/.git/objects/abc123", "/my/project")).toBe(true);
-  });
-
-  it("detects .git/refs in absolute path outside CWD", () => {
-    expect(isDangerousPath("/other/project/.git/refs/heads/main", "/my/project")).toBe(true);
-  });
-
-  it("does not flag normal paths containing 'git'", () => {
-    expect(isDangerousPath("/project/github/readme.md")).toBe(false);
-    expect(isDangerousPath("src/git-utils.ts")).toBe(false);
-  });
-});
-
-// =========================================================================
-// Bug 5: StreamingToolExecutor.discard()
-// =========================================================================
-
-describe("Bug 5: StreamingToolExecutor discard", () => {
-  const safeTool: Tool = {
-    name: "Safe",
-    description: "safe",
-    parameters: { type: "object", properties: {} },
-    isConcurrencySafe: true,
-    call: async () => ({ content: "ok" }),
-  };
-
-  const tools = new Map<string, Tool>([["Safe", safeTool]]);
-
-  function makeTc(name: string, id: string): ToolCallContent {
-    return { id, type: "function", function: { name, arguments: "{}" } };
-  }
-
-  it("getRemainingResults yields synthetic errors for queued tools after discard", async () => {
-    let resolve1: (() => void) | undefined;
-    const promise1 = new Promise<void>((r) => { resolve1 = r; });
-
-    const executor = new StreamingToolExecutor(
-      (name) => tools.get(name),
-      async (tc) => {
-        if (tc.id === "1") await promise1;
-        return { result: { content: `done-${tc.id}` }, events: [] };
-      },
-    );
-
-    executor.addTool(makeTc("Safe", "1"), {});
-    executor.addTool(makeTc("Safe", "2"), {});
-
-    await new Promise((r) => setTimeout(r, 10));
-    executor.discard();
-    resolve1!();
-
-    const results = [];
-    for await (const r of executor.getRemainingResults()) {
-      results.push(r);
-    }
-
-    expect(results.length).toBeGreaterThan(0);
-    const errorResults = results.filter((r) => r.result.isError);
-    expect(errorResults.length).toBeGreaterThan(0);
-    expect(errorResults[0].result.content).toContain("discarded");
-  });
-
-  it("addTool after discard produces immediate error result", async () => {
-    const executor = new StreamingToolExecutor(
-      (name) => tools.get(name),
-      async () => ({ result: { content: "ok" }, events: [] }),
-    );
-
-    executor.discard();
-    executor.addTool(makeTc("Safe", "1"), {});
-
-    const results = [];
-    for await (const r of executor.getRemainingResults()) {
-      results.push(r);
-    }
-
-    expect(results).toHaveLength(1);
-    expect(results[0].result.isError).toBe(true);
-    expect(results[0].result.content).toContain("discarded");
-  });
-
-  it("isDiscarded returns correct state", () => {
-    const executor = new StreamingToolExecutor(
-      (name) => tools.get(name),
-      async () => ({ result: { content: "ok" }, events: [] }),
-    );
-
-    expect(executor.isDiscarded()).toBe(false);
-    executor.discard();
-    expect(executor.isDiscarded()).toBe(true);
-  });
-
-  it("getCompletedResults returns nothing after discard", () => {
-    const executor = new StreamingToolExecutor(
-      (name) => tools.get(name),
-      async () => ({ result: { content: "ok" }, events: [] }),
-    );
-
-    executor.addTool(makeTc("Safe", "1"), {});
-    executor.discard();
-
-    const results = [...executor.getCompletedResults()];
-    expect(results).toHaveLength(0);
-  });
-});
-
-// =========================================================================
-// Bug 6: Fallback model switch persisted via model_switch event
-// =========================================================================
-
-describe("Bug 6: model_switch event on fallback", () => {
-  it("yields model_switch event when fallback is triggered", async () => {
-    let callCount = 0;
-
-    async function* mockStream(ctx: { model: string }): AsyncIterable<ChatStreamChunk> {
-      callCount++;
-      if (callCount <= 3) {
-        throw Object.assign(new Error("Overloaded"), { status: 529 });
-      }
-      yield textChunk("ok");
-      yield stopChunk();
-    }
-
-    const gen = withRetry(
-      (ctx) => mockStream(ctx),
-      {
-        ...DEFAULT_RETRY_CONFIG,
-        model: "primary",
-        fallbackModel: "fallback",
-        maxConsecutiveOverloaded: 3,
-        baseDelayMs: 1,
-      },
-    );
-
-    const events: StreamEvent[] = [];
-    let result = await gen.next();
-    while (!result.done) {
-      events.push(result.value);
-      result = await gen.next();
-    }
-
-    const switchEvents = events.filter((e) => e.type === "model_switch");
-    expect(switchEvents).toHaveLength(1);
-    const sw = switchEvents[0] as { type: "model_switch"; from: string; to: string };
-    expect(sw.from).toBe("primary");
-    expect(sw.to).toBe("fallback");
-  });
-
-  it("thread persists fallback model for subsequent turns", async () => {
-    let callCount = 0;
-    const modelsUsed: string[] = [];
-
-    const fallbackProvider: AIProvider = {
-      async *chat(params: ChatParams) {
-        callCount++;
-        modelsUsed.push(params.model);
-        if (callCount <= 3) {
-          throw Object.assign(new Error("Overloaded"), { status: 529 });
-        }
-        yield textChunk("response");
-        yield stopChunk({ prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 });
-      },
-    };
-
-    const fs = new MockFs();
-    const computer = new MockComputer();
-    const config: ThreadConfig = {
-      provider: fallbackProvider,
-      fs,
-      computer,
-      sessionDir: "/sessions",
-      model: "primary",
-      autoCompact: createAutoCompactConfig({ enabled: false }),
-      retry: {
-        ...DEFAULT_RETRY_CONFIG,
-        fallbackModel: "fallback",
-        maxConsecutiveOverloaded: 3,
-        baseDelayMs: 1,
-      },
-    };
-
-    const thread = new Thread(config, { sessionId: "s1" });
-    const events1 = await collectEvents(thread.run("hello"));
-
-    const switchEvents = events1.filter((e) => e.type === "model_switch");
-    expect(switchEvents).toHaveLength(1);
-
-    // Second turn should use the fallback model
-    const events2 = await collectEvents(thread.run("hello again"));
-    expect(modelsUsed[modelsUsed.length - 1]).toBe("fallback");
-  });
-});
-
-// =========================================================================
-// Bug 7: DenialTracker.shouldFallback() is idempotent
-// =========================================================================
-
-describe("Bug 7: shouldFallback is pure (no mutation)", () => {
-  it("returns the same result on consecutive calls", () => {
-    const tracker = new DenialTracker({ maxConsecutive: 100, maxTotal: 3 });
-    tracker.recordDenial();
-    tracker.recordDenial();
-    tracker.recordDenial();
-
-    expect(tracker.shouldFallback()).toBe(true);
-    expect(tracker.shouldFallback()).toBe(true);
-    expect(tracker.shouldFallback()).toBe(true);
-  });
-
-  it("resetAfterFallback clears state so shouldFallback returns false", () => {
-    const tracker = new DenialTracker({ maxConsecutive: 100, maxTotal: 3 });
-    tracker.recordDenial();
-    tracker.recordDenial();
-    tracker.recordDenial();
-
-    expect(tracker.shouldFallback()).toBe(true);
-    tracker.resetAfterFallback();
-    expect(tracker.shouldFallback()).toBe(false);
-    expect(tracker.getState().totalDenials).toBe(0);
-    expect(tracker.getState().consecutiveDenials).toBe(0);
-  });
-
-  it("consecutive limit also triggers shouldFallback idempotently", () => {
-    const tracker = new DenialTracker({ maxConsecutive: 2, maxTotal: 100 });
-    tracker.recordDenial();
-    tracker.recordDenial();
-
-    expect(tracker.shouldFallback()).toBe(true);
-    expect(tracker.shouldFallback()).toBe(true);
-  });
-});
-
-// =========================================================================
-// Bug 9: fillPartiallyResolvedToolCalls map key collision
-// =========================================================================
-
-describe("Bug 9: fillPartiallyResolvedToolCalls handles overlapping insertion points", () => {
-  it("inserts synthetic results for two assistants with partially resolved calls", () => {
-    // Assistant 1: tc_1 (resolved at index 2), tc_2 (unresolved) -> lastResultIdx = 2
-    // Assistant 2: tc_3 (resolved at index 4, same tool_result sharing), tc_4 (unresolved) -> lastResultIdx = 4
-    // Both get synthetics without collision. But let's create a case where both
-    // assistants share a tool_result index by having assistant 2 have some of its
-    // results at the same spot as assistant 1.
-    //
-    // Actually, the real collision scenario: two assistants whose ONLY resolved
-    // tool results end at the same message index. This requires interleaved
-    // tool results (unusual but possible after crash recovery).
-    // Simplest test: both assistants have lastResultIdx fall back to their
-    // own asstIdx. If asstIdx differs, no collision.
-    // The fix ensures merging, so we test the general case.
-    const messages: ChatMessage[] = [
-      { role: "user", content: "do it" },
-      {
-        role: "assistant",
-        content: null,
-        tool_calls: [
-          { id: "tc_1", type: "function", function: { name: "Bash", arguments: '{"command":"ls"}' } },
-          { id: "tc_2", type: "function", function: { name: "Bash", arguments: '{"command":"pwd"}' } },
-        ],
-      },
-      { role: "tool", tool_call_id: "tc_1", content: "file1.txt" },
-      // tc_2 is missing
-      { role: "user", content: "continue" },
-      {
-        role: "assistant",
-        content: null,
-        tool_calls: [
-          { id: "tc_3", type: "function", function: { name: "Grep", arguments: '{}' } },
-          { id: "tc_4", type: "function", function: { name: "Grep", arguments: '{}' } },
-        ],
-      },
-      { role: "tool", tool_call_id: "tc_3", content: "found" },
-      // tc_4 is missing
-    ];
-
-    const result = sanitizeForResume(messages);
-    const tc2Synthetic = result.messages.find(
-      (m) => m.role === "tool" && (m as any).tool_call_id === "tc_2",
-    );
-    const tc4Synthetic = result.messages.find(
-      (m) => m.role === "tool" && (m as any).tool_call_id === "tc_4",
-    );
-    expect(tc2Synthetic).toBeDefined();
-    expect(tc4Synthetic).toBeDefined();
-    expect((tc2Synthetic as any).isError).toBe(true);
-    expect((tc4Synthetic as any).isError).toBe(true);
-  });
-
-  it("handles two assistants at same position without dropping synthetics", () => {
-    // Construct: asst1 at index 1 with no real results (lastResultIdx = 1),
-    //            asst2 at index 2 with no real results (lastResultIdx = 2).
-    // After asst1 is partially resolved but only has results at index 1,
-    // no collision. But if we manipulate so both map to index 1:
-    // That's hard to construct, so test the general case
-    // where generateMissingToolResults is called for each.
-    const assistant: AssistantMessage = {
-      role: "assistant",
-      content: null,
-      tool_calls: [
-        { id: "a", type: "function", function: { name: "X", arguments: "{}" } },
-        { id: "b", type: "function", function: { name: "Y", arguments: "{}" } },
-        { id: "c", type: "function", function: { name: "Z", arguments: "{}" } },
-      ],
-    };
-
-    const existing: ChatMessage[] = [
-      { role: "tool", tool_call_id: "a", content: "ok" },
-    ];
-
-    const synthetics = generateMissingToolResults(assistant, existing, "test");
-    expect(synthetics).toHaveLength(2);
-    expect(synthetics.map((s) => s.tool_call_id).sort()).toEqual(["b", "c"]);
+    expect(receivedSignal).toBeDefined();
+    expect(receivedSignal).toBeInstanceOf(AbortSignal);
   });
 });

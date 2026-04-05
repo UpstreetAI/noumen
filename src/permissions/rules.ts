@@ -202,6 +202,7 @@ export function getMatchingRules(
  */
 export function containsShellExpansion(p: string): boolean {
   if (p.includes("$") || p.includes("%") || p.startsWith("=")) return true;
+  if (p.includes("`")) return true;
   if (/^~[^/]/.test(p)) return true; // ~user, ~+, ~- (bare ~/... is fine)
   if (p.startsWith("\\\\")) return true; // UNC paths
   return false;

@@ -374,8 +374,9 @@ export class Agent {
     return tools;
   }
 
-  private createSpawnSubagent(parentCwd: string): (config: SubagentConfig) => SubagentRun {
+  private createSpawnSubagent(getCwd: () => string): (config: SubagentConfig) => SubagentRun {
     return (config: SubagentConfig): SubagentRun => {
+      const parentCwd = getCwd();
       const parentTools = this.getAllTools().filter((t) => t.name !== "Agent");
       const childTools = config.allowedTools
         ? parentTools.filter((t) => config.allowedTools!.includes(t.name))
@@ -432,7 +433,8 @@ export class Agent {
     const skills = this.resolvedSkills ?? this.skills;
     const cwd = opts?.cwd ?? this.cwd;
 
-    return new Thread(
+    let thread!: Thread;
+    thread = new Thread(
       {
         provider: await this.ensureProvider(),
         fs: this.fs,
@@ -452,7 +454,7 @@ export class Agent {
           : this.permissions,
         hooks: this.hooks,
         spawnSubagent: this.enableSubagents
-          ? this.createSpawnSubagent(cwd)
+          ? this.createSpawnSubagent(() => thread.getCwd())
           : undefined,
         streamingToolExecution: this.streamingToolExecution,
         userInputHandler: opts?.userInputHandler ?? this.userInputHandler,
@@ -479,6 +481,7 @@ export class Agent {
         cwd,
       },
     );
+    return thread;
   }
 
   async listSessions(): Promise<SessionInfo[]> {
@@ -516,7 +519,7 @@ export class Agent {
     prompt: string | ContentPart[],
     opts?: RunOptions & ThreadOptions,
   ): AsyncGenerator<StreamEvent, void, unknown> {
-    await this.ensureProvider();
+    await this.init();
     const thread = await this.createThread(opts);
     yield* thread.run(prompt, opts);
   }
@@ -536,7 +539,7 @@ export class Agent {
     prompt: string | ContentPart[],
     opts?: RunOptions & ThreadOptions & RunCallbacks,
   ): Promise<RunResult> {
-    await this.ensureProvider();
+    await this.init();
     const thread = await this.createThread(opts);
     let text = "";
     let toolCalls = 0;
@@ -585,7 +588,10 @@ export class Agent {
    */
   async init(): Promise<void> {
     if (!this.initPromise) {
-      this.initPromise = this.doInit();
+      this.initPromise = this.doInit().catch((err) => {
+        this.initPromise = null;
+        throw err;
+      });
     }
     return this.initPromise;
   }

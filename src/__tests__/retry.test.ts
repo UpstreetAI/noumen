@@ -448,11 +448,17 @@ describe("Retry in Thread", () => {
   });
 });
 
-describe("Error classification — 401 retryable", () => {
-  it("classifies 401 as retryable for token refresh", () => {
+describe("Error classification — 401 not retryable by default", () => {
+  it("classifies 401 as not retryable (credentials not refreshed)", () => {
     const error = { status: 401, message: "Unauthorized" };
     const classified = classifyError(error);
     expect(classified.status).toBe(401);
-    expect(isRetryable(classified, DEFAULT_RETRY_CONFIG)).toBe(true);
+    expect(isRetryable(classified, DEFAULT_RETRY_CONFIG)).toBe(false);
+  });
+
+  it("classifies 401 as retryable when explicitly configured", () => {
+    const error = { status: 401, message: "Unauthorized" };
+    const classified = classifyError(error);
+    expect(isRetryable(classified, { retryableStatuses: [401] })).toBe(true);
   });
 });

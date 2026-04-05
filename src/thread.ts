@@ -257,7 +257,14 @@ export class Thread {
     opts?: RunOptions,
   ): AsyncGenerator<StreamEvent, void, unknown> {
     this.abortController = new AbortController();
-    const signal = opts?.signal ?? this.abortController.signal;
+    if (opts?.signal) {
+      if (opts.signal.aborted) {
+        this.abortController.abort();
+      } else {
+        opts.signal.addEventListener("abort", () => this.abortController?.abort(), { once: true });
+      }
+    }
+    const signal = this.abortController.signal;
     this.querySource = "main";
 
     const interactionSpan = this.tracer.startSpan("noumen.interaction", {
@@ -383,6 +390,7 @@ export class Thread {
         sessionId: this.sessionId,
         hooks: this.hooks,
         spawnSubagent: this.config.spawnSubagent,
+        signal,
         userInputHandler: this.config.userInputHandler,
         taskStore: this.config.taskStore,
         lspManager: this.config.lspManager,
@@ -424,7 +432,9 @@ export class Thread {
         cache_creation_tokens: 0,
         thinking_tokens: 0,
       };
+      const MAX_CONSECUTIVE_MALFORMED = 5;
       let callCount = 0;
+      let consecutiveMalformedIterations = 0;
       let preventContinuation = false;
       const hooks = this.hooks;
 
@@ -563,6 +573,7 @@ export class Thread {
           max_tokens: currentMaxTokens,
           thinking: this.config.thinking,
           skipCacheWrite: this.config.skipCacheWrite,
+          signal,
           ...(runOutputFormat && !isFinalResponseMode ? { outputFormat: runOutputFormat } : {}),
         };
 
@@ -769,14 +780,16 @@ export class Thread {
                 if (!existing) {
                   const id = tc.id ?? "";
                   const name = tc.function?.name ?? "";
+                  const startEmitted = !!(tc.id && tc.function?.name);
                   accumulatedToolCalls.set(tc.index, {
                     id,
                     name,
                     arguments: tc.function?.arguments ?? "",
                     complete: false,
+                    startEmitted,
                   });
 
-                  if (tc.id && tc.function?.name) {
+                  if (startEmitted) {
                     yield {
                       type: "tool_use_start",
                       toolName: name,
@@ -802,6 +815,14 @@ export class Thread {
                 } else {
                   if (tc.id) existing.id = tc.id;
                   if (tc.function?.name) existing.name = tc.function.name;
+                  if (!existing.startEmitted && existing.id && existing.name) {
+                    existing.startEmitted = true;
+                    yield {
+                      type: "tool_use_start",
+                      toolName: existing.name,
+                      toolUseId: existing.id,
+                    };
+                  }
                   if (tc.function?.arguments) {
                     existing.arguments += tc.function.arguments;
                     yield {
@@ -986,7 +1007,11 @@ export class Thread {
         const malformedToolCalls: Array<{ id: string; name: string }> = [];
         const toolCalls: ToolCallContent[] = [];
         for (const tc of accumulatedToolCalls.values()) {
-          if (tc.malformedJson) {
+          let isMalformed = tc.malformedJson;
+          if (!isMalformed && !streamingExec) {
+            try { JSON.parse(tc.arguments); } catch { isMalformed = true; }
+          }
+          if (isMalformed) {
             malformedToolCalls.push({ id: tc.id, name: tc.name });
           } else {
             toolCalls.push({
@@ -1044,6 +1069,11 @@ export class Thread {
         // When only malformed calls exist, continue the loop to give the
         // model another chance without entering the tool execution path.
         if (toolCalls.length === 0 && malformedToolCalls.length > 0) {
+          consecutiveMalformedIterations++;
+          if (consecutiveMalformedIterations >= MAX_CONSECUTIVE_MALFORMED) {
+            yield { type: "error", error: new Error(`Exceeded ${MAX_CONSECUTIVE_MALFORMED} consecutive malformed tool call attempts`) };
+            break;
+          }
           if (opts?.maxTurns !== undefined && callCount >= opts.maxTurns) {
             await runNotificationHooks(hooks, "TurnEnd", {
               event: "TurnEnd",
@@ -1061,6 +1091,7 @@ export class Thread {
         }
 
         if (toolCalls.length > 0) {
+          consecutiveMalformedIterations = 0;
           const touchedFilePaths: string[] = [];
           const registry = this.toolRegistry;
           const storage = this.storage;
@@ -2052,6 +2083,10 @@ export class Thread {
 
   getModel(): string {
     return this.model;
+  }
+
+  getCwd(): string {
+    return this.cwd;
   }
 
   abort(): void {

@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import type { VirtualFs, FileEntry, FileStat, ReadOptions } from "./fs.js";
 
 export interface SpritesFsOptions {
@@ -48,7 +49,12 @@ export class SpritesFs implements VirtualFs {
 
   private resolvePath(p: string): string {
     if (p.startsWith("/")) return p;
-    return `${this.workingDir}/${p}`;
+    const resolved = path.resolve(this.workingDir, p);
+    const normalizedBase = this.workingDir.endsWith("/") ? this.workingDir : this.workingDir + "/";
+    if (resolved !== this.workingDir && !resolved.startsWith(normalizedBase)) {
+      throw new Error(`Path "${p}" escapes working directory "${this.workingDir}"`);
+    }
+    return resolved;
   }
 
   private headers(): Record<string, string> {

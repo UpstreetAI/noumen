@@ -11,6 +11,7 @@ export class OllamaProvider extends OpenAIProvider {
     super({
       baseURL: opts.baseURL ?? "http://localhost:11434/v1",
       model: opts.model ?? "qwen2.5-coder:32b",
+      compatMode: true,
     });
   }
 }

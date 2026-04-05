@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import type { VirtualFs, FileEntry, FileStat, ReadOptions } from "./fs.js";
 import type { E2BSandboxInstance } from "./e2b-computer.js";
 
@@ -26,10 +27,12 @@ export class E2BFs implements VirtualFs {
   private resolvePath(p: string): string {
     if (p.startsWith("/")) return p;
     if (!this.workingDir) return p;
-    const base = this.workingDir.endsWith("/")
-      ? this.workingDir
-      : this.workingDir + "/";
-    return base + p;
+    const resolved = path.resolve(this.workingDir, p);
+    const normalizedBase = this.workingDir.endsWith("/") ? this.workingDir : this.workingDir + "/";
+    if (resolved !== this.workingDir && !resolved.startsWith(normalizedBase)) {
+      throw new Error(`Path "${p}" escapes working directory "${this.workingDir}"`);
+    }
+    return resolved;
   }
 
   async readFile(path: string, _opts?: ReadOptions): Promise<string> {

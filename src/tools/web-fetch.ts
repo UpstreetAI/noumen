@@ -4,6 +4,33 @@ import { WEB_FETCH_PROMPT } from "./prompts/web-fetch.js";
 const MAX_CONTENT_LENGTH = 5 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 30_000;
 const MAX_OUTPUT_CHARS = 100_000;
+const MAX_REDIRECTS = 5;
+
+export function isPrivateHost(hostname: string): boolean {
+  if (
+    hostname === "localhost" ||
+    hostname === "[::1]" ||
+    hostname === "0.0.0.0"
+  ) {
+    return true;
+  }
+
+  const parts = hostname.split(".");
+  if (parts.length === 4 && parts.every((p) => /^\d+$/.test(p))) {
+    const [a, b] = parts.map(Number);
+    if (a === 127) return true;
+    if (a === 10) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 0) return true;
+  }
+
+  if (hostname.startsWith("fe80:") || hostname.startsWith("[fe80:")) return true;
+  if (hostname === "::1") return true;
+
+  return false;
+}
 
 export const webFetchTool: Tool = {
   name: "WebFetch",
@@ -37,30 +64,52 @@ export const webFetchTool: Tool = {
     const url = args.url as string;
     const prompt = args.prompt as string | undefined;
 
+    let parsedUrl: URL;
     try {
-      new URL(url);
+      parsedUrl = new URL(url);
     } catch {
       return { content: `Invalid URL: ${url}`, isError: true };
+    }
+
+    if (isPrivateHost(parsedUrl.hostname)) {
+      return { content: `Blocked: "${parsedUrl.hostname}" resolves to a private/internal address`, isError: true };
     }
 
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-      const response = await fetch(url, {
-        signal: controller.signal,
-        headers: {
-          "User-Agent": "noumen-agent/1.0",
-          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.7",
-        },
-        redirect: "follow",
-      });
+      let currentUrl = url;
+      let response: Response | undefined;
+      for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects++) {
+        response = await fetch(currentUrl, {
+          signal: controller.signal,
+          headers: {
+            "User-Agent": "noumen-agent/1.0",
+            Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.7",
+          },
+          redirect: "manual",
+        });
+
+        if (response.status >= 300 && response.status < 400) {
+          const location = response.headers.get("location");
+          if (!location) break;
+          const redirectUrl = new URL(location, currentUrl);
+          if (isPrivateHost(redirectUrl.hostname)) {
+            clearTimeout(timeoutId);
+            return { content: `Blocked: redirect to private/internal address "${redirectUrl.hostname}"`, isError: true };
+          }
+          currentUrl = redirectUrl.toString();
+          continue;
+        }
+        break;
+      }
 
       clearTimeout(timeoutId);
 
-      if (!response.ok) {
+      if (!response || !response.ok) {
         return {
-          content: `HTTP ${response.status}: ${response.statusText}`,
+          content: `HTTP ${response?.status ?? "unknown"}: ${response?.statusText ?? "no response"}`,
           isError: true,
         };
       }
