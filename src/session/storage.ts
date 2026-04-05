@@ -294,12 +294,18 @@ export class SessionStorage {
       const sessionId = dirEntry.name.replace(".jsonl", "");
       try {
         const filePath = this.getTranscriptPath(sessionId);
-        const content = await this.fs.readFile(filePath);
 
-        // For large files, extract metadata from head + tail slices only
+        // Cap reads to avoid OOM on very large session files.
+        // VirtualFs implementations that support maxBytes will only read the
+        // first LITE_READ_LIMIT * 2 bytes; others return the full content.
+        const content = await this.fs.readFile(filePath, {
+          maxBytes: LITE_READ_LIMIT * 2,
+        });
+
         let headSlice: string;
         let tailSlice: string;
-        if (content.length > LITE_READ_LIMIT * 2) {
+        const isSplit = content.length > LITE_READ_LIMIT * 2;
+        if (isSplit) {
           const headEnd = content.lastIndexOf('\n', LITE_READ_LIMIT);
           headSlice = headEnd > 0 ? content.slice(0, headEnd) : content.slice(0, LITE_READ_LIMIT);
           const tailStart = content.indexOf('\n', content.length - LITE_READ_LIMIT);
@@ -310,7 +316,7 @@ export class SessionStorage {
         }
 
         const headEntries = parseJSONL<Entry>(headSlice);
-        const tailEntries = content.length > LITE_READ_LIMIT * 2
+        const tailEntries = isSplit
           ? parseJSONL<Entry>(tailSlice)
           : headEntries;
 
@@ -328,9 +334,9 @@ export class SessionStorage {
           if (e.type === "custom-title") title = e.title;
         }
 
-        // Scan tail for latest timestamps and title overrides
         for (const e of tailEntries) {
           if (e.type === "message" || e.type === "summary") {
+            messageCount++;
             if (e.timestamp) lastTimestamp = e.timestamp;
           }
           if (e.type === "custom-title") title = e.title;

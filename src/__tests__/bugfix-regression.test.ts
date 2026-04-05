@@ -25,6 +25,9 @@ import { isPrivateHost, isPrivateIP } from "../tools/web-fetch.js";
 import { resolvePermission, isDangerousPath } from "../permissions/pipeline.js";
 import type { PermissionContext } from "../permissions/types.js";
 import { withRetry, CannotRetryError } from "../retry/engine.js";
+import { writeFileTool } from "../tools/write.js";
+import { editFileTool } from "../tools/edit.js";
+import { globTool } from "../tools/glob.js";
 
 let fs: MockFs;
 let computer: MockComputer;
@@ -341,16 +344,17 @@ describe("permissions bug fixes", () => {
     });
   });
 
-  describe("DenialTracker.resetAfterFallback resets all counts", () => {
-    it("resets both consecutiveDenials and totalDenials so auto mode recovers", () => {
+  describe("DenialTracker.resetAfterFallback preserves totalDenials", () => {
+    it("resets consecutiveDenials but preserves totalDenials", () => {
       const tracker = new DenialTracker({ maxConsecutive: 100, maxTotal: 5 });
       for (let i = 0; i < 5; i++) tracker.recordDenial();
       expect(tracker.shouldFallback()).toBe(true);
 
       tracker.resetAfterFallback();
       expect(tracker.getState().consecutiveDenials).toBe(0);
-      expect(tracker.getState().totalDenials).toBe(0);
-      expect(tracker.shouldFallback()).toBe(false);
+      expect(tracker.getState().totalDenials).toBe(5);
+      // Total limit still hit — shouldFallback stays true
+      expect(tracker.shouldFallback()).toBe(true);
     });
   });
 });
@@ -677,5 +681,108 @@ describe("isPrivateIP for DNS rebinding", () => {
     expect(isPrivateIP("8.8.8.8")).toBe(false);
     expect(isPrivateIP("1.1.1.1")).toBe(false);
     expect(isPrivateIP("93.184.216.34")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Comparison fix: isDangerousPath in tool checkPermissions uses ctx.cwd
+// ---------------------------------------------------------------------------
+describe("write/edit tool checkPermissions uses ctx.cwd", () => {
+  it("writeFileTool detects dangerous path relative to ctx.cwd", async () => {
+    const ctx = { fs, computer, cwd: "/home/user/project" } as any;
+    const result = await writeFileTool.checkPermissions!(
+      { file_path: ".ssh/id_rsa" },
+      ctx,
+    );
+    expect(result.behavior).toBe("ask");
+    expect(result.reason).toBe("safetyCheck");
+  });
+
+  it("writeFileTool allows safe path relative to ctx.cwd", async () => {
+    const ctx = { fs, computer, cwd: "/home/user/project" } as any;
+    const result = await writeFileTool.checkPermissions!(
+      { file_path: "src/index.ts" },
+      ctx,
+    );
+    expect(result.behavior).toBe("passthrough");
+  });
+
+  it("editFileTool detects dangerous path relative to ctx.cwd", async () => {
+    const ctx = { fs, computer, cwd: "/home/user/project" } as any;
+    const result = await editFileTool.checkPermissions!(
+      { file_path: ".env" },
+      ctx,
+    );
+    expect(result.behavior).toBe("ask");
+    expect(result.reason).toBe("safetyCheck");
+  });
+
+  it("editFileTool allows safe path relative to ctx.cwd", async () => {
+    const ctx = { fs, computer, cwd: "/home/user/project" } as any;
+    const result = await editFileTool.checkPermissions!(
+      { file_path: "src/main.ts" },
+      ctx,
+    );
+    expect(result.behavior).toBe("passthrough");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Comparison fix: glob tool falls back to find when rg is unavailable
+// ---------------------------------------------------------------------------
+describe("glob tool fallback to find when rg unavailable", () => {
+  it("falls back to find when rg returns exit code 127", async () => {
+    const mockComputer = new MockComputer((cmd) => {
+      if (cmd.startsWith("rg ")) {
+        return { exitCode: 127, stdout: "", stderr: "rg: command not found" };
+      }
+      if (cmd.startsWith("find ")) {
+        return { exitCode: 0, stdout: "src/index.ts\nsrc/main.ts\n", stderr: "" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const ctx = { fs, computer: mockComputer, cwd: "/project" } as any;
+    const result = await globTool.call({ pattern: "*.ts" }, ctx);
+    expect(result.isError).toBeFalsy();
+    expect(result.content).toContain("src/index.ts");
+    expect(result.content).toContain("src/main.ts");
+  });
+
+  it("falls back to find when stderr says not found", async () => {
+    const mockComputer = new MockComputer((cmd) => {
+      if (cmd.startsWith("rg ")) {
+        return { exitCode: 1, stdout: "", stderr: "sh: rg: not found" };
+      }
+      if (cmd.startsWith("find ")) {
+        return { exitCode: 0, stdout: "README.md\n", stderr: "" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const ctx = { fs, computer: mockComputer, cwd: "/project" } as any;
+    const result = await globTool.call({ pattern: "*.md" }, ctx);
+    expect(result.isError).toBeFalsy();
+    expect(result.content).toContain("README.md");
+  });
+
+  it("does not fall back when rg succeeds", async () => {
+    let findCalled = false;
+    const mockComputer = new MockComputer((cmd) => {
+      if (cmd.startsWith("rg ")) {
+        return { exitCode: 0, stdout: "lib/util.ts\n", stderr: "" };
+      }
+      if (cmd.startsWith("find ")) {
+        findCalled = true;
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const ctx = { fs, computer: mockComputer, cwd: "/project" } as any;
+    const result = await globTool.call({ pattern: "*.ts" }, ctx);
+    expect(result.isError).toBeFalsy();
+    expect(result.content).toContain("lib/util.ts");
+    expect(findCalled).toBe(false);
   });
 });

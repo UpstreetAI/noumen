@@ -59,7 +59,18 @@ export class LocalFs implements VirtualFs {
 
   async readFile(filePath: string, opts?: ReadOptions): Promise<string> {
     const encoding = opts?.encoding ?? "utf-8";
-    return fs.readFile(await this.resolve(filePath), { encoding });
+    const resolved = await this.resolve(filePath);
+    if (opts?.maxBytes !== undefined) {
+      const fh = await fs.open(resolved, "r");
+      try {
+        const buf = Buffer.alloc(opts.maxBytes);
+        const { bytesRead } = await fh.read(buf, 0, opts.maxBytes, 0);
+        return buf.subarray(0, bytesRead).toString(encoding);
+      } finally {
+        await fh.close();
+      }
+    }
+    return fs.readFile(resolved, { encoding });
   }
 
   async readFileBytes(filePath: string, maxBytes?: number): Promise<Buffer> {

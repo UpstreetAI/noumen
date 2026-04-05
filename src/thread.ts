@@ -550,7 +550,7 @@ export class Thread {
         let accumulatedRedactedThinkingData: string | undefined;
         const accumulatedToolCalls = new Map<
           number,
-          { id: string; name: string; arguments: string; complete: boolean; malformedJson?: boolean }
+          { id: string; name: string; arguments: string; complete: boolean; malformedJson?: boolean; startEmitted?: boolean }
         >();
         let finishReason: string | null = null;
         let lastUsage: ChatCompletionUsage | undefined;

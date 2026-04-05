@@ -20,7 +20,7 @@ describe("DenialTracker", () => {
     expect(tracker.shouldFallback()).toBe(false);
   });
 
-  it("triggers fallback when maxTotal is hit and resets all counts via resetAfterFallback", () => {
+  it("resetAfterFallback resets consecutive but preserves totalDenials", () => {
     const tracker = new DenialTracker({ maxConsecutive: 100, maxTotal: 5 });
 
     for (let i = 0; i < 5; i++) {
@@ -28,30 +28,51 @@ describe("DenialTracker", () => {
     }
     expect(tracker.shouldFallback()).toBe(true);
 
-    // shouldFallback is now pure — calling it again returns the same result
-    expect(tracker.shouldFallback()).toBe(true);
-
-    // resetAfterFallback resets both counters so auto mode can recover
     tracker.resetAfterFallback();
     expect(tracker.getState().consecutiveDenials).toBe(0);
-    expect(tracker.getState().totalDenials).toBe(0);
+    expect(tracker.getState().totalDenials).toBe(5);
+    // Total limit still exceeded — shouldFallback stays true
+    expect(tracker.shouldFallback()).toBe(true);
+  });
+
+  it("resetAfterFallback after consecutive limit allows recovery while preserving total", () => {
+    const tracker = new DenialTracker({ maxConsecutive: 3, maxTotal: 100 });
+
+    tracker.recordDenial();
+    tracker.recordDenial();
+    tracker.recordDenial();
+    expect(tracker.shouldFallback()).toBe(true);
+
+    tracker.resetAfterFallback();
+    expect(tracker.getState().consecutiveDenials).toBe(0);
+    expect(tracker.getState().totalDenials).toBe(3);
+    // Below total limit, consecutive reset — can proceed
     expect(tracker.shouldFallback()).toBe(false);
   });
 
-  it("resetAfterFallback allows auto mode to recover after total limit", () => {
-    const tracker = new DenialTracker({ maxConsecutive: 100, maxTotal: 3 });
+  it("totalDenials accumulates across multiple fallback cycles", () => {
+    const tracker = new DenialTracker({ maxConsecutive: 2, maxTotal: 5 });
 
-    tracker.recordDenial();
+    // First cycle: 2 denials → fallback → reset
     tracker.recordDenial();
     tracker.recordDenial();
     expect(tracker.shouldFallback()).toBe(true);
-
     tracker.resetAfterFallback();
-    tracker.recordSuccess();
-    // Both counters were reset, so fallback is no longer triggered
-    expect(tracker.shouldFallback()).toBe(false);
-    expect(tracker.getState().totalDenials).toBe(0);
-    expect(tracker.getState().consecutiveDenials).toBe(0);
+    expect(tracker.getState().totalDenials).toBe(2);
+
+    // Second cycle: 2 more denials → fallback → reset
+    tracker.recordDenial();
+    tracker.recordDenial();
+    expect(tracker.shouldFallback()).toBe(true);
+    tracker.resetAfterFallback();
+    expect(tracker.getState().totalDenials).toBe(4);
+
+    // Third cycle: 1 more denial hits total=5 limit
+    tracker.recordDenial();
+    expect(tracker.shouldFallback()).toBe(true);
+    // This time shouldFallback stays true even after reset (total limit hit)
+    tracker.resetAfterFallback();
+    expect(tracker.shouldFallback()).toBe(true);
   });
 
   it("reset() clears all state", () => {

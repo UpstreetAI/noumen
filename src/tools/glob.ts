@@ -44,9 +44,17 @@ export const globTool: Tool = {
     const command = `rg --files --hidden --glob ${shellEscape(fullPattern)} --sortr=modified ${shellEscape(resolvedPath)} | head -n ${String(MAX_RESULTS + 1)}`;
 
     try {
-      const result = await ctx.computer.executeCommand(command, {
+      let result = await ctx.computer.executeCommand(command, {
         cwd: ctx.cwd,
       });
+
+      // rg not installed — fall back to find(1) which is universally available
+      if (result.exitCode === 127 || result.stderr?.includes("not found")) {
+        const findCommand = `find ${shellEscape(resolvedPath)} -name ${shellEscape(pattern)} -type f | head -n ${String(MAX_RESULTS + 1)}`;
+        result = await ctx.computer.executeCommand(findCommand, {
+          cwd: ctx.cwd,
+        });
+      }
 
       // rg exits with 1 when no matches; exit > 1 is a real error
       if (result.exitCode > 1) {

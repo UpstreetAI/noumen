@@ -10,9 +10,9 @@ export const writeFileTool: Tool = {
     "Parent directories are created automatically if they don't exist.",
   prompt: WRITE_PROMPT,
   isReadOnly: false,
-  checkPermissions(args) {
+  checkPermissions(args, ctx) {
     const filePath = args.file_path as string;
-    if (isDangerousPath(filePath)) {
+    if (isDangerousPath(filePath, ctx.cwd)) {
       return {
         behavior: "ask" as const,
         message: `Write targets sensitive path: ${filePath}`,

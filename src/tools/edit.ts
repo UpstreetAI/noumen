@@ -12,9 +12,9 @@ export const editFileTool: Tool = {
     "Set replace_all to true to replace all occurrences.",
   prompt: EDIT_PROMPT,
   isReadOnly: false,
-  checkPermissions(args) {
+  checkPermissions(args, ctx) {
     const filePath = args.file_path as string;
-    if (isDangerousPath(filePath)) {
+    if (isDangerousPath(filePath, ctx.cwd)) {
       return {
         behavior: "ask" as const,
         message: `Edit targets sensitive path: ${filePath}`,

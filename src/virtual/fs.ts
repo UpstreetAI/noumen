@@ -16,6 +16,12 @@ export interface FileStat {
 
 export interface ReadOptions {
   encoding?: BufferEncoding;
+  /**
+   * Maximum number of bytes to read. When set, only the first `maxBytes`
+   * bytes are returned (decoded as a string). Implementations that do not
+   * support this option may ignore it and return the full content.
+   */
+  maxBytes?: number;
 }
 
 /**
