@@ -8,8 +8,10 @@ const LINES: {
   delay: number;
   accent?: boolean;
 }[] = [
-  { prompt: '$ thread.run("Add input validation to the signup handler")', delay: 0 },
-  { text: '  [ReadFile]   src/handlers/signup.ts', delay: 700 },
+  { prompt: "$ npx noumen", delay: 0 },
+  { text: '  > Add input validation to the signup handler', delay: 700 },
+  { text: '', delay: 200 },
+  { text: '  [ReadFile]   src/handlers/signup.ts', delay: 600 },
   { text: '  [EditFile]   src/handlers/signup.ts  +14 lines', delay: 600 },
   { text: '  [Bash]       npm test -- signup', delay: 800 },
   { text: '  All 9 tests passed', delay: 500, accent: true },

@@ -182,18 +182,20 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ── See it run ── */}
+      {/* ── Try it now ── */}
       <section className="relative overflow-hidden py-24 sm:py-32">
         <div className="absolute inset-0 bg-[var(--color-base-surface)]" />
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-[var(--color-accent-blue-dim)] via-transparent to-[var(--color-accent-cyan-dim)] opacity-40" />
         <div className="relative mx-auto max-w-6xl px-6">
           <div className="mx-auto max-w-2xl text-center">
             <h2 className="font-[family-name:var(--font-display)] text-3xl font-bold tracking-tight sm:text-4xl bg-gradient-to-r from-[var(--color-accent-blue)] to-[var(--color-accent-cyan)] bg-clip-text text-transparent">
-              A real agent run.
+              Try it now.
             </h2>
             <p className="mt-4 text-[var(--color-text-secondary)]">
-              One prompt. The agent reads files, edits code, runs tests,
-              and reports back &mdash; all through the tool loop.
+              <code className="rounded bg-[var(--color-base-card)] px-1.5 py-0.5 font-mono text-sm text-[var(--color-text-primary)]">npx noumen</code>{" "}
+              starts an interactive coding agent in your terminal.
+              No config, no signup. One prompt and it reads files, edits code,
+              runs tests, and reports back.
             </p>
           </div>
           <div className="mx-auto mt-10 max-w-3xl">
