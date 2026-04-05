@@ -39,8 +39,7 @@ export function classifyError(error: unknown): ClassifiedError {
 
   const isOverloaded =
     status === 529 ||
-    msg.includes('"type":"overloaded_error"') ||
-    msg.toLowerCase().includes("overloaded");
+    msg.includes('"type":"overloaded_error"');
 
   const contextOverflowData = parseContextOverflow(msg, status);
 
@@ -60,10 +59,14 @@ export function isRetryable(
   config: RetryConfig,
 ): boolean {
   if (classified.isContextOverflow) return true;
+  if (classified.isOverloaded) return true;
 
   if (classified.status !== undefined) {
-    const retryableStatuses = config.retryableStatuses ?? [408, 409, 429, 500, 502, 503, 529];
-    if (retryableStatuses.includes(classified.status)) return true;
+    if (config.retryableStatuses) {
+      if (config.retryableStatuses.includes(classified.status)) return true;
+    } else {
+      if (classified.status >= 500 || [408, 409, 429].includes(classified.status)) return true;
+    }
   }
 
   if (isConnectionError(classified.originalError)) return true;
@@ -141,12 +144,18 @@ function parseContextOverflow(
 }
 
 function isConnectionError(error: unknown): boolean {
-  if (error && typeof error === "object") {
-    const e = error as Record<string, unknown>;
-    const name = typeof e.name === "string" ? e.name : "";
-    if (name === "APIConnectionError" || name === "APIConnectionTimeoutError") return true;
-    const code = typeof e.code === "string" ? e.code : "";
-    if (code === "ECONNRESET" || code === "EPIPE" || code === "ECONNREFUSED" || code === "ETIMEDOUT") return true;
+  let current = error;
+  for (let depth = 0; depth < 5 && current; depth++) {
+    if (current && typeof current === "object") {
+      const e = current as Record<string, unknown>;
+      const name = typeof e.name === "string" ? e.name : "";
+      if (name === "APIConnectionError" || name === "APIConnectionTimeoutError") return true;
+      const code = typeof e.code === "string" ? e.code : "";
+      if (code === "ECONNRESET" || code === "EPIPE" || code === "ECONNREFUSED" || code === "ETIMEDOUT") return true;
+      current = e.cause;
+    } else {
+      break;
+    }
   }
   return false;
 }

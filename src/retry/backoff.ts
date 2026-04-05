@@ -9,6 +9,7 @@ export function getRetryDelay(
   attempt: number,
   retryAfterHeader?: string | null,
   maxDelayMs: number = 32000,
+  baseDelayMs: number = DEFAULT_BASE_DELAY_MS,
 ): number {
   if (retryAfterHeader) {
     const seconds = parseInt(retryAfterHeader, 10);
@@ -19,7 +20,7 @@ export function getRetryDelay(
   }
 
   const baseDelay = Math.min(
-    DEFAULT_BASE_DELAY_MS * Math.pow(2, attempt - 1),
+    baseDelayMs * Math.pow(2, attempt - 1),
     maxDelayMs,
   );
   const jitter = Math.random() * 0.25 * baseDelay;

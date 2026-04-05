@@ -335,6 +335,7 @@ export async function* streamAnthropicChat(
   let cacheCreationTokens = 0;
   let thinkingTokens = 0;
   let stopReason: string | undefined;
+  let receivedMessageStop = false;
 
   try {
   for await (const event of stream) {
@@ -379,6 +380,8 @@ export async function* streamAnthropicChat(
       }
 
       if (block.type === "thinking") {
+        yield makeChunk(chunkId, model, { thinking_content: "" });
+      } else if (block.type === "redacted_thinking") {
         yield makeChunk(chunkId, model, { thinking_content: "" });
       } else if (block.type === "text") {
         yield makeChunk(chunkId, model, { content: "" });
@@ -440,6 +443,7 @@ export async function* streamAnthropicChat(
         }
       }
     } else if (ev.type === "message_stop") {
+      receivedMessageStop = true;
       let finishReason: string;
       switch (stopReason) {
         case "end_turn": finishReason = "stop"; break;
@@ -470,6 +474,13 @@ export async function* streamAnthropicChat(
         },
       };
     }
+  }
+
+  if (!receivedMessageStop && chunkIndex <= 1) {
+    throw new ChatStreamError(
+      "Stream ended without receiving message_stop event",
+      { cause: new Error("incomplete_stream") },
+    );
   }
   } catch (err: unknown) {
     if (err instanceof ChatStreamError) throw err;

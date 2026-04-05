@@ -237,5 +237,8 @@ function normalizePath(p: string): string {
   while (result.endsWith("/") && result.length > 1) {
     result = result.slice(0, -1);
   }
+  if (process.platform === "darwin" || process.platform === "win32") {
+    result = result.toLowerCase();
+  }
   return result;
 }

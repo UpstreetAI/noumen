@@ -129,6 +129,19 @@ export async function resolvePermission(
     }
   }
 
+  // 2c. Dangerous path safety check (bypass-immune)
+  const dangerousFilePath =
+    typeof input.file_path === "string" ? input.file_path
+    : typeof input.path === "string" ? input.path
+    : undefined;
+  if (dangerousFilePath && isDangerousPath(dangerousFilePath)) {
+    return {
+      behavior: "ask",
+      message: `Path "${dangerousFilePath}" targets a sensitive location.`,
+      reason: "safetyCheck",
+    };
+  }
+
   // 3. Tool's own checkPermissions
   let toolResult: PermissionResult | undefined;
   if (tool.checkPermissions) {

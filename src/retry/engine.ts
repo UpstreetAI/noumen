@@ -16,16 +16,6 @@ export class CannotRetryError extends Error {
   }
 }
 
-export class FallbackTriggeredError extends Error {
-  constructor(
-    public readonly originalModel: string,
-    public readonly fallbackModel: string,
-  ) {
-    super(`Model fallback triggered: ${originalModel} -> ${fallbackModel}`);
-    this.name = "FallbackTriggeredError";
-  }
-}
-
 /**
  * Retry engine that wraps a stream-creating operation.
  * Yields retry_attempt events while waiting, then returns the stream on success.
@@ -115,6 +105,10 @@ export async function* withRetry(
               `Model fallback: ${previousModel} → ${options.fallbackModel} after ${maxConsecutiveOverloaded} consecutive overloaded errors`,
             ),
           };
+
+          // Reset attempt counter so the fallback model gets a full retry budget
+          attempt = 0;
+          continue;
         }
       } else {
         consecutiveOverloaded = 0;
@@ -138,6 +132,7 @@ export async function* withRetry(
         attempt,
         classified.retryAfter,
         maxDelayMs,
+        baseDelayMs,
       );
 
       const retryError = error instanceof Error ? error : new Error(String(error));

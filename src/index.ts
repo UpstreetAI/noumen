@@ -470,7 +470,6 @@ export {
   getRetryDelay,
   withRetry,
   CannotRetryError,
-  FallbackTriggeredError,
 } from "./retry/index.js";
 
 // Hooks

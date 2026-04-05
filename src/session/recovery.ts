@@ -215,6 +215,10 @@ export function sanitizeForResume(messages: ChatMessage[]): SanitizeResult {
  * For assistant messages that have SOME resolved tool_calls but not all,
  * generate synthetic error results for the missing ones so the API
  * receives a complete conversation.
+ *
+ * Synthetic results are inserted after the last real tool result for the
+ * assistant's calls (not immediately after the assistant message) so
+ * conversation ordering is preserved.
  */
 function fillPartiallyResolvedToolCalls(messages: ChatMessage[]): {
   messages: ChatMessage[];
@@ -226,23 +230,53 @@ function fillPartiallyResolvedToolCalls(messages: ChatMessage[]): {
     }
   }
 
-  const result: ChatMessage[] = [];
-  for (const msg of messages) {
-    result.push(msg);
+  // Collect which assistants have unresolved calls and what those IDs are
+  const unresolvedByAssistantIdx = new Map<number, string[]>();
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
     if (msg.role !== "assistant") continue;
     const asst = msg as AssistantMessage;
     if (!asst.tool_calls || asst.tool_calls.length === 0) continue;
 
-    for (const tc of asst.tool_calls) {
-      if (!resolvedIds.has(tc.id)) {
-        const synthetic: ToolResultMessage = {
-          role: "tool",
-          tool_call_id: tc.id,
-          content: "Error: Tool result missing due to interrupted session.",
-        };
-        result.push(synthetic);
-        resolvedIds.add(tc.id);
+    const missing = asst.tool_calls
+      .filter((tc) => !resolvedIds.has(tc.id))
+      .map((tc) => tc.id);
+    if (missing.length > 0) {
+      unresolvedByAssistantIdx.set(i, missing);
+    }
+  }
+
+  if (unresolvedByAssistantIdx.size === 0) return { messages };
+
+  // For each assistant with unresolved calls, find the insertion point:
+  // after the last real tool result for any of the assistant's calls,
+  // or immediately after the assistant if none exist.
+  const insertions = new Map<number, ToolResultMessage[]>();
+  for (const [asstIdx, missingIds] of unresolvedByAssistantIdx) {
+    const asst = messages[asstIdx] as AssistantMessage;
+    const allCallIds = new Set(asst.tool_calls!.map((tc) => tc.id));
+
+    let lastResultIdx = asstIdx;
+    for (let j = asstIdx + 1; j < messages.length; j++) {
+      if (messages[j].role === "tool" && allCallIds.has((messages[j] as ToolResultMessage).tool_call_id)) {
+        lastResultIdx = j;
       }
+    }
+
+    const synthetics: ToolResultMessage[] = missingIds.map((id) => ({
+      role: "tool" as const,
+      tool_call_id: id,
+      content: "Error: Tool result missing due to interrupted session.",
+    }));
+    insertions.set(lastResultIdx, synthetics);
+  }
+
+  const result: ChatMessage[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    result.push(messages[i]);
+    const toInsert = insertions.get(i);
+    if (toInsert) {
+      result.push(...toInsert);
     }
   }
 

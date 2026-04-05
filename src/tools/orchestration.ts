@@ -78,7 +78,18 @@ export async function* runToolsBatched(
     if (batch.isConcurrencySafe && batch.items.length > 1) {
       const generators = batch.items.map(({ toolCall, parsedArgs }) =>
         (async function* () {
-          yield await executor(toolCall, parsedArgs);
+          try {
+            yield await executor(toolCall, parsedArgs);
+          } catch (err) {
+            yield {
+              toolCall,
+              parsedArgs,
+              result: {
+                content: `Error: ${err instanceof Error ? err.message : String(err)}`,
+                isError: true,
+              },
+            } satisfies ToolCallExecResult;
+          }
         })(),
       );
       yield* all(generators, concurrencyCap);

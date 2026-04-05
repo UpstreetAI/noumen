@@ -251,7 +251,7 @@ describe("preventContinuation in streaming path", () => {
     const events = await collectEvents(thread.run("read file"));
 
     const turnComplete = events.find((e) => e.type === "turn_complete");
-    expect(turnComplete).toBeUndefined();
+    expect(turnComplete).toBeDefined();
 
     expect(provider.calls).toHaveLength(1);
   });
@@ -280,7 +280,7 @@ describe("preventContinuation in streaming path", () => {
     const events = await collectEvents(thread.run("read file"));
 
     const turnComplete = events.find((e) => e.type === "turn_complete");
-    expect(turnComplete).toBeUndefined();
+    expect(turnComplete).toBeDefined();
 
     expect(provider.calls).toHaveLength(1);
   });

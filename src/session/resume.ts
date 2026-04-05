@@ -92,8 +92,14 @@ export async function restoreSession(
   let lastBoundaryIdx = -1;
   for (let i = entries.length - 1; i >= 0; i--) {
     if (entries[i].type === "compact-boundary") {
-      lastBoundaryIdx = i;
-      break;
+      const afterBoundary = entries.slice(i + 1);
+      const hasSummaryOrMessage = afterBoundary.some(
+        (e) => e.type === "summary" || e.type === "message",
+      );
+      if (hasSummaryOrMessage) {
+        lastBoundaryIdx = i;
+        break;
+      }
     }
   }
 

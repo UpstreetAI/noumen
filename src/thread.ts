@@ -446,6 +446,16 @@ export class Thread {
 
       while (!signal.aborted) {
         // --- Pre-call compaction pipeline ---
+        // Microcompact first so the budget operates on already-compacted messages
+        if (this.config.microcompact?.enabled) {
+          const mcResult = microcompactMessages(this.messages, this.config.microcompact);
+          if (mcResult.tokensFreed > 0) {
+            this.messages = mcResult.messages;
+            this.microcompactTokensFreed += mcResult.tokensFreed;
+            yield { type: "microcompact_complete", tokensFreed: mcResult.tokensFreed };
+          }
+        }
+
         // Apply budget to a snapshot so the canonical this.messages is not mutated
         let messagesForApi: ChatMessage[] = this.messages;
         if (this.config.toolResultBudget?.enabled) {
@@ -464,15 +474,6 @@ export class Thread {
               originalChars: entry.originalChars,
               truncatedChars: entry.truncatedChars,
             };
-          }
-        }
-
-        if (this.config.microcompact?.enabled) {
-          const mcResult = microcompactMessages(this.messages, this.config.microcompact);
-          if (mcResult.tokensFreed > 0) {
-            this.messages = mcResult.messages;
-            this.microcompactTokensFreed += mcResult.tokensFreed;
-            yield { type: "microcompact_complete", tokensFreed: mcResult.tokensFreed };
           }
         }
 
@@ -931,33 +932,66 @@ export class Thread {
           }
         }
 
+        // When ALL tool calls are malformed, include them in the assistant
+        // message with empty args so the conversation structure stays valid,
+        // then generate error results and let the model retry.
+        const allToolCalls: ToolCallContent[] = [
+          ...toolCalls,
+          ...malformedToolCalls.map((m) => ({
+            id: m.id,
+            type: "function" as const,
+            function: { name: m.name, arguments: "{}" },
+          })),
+        ];
+
         const assistantMsg: AssistantMessage = {
           role: "assistant",
           content: textContent || null,
-          ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+          ...(allToolCalls.length > 0 ? { tool_calls: allToolCalls } : {}),
         };
 
         this.messages.push(assistantMsg);
         await this.storage.appendMessage(this.sessionId, assistantMsg);
 
-        if (toolCalls.length > 0) {
-          // Generate error results for tool calls with malformed JSON args
-          for (const malformed of malformedToolCalls) {
-            const errorResult: ChatMessage = {
-              role: "tool",
-              tool_call_id: malformed.id,
-              content: `Error: Invalid tool call arguments for ${malformed.name} (malformed JSON)`,
-            };
-            this.messages.push(errorResult);
-            await this.storage.appendMessage(this.sessionId, errorResult);
-            yield {
-              type: "tool_result",
-              toolUseId: malformed.id,
-              toolName: malformed.name,
-              result: { content: errorResult.content, isError: true },
-            };
-          }
+        // Generate error results for tool calls with malformed JSON args
+        // (outside the toolCalls.length guard so all-malformed is handled)
+        for (const malformed of malformedToolCalls) {
+          const errorResult: ChatMessage = {
+            role: "tool",
+            tool_call_id: malformed.id,
+            content: `Error: Invalid tool call arguments for ${malformed.name} (malformed JSON)`,
+          };
+          this.messages.push(errorResult);
+          await this.storage.appendMessage(this.sessionId, errorResult);
+          yield {
+            type: "tool_result",
+            toolUseId: malformed.id,
+            toolName: malformed.name,
+            result: { content: errorResult.content, isError: true },
+          };
+        }
 
+        // When only malformed calls exist, continue the loop to give the
+        // model another chance without entering the tool execution path.
+        if (toolCalls.length === 0 && malformedToolCalls.length > 0) {
+          callCount++;
+          if (opts?.maxTurns !== undefined && callCount >= opts.maxTurns) {
+            await runNotificationHooks(hooks, "TurnEnd", {
+              event: "TurnEnd",
+              sessionId: this.sessionId,
+            });
+            yield { type: "turn_complete", usage: turnUsage, model: this.model, callCount };
+            yield { type: "max_turns_reached", maxTurns: opts.maxTurns, turnCount: callCount };
+            break;
+          }
+          await runNotificationHooks(hooks, "TurnEnd", {
+            event: "TurnEnd",
+            sessionId: this.sessionId,
+          });
+          continue;
+        }
+
+        if (toolCalls.length > 0) {
           const touchedFilePaths: string[] = [];
           const registry = this.toolRegistry;
           const storage = this.storage;
@@ -1414,7 +1448,19 @@ export class Thread {
             }
           }
 
-          if (preventContinuation) break;
+          if (preventContinuation) {
+            await runNotificationHooks(hooks, "TurnEnd", {
+              event: "TurnEnd",
+              sessionId: this.sessionId,
+            });
+            yield {
+              type: "turn_complete",
+              usage: turnUsage,
+              model: this.model,
+              callCount,
+            };
+            break;
+          }
 
           if (opts?.maxTurns !== undefined && callCount >= opts.maxTurns) {
             await runNotificationHooks(hooks, "TurnEnd", {

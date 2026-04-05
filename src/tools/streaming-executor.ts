@@ -53,9 +53,22 @@ export class StreamingToolExecutor {
 
   addTool(toolCall: ToolCallContent, parsedArgs: Record<string, unknown>): void {
     const toolDef = this.getTool(toolCall.function.name);
-    const isConcurrencySafe = toolDef
-      ? resolveToolFlag(toolDef.isConcurrencySafe, parsedArgs)
-      : false;
+
+    if (!toolDef) {
+      this.tools.push({
+        id: toolCall.id,
+        toolCall,
+        parsedArgs,
+        status: "completed",
+        isConcurrencySafe: true,
+        result: { content: `Error: Unknown tool "${toolCall.function.name}"`, isError: true },
+        events: [],
+      });
+      this.progressResolve?.();
+      return;
+    }
+
+    const isConcurrencySafe = resolveToolFlag(toolDef.isConcurrencySafe, parsedArgs);
 
     this.tools.push({
       id: toolCall.id,
