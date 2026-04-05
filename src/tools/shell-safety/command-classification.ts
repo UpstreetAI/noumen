@@ -279,6 +279,31 @@ function hasCommandSubstitution(command: string): boolean {
 }
 
 /**
+ * Check whether a command contains unquoted variable expansion (`$VAR`).
+ * Variable expansion can smuggle flags or values into otherwise safe commands
+ * (e.g. `git diff $Z--output=/tmp/pwned`). We track quote state to allow
+ * `$VAR` inside single quotes (where the shell does not expand).
+ */
+function hasUnquotedExpansion(command: string): boolean {
+  let inSingle = false;
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    if (ch === "'" && !inSingle) { inSingle = true; continue; }
+    if (ch === "'" && inSingle) { inSingle = false; continue; }
+    if (inSingle) continue;
+    if (ch === "\\" && i + 1 < command.length) { i++; continue; }
+    if (ch === "$" && i + 1 < command.length) {
+      const next = command[i + 1];
+      if (next === "(") continue; // handled by hasCommandSubstitution
+      if (next === "{" || (next >= "A" && next <= "Z") || (next >= "a" && next <= "z") || next === "_") {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
  * Extract the base command name from a command string (first token after
  * env vars and redirects).
  */
@@ -442,10 +467,13 @@ function classifySingleCommand(
     return classifyGitCommand(command);
   }
 
-  // Commands with command substitution are never read-only
-  if (hasCommandSubstitution(command)) {
-    return { isReadOnly: false, isDestructive: false, reason: `Command contains command substitution` };
-  }
+    // Commands with command substitution or unquoted variable expansion are never read-only
+    if (hasCommandSubstitution(command)) {
+      return { isReadOnly: false, isDestructive: false, reason: `Command contains command substitution` };
+    }
+    if (hasUnquotedExpansion(command)) {
+      return { isReadOnly: false, isDestructive: false, reason: `Command contains unquoted variable expansion` };
+    }
 
   // Commands with dangerous env var prefixes are never read-only
   if (hasDangerousEnvVars(command)) {

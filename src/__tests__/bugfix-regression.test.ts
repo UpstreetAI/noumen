@@ -341,16 +341,16 @@ describe("permissions bug fixes", () => {
     });
   });
 
-  describe("DenialTracker.resetAfterFallback preserves totalDenials", () => {
-    it("does not reset totalDenials", () => {
+  describe("DenialTracker.resetAfterFallback resets all counts", () => {
+    it("resets both consecutiveDenials and totalDenials so auto mode recovers", () => {
       const tracker = new DenialTracker({ maxConsecutive: 100, maxTotal: 5 });
       for (let i = 0; i < 5; i++) tracker.recordDenial();
       expect(tracker.shouldFallback()).toBe(true);
 
       tracker.resetAfterFallback();
       expect(tracker.getState().consecutiveDenials).toBe(0);
-      expect(tracker.getState().totalDenials).toBe(5);
-      expect(tracker.shouldFallback()).toBe(true);
+      expect(tracker.getState().totalDenials).toBe(0);
+      expect(tracker.shouldFallback()).toBe(false);
     });
   });
 });

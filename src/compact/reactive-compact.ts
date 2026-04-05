@@ -30,6 +30,7 @@ export async function tryReactiveCompact(
   messages: ChatMessage[],
   storage: SessionStorage,
   sessionId: string,
+  opts?: { signal?: AbortSignal },
 ): Promise<ReactiveCompactResult | null> {
   if (messages.length < 2) return null;
 
@@ -41,7 +42,7 @@ export async function tryReactiveCompact(
       messages,
       storage,
       sessionId,
-      { stripBinaryContent: true, tailMessagesToKeep: tailKeep },
+      { stripBinaryContent: true, tailMessagesToKeep: tailKeep, signal: opts?.signal },
     );
     return { messages: compacted, strategy: "compacted" };
   } catch (err) {

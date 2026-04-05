@@ -61,6 +61,18 @@ export const writeFileTool: Tool = {
             isError: true,
           };
         }
+        try {
+          const stat = await ctx.fs.stat(filePath);
+          const mtime = stat.modifiedAt ? Math.floor(stat.modifiedAt.getTime()) : 0;
+          if (mtime > cached.timestamp) {
+            return {
+              content: `Error: ${filePath} has been modified since last read. Re-read the file before overwriting.`,
+              isError: true,
+            };
+          }
+        } catch {
+          // stat failure — proceed, writeFile will catch real issues
+        }
       }
 
       const dir = nodePath.dirname(filePath);

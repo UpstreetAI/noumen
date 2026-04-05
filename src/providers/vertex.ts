@@ -21,6 +21,8 @@ export interface VertexAnthropicProviderOptions {
   model?: string;
   /** Cache control config (same as AnthropicProvider). */
   cacheControl?: CacheControlConfig;
+  /** Custom base URL for the Vertex API endpoint. */
+  baseURL?: string;
   /**
    * Pre-constructed AnthropicVertex client. When provided, all other
    * connection options are ignored. Useful for testing or advanced setups.
@@ -79,6 +81,7 @@ export class VertexAnthropicProvider implements AIProvider {
         googleAuth,
       };
       if (opts.projectId) args.projectId = opts.projectId;
+      if (opts.baseURL) args.baseURL = opts.baseURL;
 
       this.client = new AnthropicVertex(args) as unknown as AnthropicStreamClient;
     }

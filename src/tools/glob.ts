@@ -41,7 +41,7 @@ export const globTool: Tool = {
       : `**/${pattern}`;
 
     const resolvedPath = searchPath === ctx.cwd ? "." : searchPath;
-    const command = `rg --files --glob ${shellEscape(fullPattern)} --sort=modified ${shellEscape(resolvedPath)} | head -n ${String(MAX_RESULTS + 1)}`;
+    const command = `rg --files --hidden --glob ${shellEscape(fullPattern)} --sortr=modified ${shellEscape(resolvedPath)} | head -n ${String(MAX_RESULTS + 1)}`;
 
     try {
       const result = await ctx.computer.executeCommand(command, {

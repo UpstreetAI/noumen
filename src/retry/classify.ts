@@ -126,16 +126,17 @@ function parseContextOverflow(
     };
   }
 
-  // OpenAI format
+  // OpenAI format — only total token count is available, so estimate the split
   const openaiRegex =
     /maximum context length is (\d+) tokens.*?resulted in (\d+) tokens/;
   const openaiMatch = message.match(openaiRegex);
   if (openaiMatch && openaiMatch[1] && openaiMatch[2]) {
     const contextLimit = parseInt(openaiMatch[1], 10);
     const totalTokens = parseInt(openaiMatch[2], 10);
+    const overflow = totalTokens - contextLimit;
     return {
-      inputTokens: totalTokens,
-      maxTokens: 0,
+      inputTokens: contextLimit,
+      maxTokens: Math.max(0, overflow),
       contextLimit,
     };
   }

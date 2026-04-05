@@ -121,7 +121,25 @@ export async function resolvePermission(
     };
   }
 
-  // 2b. Dangerous path safety check (bypass-immune)
+  // 2b. Content-specific ask rules (bypass-immune — user explicitly configured these)
+  if (contentHint !== undefined) {
+    const contentAskRules = getMatchingRules(
+      permCtx,
+      toolName,
+      "ask",
+      contentHint,
+      tool.mcpInfo,
+    );
+    if (contentAskRules.length > 0) {
+      return {
+        behavior: "ask",
+        message: `Tool "${toolName}" with "${contentHint}" requires approval.`,
+        reason: "rule",
+      };
+    }
+  }
+
+  // 2c. Dangerous path safety check (bypass-immune)
   const dangerousFilePath =
     typeof input.file_path === "string" ? input.file_path
     : typeof input.path === "string" ? input.path

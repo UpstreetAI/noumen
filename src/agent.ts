@@ -424,6 +424,8 @@ export class Agent {
   }
 
   async createThread(opts?: ThreadOptions): Promise<Thread> {
+    await this.init();
+
     const autoCompact = createAutoCompactConfig({
       enabled: this.autoCompactEnabled,
       threshold: this.autoCompactThreshold,
@@ -436,7 +438,7 @@ export class Agent {
     let thread!: Thread;
     thread = new Thread(
       {
-        provider: await this.ensureProvider(),
+        provider: this.getProvider(),
         fs: this.fs,
         computer: this.computer,
         sessionDir: this.sessionDir,

@@ -1,10 +1,21 @@
 import type { Tool, ToolResult, ToolContext } from "./types.js";
-import { classifyCommand } from "./shell-safety/command-classification.js";
+import { classifyCommand, extractCommandName } from "./shell-safety/command-classification.js";
 import { detectGitOperations, type GitOperationEvent } from "./shell-safety/git-tracking.js";
 import { commandWritesGitInternals } from "./shell-safety/git-safety.js";
 import { BASH_PROMPT } from "./prompts/bash.js";
 
 const MAX_OUTPUT_CHARS = 100_000;
+
+const NON_ERROR_EXIT1_COMMANDS = new Set([
+  "grep", "egrep", "fgrep", "rg", "ag", "ack",
+  "diff", "comm",
+]);
+
+function isExpectedNonZeroExit(command: string, exitCode: number): boolean {
+  if (exitCode !== 1) return false;
+  const name = extractCommandName(command);
+  return NON_ERROR_EXIT1_COMMANDS.has(name);
+}
 
 export const bashTool: Tool = {
   name: "Bash",
@@ -95,13 +106,16 @@ export const bashTool: Tool = {
           output.slice(-tailSize);
       }
 
+      const isSemanticError = result.exitCode !== 0 &&
+        !isExpectedNonZeroExit(command, result.exitCode);
+
       if (result.exitCode !== 0) {
         output = `Exit code: ${result.exitCode}\n${output}`;
       }
 
       const toolResult: ToolResult = {
         content: output,
-        isError: result.exitCode !== 0,
+        isError: isSemanticError,
       };
 
       // Track git operations on success

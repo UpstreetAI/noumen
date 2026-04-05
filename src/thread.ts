@@ -256,6 +256,9 @@ export class Thread {
     prompt: string | ContentPart[],
     opts?: RunOptions,
   ): AsyncGenerator<StreamEvent, void, unknown> {
+    if (this.abortController && !this.abortController.signal.aborted) {
+      this.abortController.abort();
+    }
     this.abortController = new AbortController();
     if (opts?.signal) {
       if (opts.signal.aborted) {
@@ -507,6 +510,7 @@ export class Thread {
               {
                 tailMessagesToKeep: loopAutoCompactConfig.tailMessagesToKeep,
                 stripBinaryContent: true,
+                signal,
               },
             );
             this.lastUsage = undefined;
@@ -677,11 +681,14 @@ export class Thread {
               this.messages,
               this.storage,
               this.sessionId,
+              { signal },
             );
             if (recovered) {
               this.messages = recovered.messages;
               this.lastUsage = undefined;
               this.anchorMessageIndex = undefined;
+              this.microcompactTokensFreed = 0;
+              recordAutoCompactSuccess(this.autoCompactTracking);
               yield { type: "compact_complete" };
               await runNotificationHooks(hooks, "PostCompact", {
                 event: "PostCompact",

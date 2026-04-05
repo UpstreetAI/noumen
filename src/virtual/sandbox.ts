@@ -86,21 +86,23 @@ export interface LocalSandboxOptions {
  */
 export function LocalSandbox(opts?: LocalSandboxOptions): Sandbox {
   const cwd = opts?.cwd ?? process.cwd();
+  const computer = new SandboxedLocalComputer({
+    defaultCwd: cwd,
+    defaultTimeout: opts?.defaultTimeout,
+    sandbox: {
+      filesystem: {
+        allowWrite: [cwd, ...(opts?.sandbox?.filesystem?.allowWrite ?? [])],
+        denyWrite: opts?.sandbox?.filesystem?.denyWrite,
+        denyRead: opts?.sandbox?.filesystem?.denyRead,
+        allowRead: opts?.sandbox?.filesystem?.allowRead,
+      },
+      network: opts?.sandbox?.network,
+    },
+  });
   return {
     fs: new LocalFs({ basePath: cwd }),
-    computer: new SandboxedLocalComputer({
-      defaultCwd: cwd,
-      defaultTimeout: opts?.defaultTimeout,
-      sandbox: {
-        filesystem: {
-          allowWrite: [cwd, ...(opts?.sandbox?.filesystem?.allowWrite ?? [])],
-          denyWrite: opts?.sandbox?.filesystem?.denyWrite,
-          denyRead: opts?.sandbox?.filesystem?.denyRead,
-          allowRead: opts?.sandbox?.filesystem?.allowRead,
-        },
-        network: opts?.sandbox?.network,
-      },
-    }),
+    computer,
+    dispose: () => computer.dispose(),
   };
 }
 

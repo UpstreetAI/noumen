@@ -91,7 +91,7 @@ export async function resolveProvider(
     }
     case "vertex": {
       const { VertexAnthropicProvider } = await import("./vertex.js");
-      return new VertexAnthropicProvider({ model: opts?.model });
+      return new VertexAnthropicProvider({ model: opts?.model, baseURL: opts?.baseURL });
     }
     case "ollama": {
       const { OllamaProvider } = await import("./ollama.js");

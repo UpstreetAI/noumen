@@ -91,6 +91,7 @@ export class OpenAIProvider implements AIProvider {
           completion_tokens: usage.completion_tokens,
           total_tokens: usage.total_tokens,
           cache_read_tokens: promptDetails?.cached_tokens as number | undefined,
+          cache_creation_tokens: promptDetails?.cache_creation_tokens as number | undefined,
           thinking_tokens: completionDetails?.reasoning_tokens as number | undefined,
         };
       }

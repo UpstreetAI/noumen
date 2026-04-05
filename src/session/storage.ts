@@ -300,8 +300,10 @@ export class SessionStorage {
         let headSlice: string;
         let tailSlice: string;
         if (content.length > LITE_READ_LIMIT * 2) {
-          headSlice = content.slice(0, LITE_READ_LIMIT);
-          tailSlice = content.slice(-LITE_READ_LIMIT);
+          const headEnd = content.lastIndexOf('\n', LITE_READ_LIMIT);
+          headSlice = headEnd > 0 ? content.slice(0, headEnd) : content.slice(0, LITE_READ_LIMIT);
+          const tailStart = content.indexOf('\n', content.length - LITE_READ_LIMIT);
+          tailSlice = tailStart >= 0 ? content.slice(tailStart + 1) : content.slice(-LITE_READ_LIMIT);
         } else {
           headSlice = content;
           tailSlice = content;
