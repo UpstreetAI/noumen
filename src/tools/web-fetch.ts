@@ -2,6 +2,10 @@ import * as dns from "node:dns";
 import type { Tool, ToolResult, ToolContext } from "./types.js";
 import { WEB_FETCH_PROMPT } from "./prompts/web-fetch.js";
 
+function stripWww(hostname: string): string {
+  return hostname.replace(/^www\./, "");
+}
+
 const MAX_CONTENT_LENGTH = 5 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 30_000;
 const MAX_OUTPUT_CHARS = 100_000;
@@ -114,6 +118,14 @@ export const webFetchTool: Tool = {
       return { content: `Invalid URL: ${url}`, isError: true };
     }
 
+    if (parsedUrl.username || parsedUrl.password) {
+      return { content: `Blocked: URLs with embedded credentials are not allowed`, isError: true };
+    }
+
+    if (parsedUrl.protocol === "http:") {
+      parsedUrl.protocol = "https:";
+    }
+
     if (isPrivateHost(parsedUrl.hostname)) {
       return { content: `Blocked: "${parsedUrl.hostname}" resolves to a private/internal address`, isError: true };
     }
@@ -127,7 +139,8 @@ export const webFetchTool: Tool = {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-      let currentUrl = url;
+      let currentUrl = parsedUrl.toString();
+      const originalHost = stripWww(parsedUrl.hostname);
       let response: Response | undefined;
       for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects++) {
         response = await fetch(currentUrl, {
@@ -143,6 +156,10 @@ export const webFetchTool: Tool = {
           const location = response.headers.get("location");
           if (!location) break;
           const redirectUrl = new URL(location, currentUrl);
+          if (stripWww(redirectUrl.hostname) !== originalHost) {
+            clearTimeout(timeoutId);
+            return { content: `Blocked: redirect to different host "${redirectUrl.hostname}" (original: "${parsedUrl.hostname}")`, isError: true };
+          }
           if (isPrivateHost(redirectUrl.hostname)) {
             clearTimeout(timeoutId);
             return { content: `Blocked: redirect to private/internal address "${redirectUrl.hostname}"`, isError: true };

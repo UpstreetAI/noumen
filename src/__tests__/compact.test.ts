@@ -413,3 +413,44 @@ describe("compactConversation preserves thinking fields on merge", () => {
     ).rejects.toThrow("empty summary");
   });
 });
+
+describe("appendEntriesBatch atomicity", () => {
+  it("writes all entries in a single operation", async () => {
+    const loaded1 = await storage.loadMessages("batch-test");
+    expect(loaded1).toHaveLength(0);
+
+    await storage.appendMessage("batch-test", { role: "user", content: "before-batch" });
+
+    const entries: any[] = [
+      {
+        type: "message",
+        uuid: "u1",
+        parentUuid: null,
+        sessionId: "batch-test",
+        timestamp: new Date().toISOString(),
+        message: { role: "assistant", content: "batch-1" },
+      },
+      {
+        type: "message",
+        uuid: "u2",
+        parentUuid: null,
+        sessionId: "batch-test",
+        timestamp: new Date().toISOString(),
+        message: { role: "user", content: "batch-2" },
+      },
+    ];
+    await storage.appendEntriesBatch("batch-test", entries);
+
+    const loaded = await storage.loadMessages("batch-test");
+    expect(loaded).toHaveLength(3);
+    expect((loaded[0].content as string)).toBe("before-batch");
+    expect((loaded[1].content as string)).toBe("batch-1");
+    expect((loaded[2].content as string)).toBe("batch-2");
+  });
+
+  it("appendEntriesBatch with empty array is a no-op", async () => {
+    await storage.appendEntriesBatch("empty-batch", []);
+    const loaded = await storage.loadMessages("empty-batch");
+    expect(loaded).toHaveLength(0);
+  });
+});

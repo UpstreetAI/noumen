@@ -118,21 +118,39 @@ export async function compactConversation(
     role: "user",
     content: `[Conversation Summary]\n\n${summaryText}`,
   };
-  // Write boundary first, then summary, so the summary lands in the
-  // active-entries window (everything after the last boundary).
-  // Crash safety: if we crash after the boundary but before the summary,
-  // the orphaned-boundary validator in loadMessages skips it and falls
-  // back to the prior boundary.
+  // Write boundary first, then summary + tail + metadata atomically in a
+  // single batch write. This prevents partial tail loss on crash — either
+  // all post-boundary entries are written or none are.
+  // The orphaned-boundary validator in loadMessages handles the case where
+  // we crash between the boundary write and the batch write.
   await storage.appendCompactBoundary(sessionId);
-  await storage.appendSummary(sessionId, summaryMessage);
 
-  // Re-append tail messages after the boundary so they survive resume
+  const { generateUUID } = await import("../utils/uuid.js");
+  const batchEntries: import("../session/types.js").Entry[] = [];
+  const ts = new Date().toISOString();
+
+  batchEntries.push({
+    type: "summary",
+    uuid: generateUUID(),
+    parentUuid: null,
+    sessionId,
+    timestamp: ts,
+    message: summaryMessage,
+  } as import("../session/types.js").SummaryEntry);
+
   for (const msg of tail) {
-    await storage.appendMessage(sessionId, msg);
+    batchEntries.push({
+      type: "message",
+      uuid: generateUUID(),
+      parentUuid: null,
+      sessionId,
+      timestamp: ts,
+      message: msg,
+    } as import("../session/types.js").MessageEntry);
   }
 
-  // Re-append session metadata (custom title) after the boundary so it stays
-  // discoverable in the active-entries window.
+  await storage.appendEntriesBatch(sessionId, batchEntries);
+
   await storage.reAppendMetadataAfterCompact(sessionId);
 
   // Ensure role alternation is valid after inserting the summary

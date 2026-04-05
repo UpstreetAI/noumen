@@ -364,3 +364,52 @@ describe("EditFile — checkpoint tracking on empty file", () => {
     expect(trackEditCalls).toContain("/project/empty.txt");
   });
 });
+
+// ---------------------------------------------------------------------------
+// UNC path protection
+// ---------------------------------------------------------------------------
+describe("UNC path protection", () => {
+  it("EditFile rejects UNC paths via checkPermissions", () => {
+    const result = editFileTool.checkPermissions!(
+      { file_path: "\\\\server\\share\\file.txt" },
+      ctx,
+    );
+    expect(result.behavior).toBe("deny");
+    expect(result.message).toContain("UNC");
+  });
+
+  it("EditFile rejects forward-slash UNC paths", () => {
+    const result = editFileTool.checkPermissions!(
+      { file_path: "//server/share/file.txt" },
+      ctx,
+    );
+    expect(result.behavior).toBe("deny");
+  });
+
+  it("WriteFile rejects UNC paths via checkPermissions", () => {
+    const result = writeFileTool.checkPermissions!(
+      { file_path: "\\\\server\\share\\file.txt" },
+      ctx,
+    );
+    expect(result.behavior).toBe("deny");
+    expect(result.message).toContain("UNC");
+  });
+
+  it("ReadFile rejects UNC paths in call", async () => {
+    const result = await readFileTool.call(
+      { file_path: "\\\\server\\share\\file.txt" },
+      ctx,
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("UNC");
+  });
+
+  it("ReadFile rejects forward-slash UNC paths in call", async () => {
+    const result = await readFileTool.call(
+      { file_path: "//server/share/file.txt" },
+      ctx,
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("UNC");
+  });
+});

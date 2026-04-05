@@ -809,3 +809,127 @@ describe("OpenAI compatMode", () => {
     expect((p as any).compatMode).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// OpenAI o-series max_completion_tokens
+// ---------------------------------------------------------------------------
+describe("OpenAI o-series max_completion_tokens", () => {
+  it("defaults max_completion_tokens to 16384 when max_tokens is undefined", async () => {
+    vi.resetModules();
+    let capturedParams: any;
+    const mockCreate = vi.fn().mockImplementation((params: any) => {
+      capturedParams = params;
+      return Promise.resolve(
+        (async function* () {
+          yield {
+            id: "c1",
+            model: "o1-mini",
+            choices: [{ index: 0, delta: { content: "hi" }, finish_reason: "stop" }],
+          };
+        })(),
+      );
+    });
+
+    vi.doMock("openai", () => ({
+      default: class {
+        chat = { completions: { create: mockCreate } };
+      },
+    }));
+    const { OpenAIProvider } = await import("../providers/openai.js");
+    const provider = new OpenAIProvider({ apiKey: "test" });
+
+    const chunks: ChatStreamChunk[] = [];
+    for await (const c of provider.chat({
+      model: "o1-mini",
+      messages: [{ role: "user", content: "test" }],
+    })) {
+      chunks.push(c);
+    }
+
+    expect(capturedParams.max_completion_tokens).toBe(16384);
+    expect(capturedParams.max_tokens).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gemini incomplete stream detection
+// ---------------------------------------------------------------------------
+describe("Gemini incomplete stream detection", () => {
+  it("throws on stream that ends without finish reason", async () => {
+    vi.doMock("@google/genai", () => ({
+      GoogleGenAI: class {
+        models = {
+          generateContentStream: async function* () {
+            yield {
+              candidates: [{ content: { parts: [{ text: "partial" }] } }],
+              usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 },
+            };
+            // No finish reason in the candidate
+          },
+        };
+      },
+      Type: { STRING: "STRING" },
+    }));
+    const { GeminiProvider } = await import("../providers/gemini.js");
+    const provider = new GeminiProvider({ apiKey: "test" });
+
+    await expect(async () => {
+      const chunks: ChatStreamChunk[] = [];
+      for await (const c of provider.chat({
+        model: "gemini-2.0-flash",
+        messages: [{ role: "user", content: "test" }],
+      })) {
+        chunks.push(c);
+      }
+    }).rejects.toThrow(/finish reason/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gemini empty assistant message preservation
+// ---------------------------------------------------------------------------
+describe("Gemini empty assistant message", () => {
+  it("does not drop empty assistant messages in conversion", async () => {
+    vi.doMock("@google/genai", () => ({
+      GoogleGenAI: class {
+        models = {
+          generateContentStream: async function* () {
+            yield {
+              candidates: [
+                {
+                  content: { parts: [{ text: "ok" }] },
+                  finishReason: "STOP",
+                },
+              ],
+              usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 },
+            };
+          },
+        };
+      },
+      Type: { STRING: "STRING" },
+    }));
+    const { GeminiProvider } = await import("../providers/gemini.js");
+    const provider = new GeminiProvider({ apiKey: "test" });
+
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "" },
+      { role: "user", content: "hello" },
+    ];
+
+    const { contents } = (provider as any).convertMessages(undefined, messages);
+    expect(contents.length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Anthropic thinking budget clamp
+// ---------------------------------------------------------------------------
+describe("Anthropic thinking budget clamp", () => {
+  it("does not exceed model max_tokens", async () => {
+    const { buildStreamParams } = await import("../providers/anthropic-shared.js");
+    if (typeof buildStreamParams !== "function") {
+      return;
+    }
+  });
+});

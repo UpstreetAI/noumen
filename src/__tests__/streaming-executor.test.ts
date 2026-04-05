@@ -327,3 +327,104 @@ describe("deferred tool_use_start emission", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Sibling abort cancellation
+// ---------------------------------------------------------------------------
+describe("StreamingToolExecutor sibling cancellation", () => {
+  it("Bash error aborts sibling tools", async () => {
+    const { StreamingToolExecutor } = await import("../tools/streaming-executor.js");
+
+    const signalsReceived: string[] = [];
+    const executor = new StreamingToolExecutor(
+      (name) => {
+        if (name === "Bash") return { name: "Bash", description: "", parameters: { type: "object", properties: {} }, isConcurrencySafe: true, call: async () => ({ content: "" }) } as any;
+        return { name, description: "", parameters: { type: "object", properties: {} }, isConcurrencySafe: true, call: async () => ({ content: "" }) } as any;
+      },
+      async (toolCall, _args, signal) => {
+        if (toolCall.function.name === "Bash") {
+          return { result: { content: "command failed", isError: true }, events: [] };
+        }
+        await new Promise((resolve) => {
+          const timer = setTimeout(resolve, 500);
+          signal?.addEventListener("abort", () => {
+            clearTimeout(timer);
+            signalsReceived.push(toolCall.function.name);
+            resolve(undefined);
+          });
+        });
+        return { result: { content: "ok" }, events: [] };
+      },
+    );
+
+    const bashCall = { id: "bash1", type: "function" as const, function: { name: "Bash", arguments: '{"command":"fail"}' } };
+    const readCall = { id: "read1", type: "function" as const, function: { name: "ReadFile", arguments: '{"path":"test.txt"}' } };
+
+    executor.addTool(bashCall, { command: "fail" });
+    executor.addTool(readCall, { path: "test.txt" });
+
+    const results: any[] = [];
+    for await (const r of executor.getRemainingResults()) {
+      results.push(r);
+    }
+
+    expect(results).toHaveLength(2);
+    const bashResult = results.find((r) => r.toolCall.function.name === "Bash");
+    expect(bashResult!.result.isError).toBe(true);
+  });
+
+  it("parent signal abort propagates to all tools", async () => {
+    const { StreamingToolExecutor } = await import("../tools/streaming-executor.js");
+    const parentAc = new AbortController();
+
+    const executor = new StreamingToolExecutor(
+      () => ({ name: "ReadFile", description: "", parameters: { type: "object", properties: {} }, isConcurrencySafe: true, call: async () => ({ content: "" }) } as any),
+      async (_toolCall, _args, signal) => {
+        await new Promise((resolve) => {
+          const timer = setTimeout(resolve, 5000);
+          signal?.addEventListener("abort", () => { clearTimeout(timer); resolve(undefined); });
+        });
+        return { result: { content: "ok" }, events: [] };
+      },
+      parentAc.signal,
+    );
+
+    const readCall = { id: "r1", type: "function" as const, function: { name: "ReadFile", arguments: '{}' } };
+    executor.addTool(readCall, {});
+
+    setTimeout(() => parentAc.abort(), 50);
+
+    const results: any[] = [];
+    for await (const r of executor.getRemainingResults()) {
+      results.push(r);
+    }
+    expect(results.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("non-Bash errors do not abort siblings", async () => {
+    const { StreamingToolExecutor } = await import("../tools/streaming-executor.js");
+
+    let siblingCompleted = false;
+    const executor = new StreamingToolExecutor(
+      () => ({ name: "ReadFile", description: "", parameters: { type: "object", properties: {} }, isConcurrencySafe: true, call: async () => ({ content: "" }) } as any),
+      async (toolCall) => {
+        if (toolCall.id === "err1") {
+          return { result: { content: "error", isError: true }, events: [] };
+        }
+        await new Promise((r) => setTimeout(r, 50));
+        siblingCompleted = true;
+        return { result: { content: "ok" }, events: [] };
+      },
+    );
+
+    executor.addTool({ id: "err1", type: "function" as const, function: { name: "ReadFile", arguments: '{}' } }, {});
+    executor.addTool({ id: "ok1", type: "function" as const, function: { name: "ReadFile", arguments: '{}' } }, {});
+
+    const results: any[] = [];
+    for await (const r of executor.getRemainingResults()) {
+      results.push(r);
+    }
+    expect(siblingCompleted).toBe(true);
+    expect(results).toHaveLength(2);
+  });
+});

@@ -18,7 +18,12 @@ function createMockFs(): VirtualFs {
       if (!content) throw new Error(`ENOENT: ${path}`);
       return content;
     }),
-    writeFile: vi.fn(async (path: string, content: string) => {
+    writeFile: vi.fn(async (path: string, content: string, opts?: any) => {
+      if (opts?.flag === "wx" && files.has(path)) {
+        const err = new Error(`EEXIST: ${path}`) as any;
+        err.code = "EEXIST";
+        throw err;
+      }
       files.set(path, content);
     }),
     appendFile: vi.fn(),
@@ -58,6 +63,7 @@ describe("persistToolResult", () => {
     expect(fs.writeFile).toHaveBeenCalledWith(
       expect.stringContaining("tc1.txt"),
       bigContent,
+      { flag: "wx" },
     );
   });
 
@@ -71,15 +77,15 @@ describe("persistToolResult", () => {
     expect(result).toBeNull();
   });
 
-  it("does not re-write if file already exists", async () => {
+  it("does not overwrite if file already exists (EEXIST is silently caught)", async () => {
     const bigContent = "x".repeat(200);
-    // First write
+    // First write succeeds
     await persistToolResult(fs, "sess1", "tc1", "Grep", bigContent, config);
-    // Second write — exists returns true
+    // Second write — wx flag causes EEXIST, which is caught silently
     const result = await persistToolResult(fs, "sess1", "tc1", "Grep", bigContent, config);
     expect(result).not.toBeNull();
-    // writeFile should only have been called once
-    expect(fs.writeFile).toHaveBeenCalledTimes(1);
+    // writeFile is called both times (second one throws EEXIST, caught internally)
+    expect(fs.writeFile).toHaveBeenCalledTimes(2);
   });
 });
 

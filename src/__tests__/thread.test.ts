@@ -574,12 +574,12 @@ describe("Thread", () => {
   });
 
   describe("truncated response", () => {
-    it("appends truncation notice on finish_reason length", async () => {
-      const truncatedChunks: ChatStreamChunk[] = [
+    it("recovers from first truncation by escalating max_tokens, then surfaces notice on repeated truncation", async () => {
+      const truncatedChunks1: ChatStreamChunk[] = [
         {
           id: "t1",
           model: "mock-model",
-          choices: [{ index: 0, delta: { content: "partial output" }, finish_reason: null }],
+          choices: [{ index: 0, delta: { content: "partial " }, finish_reason: null }],
         },
         {
           id: "t2",
@@ -587,7 +587,47 @@ describe("Thread", () => {
           choices: [{ index: 0, delta: {}, finish_reason: "length" }],
         },
       ];
-      provider.addResponse(truncatedChunks);
+      const truncatedChunks2: ChatStreamChunk[] = [
+        {
+          id: "t3",
+          model: "mock-model",
+          choices: [{ index: 0, delta: { content: "still partial " }, finish_reason: null }],
+        },
+        {
+          id: "t4",
+          model: "mock-model",
+          choices: [{ index: 0, delta: {}, finish_reason: "length" }],
+        },
+      ];
+      const truncatedChunks3: ChatStreamChunk[] = [
+        {
+          id: "t5",
+          model: "mock-model",
+          choices: [{ index: 0, delta: { content: "more " }, finish_reason: null }],
+        },
+        {
+          id: "t6",
+          model: "mock-model",
+          choices: [{ index: 0, delta: {}, finish_reason: "length" }],
+        },
+      ];
+      const truncatedChunks4: ChatStreamChunk[] = [
+        {
+          id: "t7",
+          model: "mock-model",
+          choices: [{ index: 0, delta: { content: "final " }, finish_reason: null }],
+        },
+        {
+          id: "t8",
+          model: "mock-model",
+          choices: [{ index: 0, delta: {}, finish_reason: "length" }],
+        },
+      ];
+      // Queue 4 truncated responses — first 3 trigger recovery, 4th surfaces notice
+      provider.addResponse(truncatedChunks1);
+      provider.addResponse(truncatedChunks2);
+      provider.addResponse(truncatedChunks3);
+      provider.addResponse(truncatedChunks4);
 
       const thread = new Thread(config, { sessionId: "s1" });
       const events = await collectEvents(thread.run("generate long text"));

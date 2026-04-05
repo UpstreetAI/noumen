@@ -277,6 +277,54 @@ function hasDangerousEnvVars(command: string): boolean {
   return false;
 }
 
+// Zsh builtins that can perform system-level operations
+const ZSH_DANGEROUS_COMMANDS = new Set([
+  "zmodload",
+  "emulate",
+  "sysopen",
+  "sysread",
+  "syswrite",
+  "sysseek",
+  "zpty",
+  "ztcp",
+  "zsocket",
+  "zf_rm",
+  "zf_mv",
+  "zf_ln",
+  "zf_chmod",
+  "zf_chown",
+  "zf_mkdir",
+  "zf_rmdir",
+  "zf_chgrp",
+]);
+
+const MAX_SUBCOMMANDS = 50;
+
+/**
+ * Detect shell injection patterns that embed arbitrary commands inside
+ * otherwise safe-looking commands. Returns a reason string if injection
+ * is detected, null otherwise.
+ */
+export function detectInjectionPatterns(command: string): string | null {
+  if (/>\(/.test(command)) return "Output process substitution >(...)";
+  if (/=\(/.test(command)) return "Zsh =(...) process substitution";
+  if (/\$\{[^}]*[`$]/.test(command)) return "Nested expansion in ${...}";
+  if (/[\x00-\x08\x0e-\x1f\x7f]/.test(command)) return "Control character injection";
+  // Unicode whitespace that isn't regular space/tab/newline
+  if (/[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000\u200B-\u200D\uFEFF]/.test(command)) {
+    return "Unicode whitespace injection";
+  }
+  if (/\w#/.test(command) && !/['"][^'"]*#/.test(command)) {
+    const stripped = command.replace(/'[^']*'/g, "").replace(/"[^"]*"/g, "");
+    if (/\w#/.test(stripped)) return "Mid-word comment injection";
+  }
+  if (/\\n/.test(command)) {
+    const stripped = command.replace(/'[^']*'/g, "");
+    if (/\$'[^']*\\n/.test(stripped)) return "Escaped newline in $'...' string";
+  }
+  return null;
+}
+
 /**
  * Check whether a command contains command substitution or process substitution.
  * These can embed arbitrary commands inside otherwise safe commands.
@@ -310,28 +358,71 @@ function hasUnquotedExpansion(command: string): boolean {
   return false;
 }
 
+const WRAPPER_COMMANDS = ["sudo", "env", "nohup", "time", "nice", "ionice", "strace", "ltrace", "stdbuf"];
+const WRAPPER_WITH_DURATION = new Set(["timeout"]);
+
 /**
- * Extract the base command name from a command string (first token after
- * env vars and redirects).
+ * Phase 1: Strip leading env-var assignments (FOO=bar).
+ */
+function stripEnvVars(cmd: string): string {
+  let result = cmd.trim();
+  while (/^[A-Za-z_][A-Za-z0-9_]*=\S*\s/.test(result)) {
+    result = result.replace(/^[A-Za-z_][A-Za-z0-9_]*=\S*\s+/, "");
+  }
+  return result;
+}
+
+/**
+ * Phase 2: Strip leading wrapper commands (sudo, env, nice, etc.) and their flags.
+ */
+function stripWrappers(cmd: string): string {
+  let result = cmd.trim();
+  let prev = "";
+  while (prev !== result) {
+    prev = result;
+    for (const prefix of WRAPPER_COMMANDS) {
+      if (result.startsWith(prefix + " ")) {
+        result = result.slice(prefix.length).trim();
+        while (result.startsWith("-")) {
+          const spaceIdx = result.indexOf(" ");
+          if (spaceIdx === -1) break;
+          result = result.slice(spaceIdx).trim();
+        }
+      }
+    }
+    for (const prefix of WRAPPER_WITH_DURATION) {
+      if (result.startsWith(prefix + " ")) {
+        result = result.slice(prefix.length).trim();
+        while (result.startsWith("-")) {
+          const spaceIdx = result.indexOf(" ");
+          if (spaceIdx === -1) break;
+          result = result.slice(spaceIdx).trim();
+        }
+        // Skip the duration/positional argument
+        if (result && !result.startsWith("-")) {
+          const spaceIdx = result.indexOf(" ");
+          if (spaceIdx !== -1) {
+            result = result.slice(spaceIdx).trim();
+          }
+        }
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * Two-phase prefix stripping: env vars first, then wrappers.
+ * Fixed order prevents bypass via interleaved env + wrapper patterns
+ * (e.g. `nohup FOO=bar timeout 5 dangerous_cmd`).
  */
 function stripPrefixes(command: string): string {
   let cmd = command.trim();
   let prev = "";
   while (prev !== cmd) {
     prev = cmd;
-    while (/^[A-Za-z_][A-Za-z0-9_]*=\S*\s/.test(cmd)) {
-      cmd = cmd.replace(/^[A-Za-z_][A-Za-z0-9_]*=\S*\s+/, "");
-    }
-    for (const prefix of ["sudo", "env", "nohup", "time", "nice", "ionice", "strace", "ltrace"]) {
-      if (cmd.startsWith(prefix + " ")) {
-        cmd = cmd.slice(prefix.length).trim();
-        while (cmd.startsWith("-")) {
-          const spaceIdx = cmd.indexOf(" ");
-          if (spaceIdx === -1) break;
-          cmd = cmd.slice(spaceIdx).trim();
-        }
-      }
-    }
+    cmd = stripEnvVars(cmd);
+    cmd = stripWrappers(cmd);
   }
   return cmd;
 }
@@ -450,6 +541,25 @@ function classifySingleCommand(
     return { isReadOnly: false, isDestructive: false, reason: "Empty command" };
   }
 
+  // Injection pattern detection (before any other classification)
+  const injectionReason = detectInjectionPatterns(command);
+  if (injectionReason) {
+    return {
+      isReadOnly: false,
+      isDestructive: true,
+      reason: `Injection detected: ${injectionReason}`,
+    };
+  }
+
+  // Zsh dangerous builtins
+  if (ZSH_DANGEROUS_COMMANDS.has(name)) {
+    return {
+      isReadOnly: false,
+      isDestructive: true,
+      reason: `Zsh dangerous command: ${name}`,
+    };
+  }
+
   // Check destructive patterns first
   const allDestructive = [
     ...DESTRUCTIVE_PATTERNS,
@@ -475,13 +585,13 @@ function classifySingleCommand(
     return classifyGitCommand(command);
   }
 
-    // Commands with command substitution or unquoted variable expansion are never read-only
-    if (hasCommandSubstitution(command)) {
-      return { isReadOnly: false, isDestructive: false, reason: `Command contains command substitution` };
-    }
-    if (hasUnquotedExpansion(command)) {
-      return { isReadOnly: false, isDestructive: false, reason: `Command contains unquoted variable expansion` };
-    }
+  // Commands with command substitution or unquoted variable expansion are never read-only
+  if (hasCommandSubstitution(command)) {
+    return { isReadOnly: false, isDestructive: false, reason: `Command contains command substitution` };
+  }
+  if (hasUnquotedExpansion(command)) {
+    return { isReadOnly: false, isDestructive: false, reason: `Command contains unquoted variable expansion` };
+  }
 
   // Commands with dangerous env var prefixes are never read-only
   if (hasDangerousEnvVars(command)) {
@@ -534,6 +644,14 @@ export function classifyCommand(
   const subCommands = splitCompoundCommand(command);
   if (subCommands.length === 0) {
     return { isReadOnly: true, isDestructive: false, reason: "Empty command" };
+  }
+
+  if (subCommands.length > MAX_SUBCOMMANDS) {
+    return {
+      isReadOnly: false,
+      isDestructive: false,
+      reason: `Too many subcommands (${subCommands.length} > ${MAX_SUBCOMMANDS})`,
+    };
   }
 
   if (subCommands.length > 1) {

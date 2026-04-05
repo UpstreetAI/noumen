@@ -16,6 +16,7 @@ interface TrackedTool {
   preventContinuation?: boolean;
   promise?: Promise<void>;
   events: StreamEvent[];
+  abortController?: AbortController;
 }
 
 export interface StreamingExecResult {
@@ -30,6 +31,7 @@ export interface StreamingExecResult {
 export type StreamingToolExecutorFn = (
   toolCall: ToolCallContent,
   parsedArgs: Record<string, unknown>,
+  signal?: AbortSignal,
 ) => Promise<{
   result: ToolResult;
   permissionDenied?: boolean;
@@ -37,28 +39,43 @@ export type StreamingToolExecutorFn = (
   events: StreamEvent[];
 }>;
 
+const BASH_TOOL_NAME = "Bash";
+
 /**
  * Executes tools as they arrive during model streaming.
  * Concurrency-safe tools run in parallel; unsafe tools wait for all prior
  * executions to finish before starting.
+ *
+ * Supports abort propagation: a parent signal aborts all tools, and a
+ * Bash tool error aborts sibling tools via siblingAbortController.
  */
 export class StreamingToolExecutor {
   private tools: TrackedTool[] = [];
   private progressResolve?: () => void;
   private discarded = false;
+  private siblingAbortController: AbortController;
+  private hasErrored = false;
 
   constructor(
     private readonly getTool: (name: string) => Tool | undefined,
     private readonly executeFn: StreamingToolExecutorFn,
-  ) {}
+    private readonly parentSignal?: AbortSignal,
+  ) {
+    this.siblingAbortController = new AbortController();
+    if (parentSignal) {
+      if (parentSignal.aborted) {
+        this.siblingAbortController.abort(parentSignal.reason);
+      } else {
+        parentSignal.addEventListener("abort", () => {
+          this.siblingAbortController.abort(parentSignal.reason);
+        }, { once: true });
+      }
+    }
+  }
 
-  /**
-   * Mark this executor as discarded. Queued tools get synthetic errors,
-   * in-flight tools are not awaited, and getRemainingResults() returns
-   * immediately.
-   */
   discard(): void {
     this.discarded = true;
+    this.siblingAbortController.abort("discarded");
     this.progressResolve?.();
   }
 
@@ -132,8 +149,21 @@ export class StreamingToolExecutor {
     }
   }
 
+  private createToolAbortController(): AbortController {
+    const toolAc = new AbortController();
+    this.siblingAbortController.signal.addEventListener("abort", () => {
+      if (!toolAc.signal.aborted) {
+        toolAc.abort(this.siblingAbortController.signal.reason);
+      }
+    }, { once: true });
+    if (this.siblingAbortController.signal.aborted) {
+      toolAc.abort(this.siblingAbortController.signal.reason);
+    }
+    return toolAc;
+  }
+
   private async executeTool(tracked: TrackedTool): Promise<void> {
-    if (this.discarded) {
+    if (this.discarded || this.siblingAbortController.signal.aborted) {
       tracked.status = "completed";
       tracked.result = { content: "Error: Executor was discarded", isError: true };
       tracked.events = [];
@@ -142,23 +172,35 @@ export class StreamingToolExecutor {
     }
 
     tracked.status = "executing";
+    const toolAc = this.createToolAbortController();
+    tracked.abortController = toolAc;
 
     tracked.promise = (async () => {
       try {
         const { result, permissionDenied, preventContinuation, events } = await this.executeFn(
           tracked.toolCall,
           tracked.parsedArgs,
+          toolAc.signal,
         );
         tracked.result = result;
         tracked.permissionDenied = permissionDenied;
         tracked.preventContinuation = preventContinuation;
         tracked.events = events;
+
+        if (result.isError && tracked.toolCall.function.name === BASH_TOOL_NAME) {
+          this.hasErrored = true;
+          this.siblingAbortController.abort("sibling_error");
+        }
       } catch (err) {
         tracked.result = {
           content: `Error: ${err instanceof Error ? err.message : String(err)}`,
           isError: true,
         };
         tracked.events = [];
+        if (tracked.toolCall.function.name === BASH_TOOL_NAME) {
+          this.hasErrored = true;
+          this.siblingAbortController.abort("sibling_error");
+        }
       }
       tracked.status = "completed";
       this.progressResolve?.();
@@ -167,10 +209,6 @@ export class StreamingToolExecutor {
     void tracked.promise.finally(() => void this.processQueue());
   }
 
-  /**
-   * Synchronously yield any completed results (called during streaming).
-   * Preserves declaration order: stops before a non-safe executing tool.
-   */
   *getCompletedResults(): Generator<StreamingExecResult, void> {
     if (this.discarded) return;
 
@@ -193,10 +231,6 @@ export class StreamingToolExecutor {
     }
   }
 
-  /**
-   * Async drain: waits for all in-flight tools then yields remaining results.
-   * If discarded, yields synthetic errors for all non-yielded tools immediately.
-   */
   async *getRemainingResults(): AsyncGenerator<StreamingExecResult, void> {
     if (this.discarded) {
       for (const tool of this.tools) {

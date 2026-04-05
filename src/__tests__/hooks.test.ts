@@ -408,6 +408,55 @@ describe("Anthropic thinking budget constraint", () => {
     const maxTokens = capturedParams!.max_tokens as number;
     const thinking = capturedParams!.thinking as { budget_tokens: number };
     expect(maxTokens).toBeGreaterThan(thinking.budget_tokens);
-    expect(thinking.budget_tokens).toBeGreaterThanOrEqual(1024);
+    // Budget is clamped to maxOutputTokens - 1 (no artificial floor)
+    expect(thinking.budget_tokens).toBe(1023);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Non-blocking hook errors reported in output
+// ---------------------------------------------------------------------------
+describe("hook error reporting", () => {
+  it("non-blocking hook errors appear in hookErrors array", async () => {
+    const failingHook: HookDefinition = {
+      event: "PreToolUse",
+      blocking: false,
+      handler: async () => {
+        throw new Error("boom");
+      },
+    };
+
+    const output = await runPreToolUseHooks([failingHook], {
+      event: "PreToolUse",
+      toolName: "TestTool",
+      toolInput: {},
+      toolUseId: "tu1",
+      sessionId: "s1",
+    });
+
+    expect(output.hookErrors).toBeDefined();
+    expect(output.hookErrors!.length).toBe(1);
+    expect(output.hookErrors![0].error).toContain("boom");
+  });
+
+  it("blocking hook errors still return deny, no hookErrors", async () => {
+    const failingHook: HookDefinition = {
+      event: "PreToolUse",
+      blocking: true,
+      handler: async () => {
+        throw new Error("critical failure");
+      },
+    };
+
+    const output = await runPreToolUseHooks([failingHook], {
+      event: "PreToolUse",
+      toolName: "TestTool",
+      toolInput: {},
+      toolUseId: "tu1",
+      sessionId: "s1",
+    });
+
+    expect(output.decision).toBe("deny");
+    expect(output.hookErrors).toBeUndefined();
   });
 });

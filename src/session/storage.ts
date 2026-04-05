@@ -57,6 +57,20 @@ export class SessionStorage {
     });
   }
 
+  /**
+   * Append multiple entries atomically as a single write.
+   * All entries are serialized into one string and written in one appendFile
+   * call, preventing partial writes on crash.
+   */
+  async appendEntriesBatch(sessionId: string, entries: Entry[]): Promise<void> {
+    if (entries.length === 0) return;
+    return this.serializedWrite(async () => {
+      await this.ensureDir();
+      const lines = entries.map((e) => jsonStringify(e) + "\n").join("");
+      await this.fs.appendFile(this.getTranscriptPath(sessionId), lines);
+    });
+  }
+
   async appendMessage(
     sessionId: string,
     message: ChatMessage,

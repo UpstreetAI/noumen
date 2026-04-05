@@ -8,6 +8,10 @@ export interface DenialState {
   totalDenials: number;
 }
 
+export type FallbackCheck =
+  | { triggered: false }
+  | { triggered: true; reason: "consecutive" | "total" };
+
 const DEFAULT_LIMITS: DenialLimits = {
   maxConsecutive: 3,
   maxTotal: 20,
@@ -34,16 +38,26 @@ export class DenialTracker {
     this.state.consecutiveDenials = 0;
   }
 
-  shouldFallback(): boolean {
-    return (
-      this.state.consecutiveDenials >= this.limits.maxConsecutive ||
-      this.state.totalDenials >= this.limits.maxTotal
-    );
+  shouldFallback(): FallbackCheck {
+    if (this.state.totalDenials >= this.limits.maxTotal) {
+      return { triggered: true, reason: "total" };
+    }
+    if (this.state.consecutiveDenials >= this.limits.maxConsecutive) {
+      return { triggered: true, reason: "consecutive" };
+    }
+    return { triggered: false };
   }
 
-  resetAfterFallback(): void {
+  /**
+   * Reset counters after a fallback. Only resets totalDenials when the
+   * total limit was the trigger — consecutive-only fallbacks preserve
+   * the total counter so the session-wide safety net stays effective.
+   */
+  resetAfterFallback(trigger: "consecutive" | "total"): void {
     this.state.consecutiveDenials = 0;
-    this.state.totalDenials = 0;
+    if (trigger === "total") {
+      this.state.totalDenials = 0;
+    }
   }
 
   getState(): Readonly<DenialState> {

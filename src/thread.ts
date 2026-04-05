@@ -440,6 +440,7 @@ export class Thread {
       let callCount = 0;
       let consecutiveMalformedIterations = 0;
       let preventContinuation = false;
+      let outputTokenRecoveryAttempts = 0;
       const hooks = this.hooks;
 
       const useStreamingExec = this.config.streamingToolExecution ?? false;
@@ -907,9 +908,10 @@ export class Thread {
               tool_calls: partialToolCalls,
             };
             this.messages.push(partialAssistant);
-            await this.storage.appendMessage(this.sessionId, partialAssistant);
+            await this.storage.appendMessage(this.sessionId, partialAssistant).catch((err) => {
+              console.warn("[noumen/thread] Failed to persist abort partial assistant:", err);
+            });
 
-            // Persist real completed results before generating synthetics for the rest
             for (const sr of streamingResults) {
               const toolResultMsg: ChatMessage = {
                 role: "tool",
@@ -918,27 +920,85 @@ export class Thread {
                 ...(sr.result.isError ? { isError: true } : {}),
               };
               this.messages.push(toolResultMsg);
-              await this.storage.appendMessage(this.sessionId, toolResultMsg);
+              await this.storage.appendMessage(this.sessionId, toolResultMsg).catch((err) => {
+                console.warn("[noumen/thread] Failed to persist abort tool result:", err);
+              });
             }
 
-            // Build existing results list so generateMissingToolResults skips completed tools
             const existingToolMsgs: ChatMessage[] = [...completedToolIds].map((id) => ({
               role: "tool" as const, tool_call_id: id, content: "",
             }));
             const syntheticResults = generateMissingToolResults(partialAssistant, existingToolMsgs, "Interrupted by abort");
             for (const sr of syntheticResults) {
               this.messages.push(sr);
-              await this.storage.appendMessage(this.sessionId, sr);
+              await this.storage.appendMessage(this.sessionId, sr).catch((err) => {
+                console.warn("[noumen/thread] Failed to persist abort synthetic result:", err);
+              });
             }
           }
+
+          const interruptionMsg: ChatMessage = {
+            role: "user",
+            content: "[Session interrupted by user. Continue from where you left off if resumed.]",
+          };
+          this.messages.push(interruptionMsg);
+          await this.storage.appendMessage(this.sessionId, interruptionMsg).catch(() => {});
+
           break;
         }
 
         // Handle truncated responses (max output tokens reached)
         if (finishReason === "length") {
-          yield { type: "text_delta", text: "\n\n[Response truncated due to max output tokens]" };
-          streamingExec?.discard();
-          accumulatedToolCalls.clear();
+          const DEFAULT_MAX_TOKENS = 8192;
+          const ESCALATED_MAX_TOKENS = 65536;
+          const MAX_OUTPUT_RECOVERY_ATTEMPTS = 3;
+
+          if (
+            (currentMaxTokens === undefined || currentMaxTokens === DEFAULT_MAX_TOKENS) &&
+            outputTokenRecoveryAttempts === 0
+          ) {
+            currentMaxTokens = ESCALATED_MAX_TOKENS;
+            outputTokenRecoveryAttempts++;
+            // Persist accumulated content so far, then retry transparently
+            const partialContent = accumulatedContent.join("");
+            if (partialContent) {
+              const partialAssistant: AssistantMessage = {
+                role: "assistant",
+                content: partialContent,
+              };
+              this.messages.push(partialAssistant);
+              await this.storage.appendMessage(this.sessionId, partialAssistant).catch(() => {});
+              this.messages.push({
+                role: "user",
+                content: "Continue from where you left off — no apology, no recap.",
+              });
+            }
+            streamingExec?.discard();
+            accumulatedToolCalls.clear();
+            continue;
+          } else if (outputTokenRecoveryAttempts < MAX_OUTPUT_RECOVERY_ATTEMPTS) {
+            outputTokenRecoveryAttempts++;
+            const partialContent = accumulatedContent.join("");
+            if (partialContent) {
+              const partialAssistant: AssistantMessage = {
+                role: "assistant",
+                content: partialContent,
+              };
+              this.messages.push(partialAssistant);
+              await this.storage.appendMessage(this.sessionId, partialAssistant).catch(() => {});
+              this.messages.push({
+                role: "user",
+                content: "Continue from where you left off — no apology, no recap.",
+              });
+            }
+            streamingExec?.discard();
+            accumulatedToolCalls.clear();
+            continue;
+          } else {
+            yield { type: "text_delta", text: "\n\n[Response truncated due to max output tokens]" };
+            streamingExec?.discard();
+            accumulatedToolCalls.clear();
+          }
         }
 
         if (finishReason === "content_filter") {
@@ -1199,6 +1259,23 @@ export class Thread {
             try {
             let currentArgs = parsedArgs;
 
+            // --- Early Zod validation (before permission checks) ---
+            {
+              const toolDef = registry.get(tc.function.name);
+              if (toolDef?.inputSchema) {
+                const parsed = toolDef.inputSchema.safeParse(currentArgs);
+                if (!parsed.success) {
+                  const { formatZodValidationError } = await import("./utils/zod.js");
+                  return {
+                    toolCall: tc,
+                    parsedArgs: currentArgs,
+                    result: { content: formatZodValidationError(tc.function.name, parsed.error), isError: true },
+                  };
+                }
+                currentArgs = parsed.data as Record<string, unknown>;
+              }
+            }
+
             // --- Permission gate ---
             if (permCtx) {
               const tool = registry.get(tc.function.name);
@@ -1223,7 +1300,7 @@ export class Thread {
                     event: "PermissionDenied", sessionId, toolName: tc.function.name,
                     input: currentArgs, reason: decision.message,
                   } as import("./hooks/types.js").PermissionDeniedHookInput);
-                  if (this.denialTracker?.shouldFallback()) {
+                  if (this.denialTracker?.shouldFallback().triggered) {
                     const state = this.denialTracker.getState();
                     eventQueue.push({
                       type: "denial_limit_exceeded",
@@ -1274,7 +1351,7 @@ export class Thread {
                         event: "PermissionDenied", sessionId, toolName: tc.function.name,
                         input: currentArgs, reason: feedback,
                       } as import("./hooks/types.js").PermissionDeniedHookInput);
-                      if (this.denialTracker?.shouldFallback()) {
+                      if (this.denialTracker?.shouldFallback().triggered) {
                         const state = this.denialTracker.getState();
                         eventQueue.push({
                           type: "denial_limit_exceeded",
@@ -1305,7 +1382,7 @@ export class Thread {
                       event: "PermissionDenied", sessionId, toolName: tc.function.name,
                       input: currentArgs, reason: "No permission handler configured.",
                     } as import("./hooks/types.js").PermissionDeniedHookInput);
-                    if (this.denialTracker?.shouldFallback()) {
+                    if (this.denialTracker?.shouldFallback().triggered) {
                       const state = this.denialTracker.getState();
                       eventQueue.push({
                         type: "denial_limit_exceeded",
@@ -1790,9 +1867,25 @@ export class Thread {
     const registry = this.toolRegistry;
     const sessionId = this.sessionId;
 
-    return async (tc, parsedArgs) => {
+    return async (tc, parsedArgs, signal) => {
       let currentArgs = parsedArgs;
       const events: StreamEvent[] = [];
+
+      // --- Early Zod validation (before permission checks) ---
+      {
+        const toolDef = registry.get(tc.function.name);
+        if (toolDef?.inputSchema) {
+          const parsed = toolDef.inputSchema.safeParse(currentArgs);
+          if (!parsed.success) {
+            const { formatZodValidationError } = await import("./utils/zod.js");
+            return {
+              result: { content: formatZodValidationError(tc.function.name, parsed.error), isError: true },
+              events,
+            };
+          }
+          currentArgs = parsed.data as Record<string, unknown>;
+        }
+      }
 
       if (permCtx) {
         const tool = registry.get(tc.function.name);
@@ -1806,11 +1899,11 @@ export class Thread {
               event: "PermissionDenied", sessionId, toolName: tc.function.name,
               input: currentArgs, reason: decision.message,
             } as import("./hooks/types.js").PermissionDeniedHookInput);
-            if (this.denialTracker?.shouldFallback()) {
+            if (this.denialTracker?.shouldFallback().triggered) {
               const state = this.denialTracker.getState();
               events.push({ type: "denial_limit_exceeded", consecutiveDenials: state.consecutiveDenials, totalDenials: state.totalDenials });
             }
-            return { result: { content: `Permission denied: ${decision.message}`, isError: true }, permissionDenied: true, preventContinuation: this.denialTracker?.shouldFallback() || undefined, events };
+            return { result: { content: `Permission denied: ${decision.message}`, isError: true }, permissionDenied: true, preventContinuation: this.denialTracker?.shouldFallback().triggered || undefined, events };
           }
 
           if (decision.behavior === "ask") {
@@ -1838,11 +1931,11 @@ export class Thread {
                   event: "PermissionDenied", sessionId, toolName: tc.function.name,
                   input: currentArgs, reason: feedback,
                 } as import("./hooks/types.js").PermissionDeniedHookInput);
-                if (this.denialTracker?.shouldFallback()) {
+                if (this.denialTracker?.shouldFallback().triggered) {
                   const state = this.denialTracker.getState();
                   events.push({ type: "denial_limit_exceeded", consecutiveDenials: state.consecutiveDenials, totalDenials: state.totalDenials });
                 }
-                return { result: { content: `Permission denied: ${feedback}`, isError: true }, permissionDenied: true, preventContinuation: this.denialTracker?.shouldFallback() || undefined, events };
+                return { result: { content: `Permission denied: ${feedback}`, isError: true }, permissionDenied: true, preventContinuation: this.denialTracker?.shouldFallback().triggered || undefined, events };
               }
               if (response.updatedInput) currentArgs = response.updatedInput;
               if (response.addRules) permCtx.rules.push(...response.addRules);
@@ -1853,11 +1946,11 @@ export class Thread {
                 event: "PermissionDenied", sessionId, toolName: tc.function.name,
                 input: currentArgs, reason: "No permission handler configured.",
               } as import("./hooks/types.js").PermissionDeniedHookInput);
-              if (this.denialTracker?.shouldFallback()) {
+              if (this.denialTracker?.shouldFallback().triggered) {
                 const state = this.denialTracker.getState();
                 events.push({ type: "denial_limit_exceeded", consecutiveDenials: state.consecutiveDenials, totalDenials: state.totalDenials });
               }
-              return { result: { content: "Permission denied: No permission handler configured.", isError: true }, permissionDenied: true, preventContinuation: this.denialTracker?.shouldFallback() || undefined, events };
+              return { result: { content: "Permission denied: No permission handler configured.", isError: true }, permissionDenied: true, preventContinuation: this.denialTracker?.shouldFallback().triggered || undefined, events };
             }
           }
 

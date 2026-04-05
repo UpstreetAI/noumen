@@ -162,17 +162,17 @@ export async function resolvePermission(
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") throw err;
       if (err instanceof Error && err.name === "AbortError") throw err;
-      throw err;
+      console.warn(`[noumen/permissions] checkPermissions error for "${toolName}":`, err);
     }
 
-    if (toolResult.behavior === "deny") {
+    if (toolResult?.behavior === "deny") {
       return {
         behavior: "deny",
         message: toolResult.message,
         reason: toolResult.reason ?? "tool",
       };
     }
-    if (toolResult.behavior === "ask") {
+    if (toolResult?.behavior === "ask") {
       const isSafetyCheck = toolResult.reason === "safetyCheck";
       const isInteractive = !!tool.requiresUserInteraction;
 
@@ -309,8 +309,9 @@ export async function resolvePermission(
     if (result.shouldBlock) {
       if (opts.denialTracker) {
         opts.denialTracker.recordDenial();
-        if (opts.denialTracker.shouldFallback()) {
-          opts.denialTracker.resetAfterFallback();
+        const fallback = opts.denialTracker.shouldFallback();
+        if (fallback.triggered) {
+          opts.denialTracker.resetAfterFallback(fallback.reason);
           return {
             behavior: "ask",
             message: `Auto-mode classifier denied too many consecutive actions. Falling back to user prompt.`,
@@ -326,6 +327,15 @@ export async function resolvePermission(
     }
 
     opts?.denialTracker?.recordSuccess();
+
+    if (tool.requiresUserInteraction) {
+      return {
+        behavior: "ask",
+        message: `Tool "${toolName}" requires user interaction.`,
+        reason: "interaction",
+      };
+    }
+
     return {
       behavior: "allow",
       updatedInput: effectiveInput,
@@ -351,6 +361,22 @@ export async function resolvePermission(
       updatedInput: effectiveInput,
       reason: "readOnly",
     };
+  }
+
+  // 4b. Working directory enforcement (before allow rules so they can't
+  // bypass cwd restrictions — bypass-immune safety check).
+  if (permCtx.workingDirectories.length > 0) {
+    const filePath =
+      typeof input.file_path === "string" ? input.file_path
+      : typeof input.path === "string" ? input.path
+      : undefined;
+    if (filePath && !isPathInWorkingDirectories(filePath, permCtx.workingDirectories)) {
+      return {
+        behavior: "ask",
+        message: `Path "${filePath}" is outside configured working directories.`,
+        reason: "workingDirectory",
+      };
+    }
   }
 
   // 5. Content-specific allow rules
@@ -385,22 +411,6 @@ export async function resolvePermission(
       updatedInput: effectiveInput,
       reason: "rule",
     };
-  }
-
-  // Working directory enforcement (after mode-specific blocks so acceptEdits
-  // can return "ask" instead of hard "deny").
-  if (permCtx.workingDirectories.length > 0) {
-    const filePath =
-      typeof input.file_path === "string" ? input.file_path
-      : typeof input.path === "string" ? input.path
-      : undefined;
-    if (filePath && !isPathInWorkingDirectories(filePath, permCtx.workingDirectories)) {
-      return {
-        behavior: "ask",
-        message: `Path "${filePath}" is outside configured working directories.`,
-        reason: "workingDirectory",
-      };
-    }
   }
 
   // dontAsk mode: deny anything that would prompt (reads already allowed above)

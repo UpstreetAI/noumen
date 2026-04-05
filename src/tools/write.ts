@@ -12,6 +12,12 @@ export const writeFileTool: Tool = {
   isReadOnly: false,
   checkPermissions(args, ctx) {
     const filePath = args.file_path as string;
+    if (filePath.startsWith("\\\\") || filePath.startsWith("//")) {
+      return {
+        behavior: "deny" as const,
+        message: "Error: UNC paths are not allowed",
+      };
+    }
     if (isDangerousPath(filePath, ctx.cwd)) {
       return {
         behavior: "ask" as const,

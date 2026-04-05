@@ -50,7 +50,7 @@ export class OpenAIProvider implements AIProvider {
     };
 
     if (isOSeries) {
-      (createParams as unknown as Record<string, unknown>).max_completion_tokens = params.max_tokens;
+      (createParams as unknown as Record<string, unknown>).max_completion_tokens = params.max_tokens ?? 16384;
       if (params.thinking?.type === "enabled") {
         (createParams as unknown as Record<string, unknown>).reasoning_effort = "high";
       }

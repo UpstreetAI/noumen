@@ -72,6 +72,10 @@ export const readFileTool: Tool = {
     const offset = (args.offset as number | undefined) ?? 1;
     const limit = args.limit as number | undefined;
 
+    if (filePath.startsWith("\\\\") || filePath.startsWith("//")) {
+      return { content: "Error: UNC paths are not allowed", isError: true };
+    }
+
     try {
       // Block device files that can hang or cause OOM
       const resolved = path.resolve(ctx.cwd, filePath);

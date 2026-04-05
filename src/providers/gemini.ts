@@ -100,6 +100,7 @@ export class GeminiProvider implements AIProvider {
     let chunkIndex = 0;
     let toolCallIndex = 0;
     let responseHasToolCalls = false;
+    let finishReasonSeen = false;
     let lastUsage: ChatStreamChunk["usage"] | undefined;
 
     for await (const chunk of stream) {
@@ -202,6 +203,7 @@ export class GeminiProvider implements AIProvider {
           mapped = "stop";
         }
 
+        finishReasonSeen = true;
         yield {
           id: chunkId,
           model,
@@ -209,6 +211,12 @@ export class GeminiProvider implements AIProvider {
           usage: lastUsage,
         };
       }
+    }
+
+    if (!finishReasonSeen && chunkIndex > 0) {
+      throw new ChatStreamError("Gemini stream ended without finish reason", {
+        cause: new Error("incomplete_stream"),
+      });
     }
     } catch (err: unknown) {
       if (err instanceof ChatStreamError) throw err;
@@ -292,9 +300,10 @@ export class GeminiProvider implements AIProvider {
             });
           }
         }
-        if (parts.length > 0) {
-          contents.push({ role: "model", parts });
+        if (parts.length === 0) {
+          parts.push({ text: "" });
         }
+        contents.push({ role: "model", parts });
       } else if (msg.role === "tool") {
         const fnName =
           toolCallIdToName.get(msg.tool_call_id) ?? msg.tool_call_id;

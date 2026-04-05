@@ -280,15 +280,12 @@ export async function* streamAnthropicChat(
     ? (params.max_tokens ?? modelMaxOutput)
     : (params.max_tokens ?? 8192);
   const clampedBudget = thinkingEnabled
-    ? Math.max(1024, Math.min(budgetTokens, maxOutputTokens - 1))
+    ? Math.min(budgetTokens, maxOutputTokens - 1)
     : 0;
-  const effectiveMaxTokens = thinkingEnabled
-    ? Math.max(maxOutputTokens, clampedBudget + 1)
-    : maxOutputTokens;
 
   const streamParams: Record<string, unknown> = {
     model,
-    max_tokens: effectiveMaxTokens,
+    max_tokens: maxOutputTokens,
     system,
     messages: inputMessages,
     tools,

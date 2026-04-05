@@ -35,6 +35,7 @@ export interface PreToolUseHookOutput {
   updatedInput?: Record<string, unknown>;
   message?: string;
   preventContinuation?: boolean;
+  hookErrors?: Array<{ hook: string; error: string }>;
 }
 
 export interface PostToolUseHookInput {

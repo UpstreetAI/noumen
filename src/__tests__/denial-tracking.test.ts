@@ -6,9 +6,19 @@ describe("DenialTracker", () => {
     const tracker = new DenialTracker({ maxConsecutive: 3, maxTotal: 100 });
     tracker.recordDenial();
     tracker.recordDenial();
-    expect(tracker.shouldFallback()).toBe(false);
+    expect(tracker.shouldFallback().triggered).toBe(false);
     tracker.recordDenial();
-    expect(tracker.shouldFallback()).toBe(true);
+    const result = tracker.shouldFallback();
+    expect(result.triggered).toBe(true);
+    if (result.triggered) expect(result.reason).toBe("consecutive");
+  });
+
+  it("triggers fallback after maxTotal denials", () => {
+    const tracker = new DenialTracker({ maxConsecutive: 100, maxTotal: 5 });
+    for (let i = 0; i < 5; i++) tracker.recordDenial();
+    const result = tracker.shouldFallback();
+    expect(result.triggered).toBe(true);
+    if (result.triggered) expect(result.reason).toBe("total");
   });
 
   it("resets consecutive count on success", () => {
@@ -17,59 +27,76 @@ describe("DenialTracker", () => {
     tracker.recordDenial();
     tracker.recordSuccess();
     tracker.recordDenial();
-    expect(tracker.shouldFallback()).toBe(false);
+    expect(tracker.shouldFallback().triggered).toBe(false);
   });
 
-  it("resetAfterFallback resets both consecutive and total denials", () => {
+  it("consecutive fallback preserves totalDenials count", () => {
+    const tracker = new DenialTracker({ maxConsecutive: 3, maxTotal: 20 });
+    tracker.recordDenial();
+    tracker.recordDenial();
+    tracker.recordDenial();
+    const result = tracker.shouldFallback();
+    expect(result.triggered).toBe(true);
+    if (result.triggered) expect(result.reason).toBe("consecutive");
+
+    tracker.resetAfterFallback("consecutive");
+    expect(tracker.getState().consecutiveDenials).toBe(0);
+    expect(tracker.getState().totalDenials).toBe(3);
+  });
+
+  it("total fallback resets both counters", () => {
     const tracker = new DenialTracker({ maxConsecutive: 100, maxTotal: 5 });
+    for (let i = 0; i < 5; i++) tracker.recordDenial();
+    const result = tracker.shouldFallback();
+    expect(result.triggered).toBe(true);
+    if (result.triggered) expect(result.reason).toBe("total");
 
-    for (let i = 0; i < 5; i++) {
-      tracker.recordDenial();
-    }
-    expect(tracker.shouldFallback()).toBe(true);
-
-    tracker.resetAfterFallback();
+    tracker.resetAfterFallback("total");
     expect(tracker.getState().consecutiveDenials).toBe(0);
     expect(tracker.getState().totalDenials).toBe(0);
-    // Both counters reset — shouldFallback is now false
-    expect(tracker.shouldFallback()).toBe(false);
+    expect(tracker.shouldFallback().triggered).toBe(false);
   });
 
-  it("resetAfterFallback after consecutive limit resets both counters and allows recovery", () => {
-    const tracker = new DenialTracker({ maxConsecutive: 3, maxTotal: 100 });
+  it("cycling through consecutive fallbacks eventually hits total limit", () => {
+    const tracker = new DenialTracker({ maxConsecutive: 2, maxTotal: 7 });
 
+    // Cycle 1: 2 denials → consecutive fallback
     tracker.recordDenial();
     tracker.recordDenial();
-    tracker.recordDenial();
-    expect(tracker.shouldFallback()).toBe(true);
+    let fb = tracker.shouldFallback();
+    expect(fb.triggered && fb.reason).toBe("consecutive");
+    tracker.resetAfterFallback("consecutive");
+    expect(tracker.getState().totalDenials).toBe(2);
 
-    tracker.resetAfterFallback();
-    expect(tracker.getState().consecutiveDenials).toBe(0);
-    expect(tracker.getState().totalDenials).toBe(0);
-    expect(tracker.shouldFallback()).toBe(false);
+    // Cycle 2: 2 more denials → consecutive fallback (total now 4)
+    tracker.recordDenial();
+    tracker.recordDenial();
+    fb = tracker.shouldFallback();
+    expect(fb.triggered && fb.reason).toBe("consecutive");
+    tracker.resetAfterFallback("consecutive");
+    expect(tracker.getState().totalDenials).toBe(4);
+
+    // Cycle 3: 2 more denials → consecutive (total now 6), 1 more → total=7
+    tracker.recordDenial();
+    tracker.recordDenial();
+    fb = tracker.shouldFallback();
+    expect(fb.triggered && fb.reason).toBe("consecutive");
+    tracker.resetAfterFallback("consecutive");
+    expect(tracker.getState().totalDenials).toBe(6);
+
+    // One more denial → total hits 7 = maxTotal
+    tracker.recordDenial();
+    fb = tracker.shouldFallback();
+    expect(fb.triggered).toBe(true);
+    if (fb.triggered) expect(fb.reason).toBe("total");
   });
 
-  it("totalDenials resets on fallback so tracker can recover", () => {
-    const tracker = new DenialTracker({ maxConsecutive: 2, maxTotal: 5 });
-
-    // First cycle: 2 denials → fallback → reset
-    tracker.recordDenial();
-    tracker.recordDenial();
-    expect(tracker.shouldFallback()).toBe(true);
-    tracker.resetAfterFallback();
-    expect(tracker.getState().totalDenials).toBe(0);
-    expect(tracker.shouldFallback()).toBe(false);
-
-    // Second cycle: 2 more denials → fallback → reset
-    tracker.recordDenial();
-    tracker.recordDenial();
-    expect(tracker.shouldFallback()).toBe(true);
-    tracker.resetAfterFallback();
-    expect(tracker.getState().totalDenials).toBe(0);
-
-    // Can keep cycling without permanent lockout
-    tracker.recordDenial();
-    expect(tracker.shouldFallback()).toBe(false);
+  it("total limit takes priority over consecutive when both hit simultaneously", () => {
+    const tracker = new DenialTracker({ maxConsecutive: 5, maxTotal: 5 });
+    for (let i = 0; i < 5; i++) tracker.recordDenial();
+    const fb = tracker.shouldFallback();
+    expect(fb.triggered).toBe(true);
+    if (fb.triggered) expect(fb.reason).toBe("total");
   });
 
   it("reset() clears all state", () => {
@@ -77,19 +104,8 @@ describe("DenialTracker", () => {
     tracker.recordDenial();
     tracker.recordDenial();
     tracker.reset();
-    expect(tracker.shouldFallback()).toBe(false);
+    expect(tracker.shouldFallback().triggered).toBe(false);
     expect(tracker.getState().consecutiveDenials).toBe(0);
     expect(tracker.getState().totalDenials).toBe(0);
-  });
-
-  it("resetAfterFallback resets both consecutiveDenials and totalDenials", () => {
-    const tracker = new DenialTracker({ maxConsecutive: 100, maxTotal: 5 });
-    for (let i = 0; i < 5; i++) tracker.recordDenial();
-    expect(tracker.shouldFallback()).toBe(true);
-
-    tracker.resetAfterFallback();
-    expect(tracker.getState().consecutiveDenials).toBe(0);
-    expect(tracker.getState().totalDenials).toBe(0);
-    expect(tracker.shouldFallback()).toBe(false);
   });
 });

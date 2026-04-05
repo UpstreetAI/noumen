@@ -119,10 +119,11 @@ export async function persistToolResult(
 
   await fs.mkdir(dir, { recursive: true });
 
-  // Write full content — skip if already exists (idempotent across replays)
-  const exists = await fs.exists(filePath);
-  if (!exists) {
-    await fs.writeFile(filePath, content);
+  // Atomic exclusive write — prevents TOCTOU race on concurrent persists
+  try {
+    await fs.writeFile(filePath, content, { flag: "wx" } as any);
+  } catch (err: any) {
+    if (err?.code !== "EEXIST") throw err;
   }
 
   const preview = generatePreview(content, previewChars);

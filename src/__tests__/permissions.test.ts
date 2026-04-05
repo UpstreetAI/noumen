@@ -1270,3 +1270,101 @@ describe("new dangerous path patterns", () => {
     expect(isDangerousPath("home/user/.ripgreprc", "/")).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// checkPermissions error handling — pipeline should not crash
+// ---------------------------------------------------------------------------
+describe("checkPermissions error does not crash pipeline", () => {
+  it("falls through when checkPermissions throws a non-abort error", async () => {
+    const tool: Tool = {
+      name: "BrokenTool",
+      description: "test",
+      parameters: { type: "object", properties: {} },
+      checkPermissions() {
+        throw new Error("Unexpected failure in checkPermissions");
+      },
+      async call() {
+        return { content: "ok" };
+      },
+    };
+    const permCtx = makeContext({ mode: "default" });
+    const decision = await resolvePermission(tool, {}, ctx, permCtx);
+    expect(decision.behavior).toBe("ask");
+    expect(decision.reason).toBe("default");
+  });
+
+  it("still throws on AbortError", async () => {
+    const tool: Tool = {
+      name: "AbortTool",
+      description: "test",
+      parameters: { type: "object", properties: {} },
+      checkPermissions() {
+        throw new DOMException("Aborted", "AbortError");
+      },
+      async call() {
+        return { content: "ok" };
+      },
+    };
+    const permCtx = makeContext({ mode: "default" });
+    await expect(resolvePermission(tool, {}, ctx, permCtx)).rejects.toThrow("Aborted");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Allow rules cannot bypass working directory enforcement
+// ---------------------------------------------------------------------------
+describe("allow rule does not bypass working directory", () => {
+  it("asks when path is outside working directories even with allow rule", async () => {
+    const tool: Tool = {
+      name: "WriteFile",
+      description: "test",
+      parameters: { type: "object", properties: {} },
+      async call() {
+        return { content: "ok" };
+      },
+    };
+    const permCtx = makeContext({
+      mode: "default",
+      rules: [
+        { tool: "WriteFile", behavior: "allow" as const },
+      ],
+      workingDirectories: ["/project"],
+    });
+    const decision = await resolvePermission(
+      tool,
+      { file_path: "/etc/passwd" },
+      ctx,
+      permCtx,
+    );
+    expect(decision.behavior).toBe("ask");
+    expect(decision.reason).toBe("workingDirectory");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Interactive tools cannot be auto-approved in auto mode
+// ---------------------------------------------------------------------------
+describe("interactive tool guard in auto mode", () => {
+  it("asks for interactive tool even when classifier approves", async () => {
+    const provider = new MockAIProvider([
+      textResponse(JSON.stringify({ shouldBlock: false, reason: "approved" })),
+    ]);
+    const tool: Tool = {
+      name: "AskUser",
+      description: "test",
+      parameters: { type: "object", properties: {} },
+      requiresUserInteraction: true,
+      async call() {
+        return { content: "ok" };
+      },
+    };
+    const permCtx = makeContext({ mode: "auto" });
+    const decision = await resolvePermission(tool, {}, ctx, permCtx, {
+      provider,
+      model: "test-model",
+      autoModeConfig: { classifierPrompt: "test" },
+    });
+    expect(decision.behavior).toBe("ask");
+    expect(decision.reason).toBe("interaction");
+  });
+});

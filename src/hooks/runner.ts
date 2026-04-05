@@ -99,7 +99,10 @@ export async function runPreToolUseHooks(
           message: `Blocking hook error: ${err instanceof Error ? err.message : String(err)}`,
         };
       }
-      console.warn(`[noumen/hooks] PreToolUse hook failed:`, err instanceof Error ? err.message : err);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.warn(`[noumen/hooks] PreToolUse hook failed:`, errMsg);
+      merged.hookErrors ??= [];
+      merged.hookErrors.push({ hook: hook.matcher ?? "PreToolUse", error: errMsg });
     }
   }
 

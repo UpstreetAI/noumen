@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isPrivateHost, isPrivateIP } from "../tools/web-fetch.js";
+import { isPrivateHost, isPrivateIP, webFetchTool } from "../tools/web-fetch.js";
 
 // ---------------------------------------------------------------------------
 // Sandbox path traversal prevention
@@ -127,5 +127,37 @@ describe("isPrivateIP for DNS rebinding", () => {
     expect(isPrivateIP("8.8.8.8")).toBe(false);
     expect(isPrivateIP("1.1.1.1")).toBe(false);
     expect(isPrivateIP("93.184.216.34")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WebFetch URL credential blocking
+// ---------------------------------------------------------------------------
+describe("WebFetch URL credential blocking", () => {
+  const ctx = { fs: {} as any, computer: {} as any, cwd: "/project" };
+
+  it("blocks URLs with embedded username", async () => {
+    const result = await webFetchTool.call({ url: "https://user@internal-api.com/data" }, ctx as any);
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("credentials");
+  });
+
+  it("blocks URLs with embedded username and password", async () => {
+    const result = await webFetchTool.call({ url: "https://user:pass@internal-api.com/data" }, ctx as any);
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("credentials");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WebFetch HTTP to HTTPS upgrade
+// ---------------------------------------------------------------------------
+describe("WebFetch HTTP upgrade", () => {
+  const ctx = { fs: {} as any, computer: {} as any, cwd: "/project" };
+
+  it("upgrades http to https (private host check uses upgraded URL)", async () => {
+    const result = await webFetchTool.call({ url: "http://localhost/test" }, ctx as any);
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("private");
   });
 });
