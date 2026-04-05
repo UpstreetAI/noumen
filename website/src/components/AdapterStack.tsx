@@ -44,6 +44,12 @@ const ROWS: AdapterRow[] = [
         importName: "OpenRouterProvider",
         code: "new OpenRouterProvider({ apiKey: process.env.OPENROUTER_API_KEY })",
       },
+      {
+        id: "ollama",
+        name: "Ollama",
+        importName: "OllamaProvider",
+        code: 'new OllamaProvider({ model: "qwen2.5-coder:32b" })',
+      },
     ],
   },
   {
