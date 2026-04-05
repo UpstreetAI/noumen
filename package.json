@@ -2,7 +2,7 @@
   "name": "noumen",
   "version": "0.2.0",
   "type": "module",
-  "description": "Programmatic AI coding agent library with pluggable providers and virtual infrastructure",
+  "description": "Programmatic AI agent runtime with pluggable providers and sandboxed virtual infrastructure",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",

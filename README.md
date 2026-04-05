@@ -1,8 +1,8 @@
 # noumen 🐍
 
-The coding agent you `npm install`.
+The agent runtime you `npm install`.
 
-`noumen` gives you the full agentic coding loop — tool execution, file editing, shell commands, context compaction, and session management — with sandboxed virtual infrastructure that isolates your agent from the host machine.
+`noumen` gives you the full agentic loop — tool execution, file editing, shell commands, context compaction, and session management — with sandboxed virtual infrastructure that isolates your agent from the host machine. Built for coding agents. Ready for any agent that uses a computer.
 
 Any provider. Any sandbox. One package.
 
@@ -35,7 +35,7 @@ for await (const event of agent.run("Add a health-check endpoint to server.ts"))
 }
 ```
 
-Three lines to a working coding agent. The string provider auto-detects your `ANTHROPIC_API_KEY` from the environment, and `cwd` defaults to a local sandbox.
+Three lines to a working agent. The string provider auto-detects your `ANTHROPIC_API_KEY` from the environment, and `cwd` defaults to a local sandbox.
 
 ### Execute (run to completion)
 

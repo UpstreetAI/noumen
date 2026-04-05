@@ -5,6 +5,37 @@ import { AdapterStack } from "@/components/AdapterStack";
 import { Sparkles } from "@/components/Sparkles";
 import { EasterEggFooter } from "@/components/EasterEggFooter";
 
+const USE_CASES = [
+  {
+    icon: "💻",
+    title: "Coding agents",
+    prompt: "Refactor the auth module and add tests",
+    description:
+      "The primary use case. Read, write, edit files, run tests, manage git — the full coding loop with sandboxed isolation.",
+  },
+  {
+    icon: "📊",
+    title: "Data analysis",
+    prompt: "Analyze sales.csv and produce a summary report",
+    description:
+      "Read datasets, run scripts, write outputs. The same file + shell primitives that power coding agents handle data pipelines too.",
+  },
+  {
+    icon: "🔧",
+    title: "DevOps & infrastructure",
+    prompt: "Check the deploy logs and rollback if errors spiked",
+    description:
+      "Shell execution, log parsing, config editing. Agents that operate infrastructure need the same sandboxed computer access.",
+  },
+  {
+    icon: "🔍",
+    title: "Research & knowledge work",
+    prompt: "Read every doc in /specs, then write a summary with citations",
+    description:
+      "Fetch URLs, grep through documents, compile findings. Any agent that reads and writes files fits the model.",
+  },
+];
+
 const FEATURES = [
   {
     icon: "🔌",
@@ -20,7 +51,7 @@ const FEATURES = [
   },
   {
     icon: "🛠️",
-    title: "Nine built-in coding tools",
+    title: "Nine built-in tools",
     description:
       "ReadFile, WriteFile, EditFile, Bash, Glob, Grep, WebFetch, NotebookEdit, AskUser — the same tools shipping inside production coding agents, wired up and ready to go.",
   },
@@ -101,20 +132,18 @@ export default function Home() {
           {/* Left: copy */}
           <div className="min-w-0 flex flex-col gap-6">
             <div className="inline-flex w-fit items-center gap-2 rounded-full border border-[var(--color-accent-blue-dim)] bg-[var(--color-accent-blue-dim)] px-3 py-1 text-xs font-medium text-[var(--color-accent-blue)]">
-              <span>⚡</span> coding agent SDK
+              <span>⚡</span> agent runtime
             </div>
 
             <h1 className="font-[family-name:var(--font-display)] text-4xl font-extrabold leading-[1.08] tracking-tight text-[var(--color-text-primary)] sm:text-5xl lg:text-6xl">
-              <code className="rounded bg-[var(--color-base-surface)] px-2 py-0.5 font-mono text-[0.9em]">npm install</code>{" "}your{" "}
+              An agent that{" "}
               <span className="bg-gradient-to-r from-[var(--color-accent-blue)] to-[var(--color-accent-cyan)] bg-clip-text text-transparent">
-                coding agent.
+                reads, writes, and executes.
               </span>
             </h1>
             <p className="max-w-lg text-lg leading-relaxed text-[var(--color-text-secondary)]">
-              Every coding agent needs the same infrastructure &mdash; file
-              editing, shell execution, context management, sandboxing. Noumen
-              gives you all of it as one package. Swap a line to change the
-              model or the isolation boundary.
+              File editing, shell execution, context management, and
+              sandboxing &mdash; any provider, any sandbox, one package.
             </p>
 
             <TerminalBlock command="npm install noumen" className="max-w-lg" />
@@ -155,11 +184,11 @@ export default function Home() {
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent via-[var(--color-accent-blue-dim)] to-transparent opacity-30" />
         <div className="relative mx-auto max-w-6xl px-6">
           <h2 className="font-[family-name:var(--font-display)] text-center text-3xl font-bold tracking-tight text-[var(--color-text-primary)] sm:text-4xl">
-            Everything between the LLM and the codebase
+            Everything between the LLM and the computer
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-center text-[var(--color-text-secondary)]">
-            Other SDKs lock you to one model or make you build the coding
-            tools yourself. Noumen ships the full stack &mdash; any provider,
+            Other SDKs lock you to one model or make you build the tools
+            yourself. Noumen ships the full stack &mdash; any provider,
             any sandbox, every tool &mdash; so you ship the agent.
           </p>
 
@@ -175,6 +204,45 @@ export default function Home() {
                 </h3>
                 <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
                   {feature.description}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── Use cases ── */}
+      <section className="relative py-24 sm:py-32">
+        <div className="relative mx-auto max-w-6xl px-6">
+          <h2 className="font-[family-name:var(--font-display)] text-center text-3xl font-bold tracking-tight text-[var(--color-text-primary)] sm:text-4xl">
+            Built for coding.{" "}
+            <span className="bg-gradient-to-r from-[var(--color-accent-blue)] to-[var(--color-accent-cyan)] bg-clip-text text-transparent">
+              Ready for anything.
+            </span>
+          </h2>
+          <p className="mx-auto mt-4 max-w-xl text-center text-[var(--color-text-secondary)]">
+            The same primitives that power coding agents &mdash; filesystem,
+            shell, sandboxing, context management &mdash; work for any agent
+            that uses a computer.
+          </p>
+
+          <div className="mt-14 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+            {USE_CASES.map((uc) => (
+              <div
+                key={uc.title}
+                className="group flex flex-col gap-4 rounded-xl border border-[var(--color-border-default)] bg-[var(--color-base-card)] p-6 transition hover:border-[var(--color-accent-cyan)] hover:-translate-y-1 hover:shadow-lg hover:shadow-[var(--color-accent-cyan-dim)]"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl">{uc.icon}</span>
+                  <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
+                    {uc.title}
+                  </h3>
+                </div>
+                <code className="block rounded-md bg-[var(--color-base-surface)] px-3 py-2 text-xs text-[var(--color-accent-blue)] leading-relaxed">
+                  agent.run(&quot;{uc.prompt}&quot;)
+                </code>
+                <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
+                  {uc.description}
                 </p>
               </div>
             ))}

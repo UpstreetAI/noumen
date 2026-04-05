@@ -1,9 +1,9 @@
 ---
 title: Introduction
-description: "noumen is the coding agent you npm install — the missing layer between LLMs and codebases, with pluggable providers and virtual infrastructure."
+description: "noumen is the agent runtime you npm install — the missing layer between LLMs and computers, with pluggable providers and virtual infrastructure."
 ---
 
-The coding agent you `npm install`. noumen gives you the full agentic coding loop — tool execution, file editing, shell commands, context compaction, and session management — with sandboxed virtual infrastructure that isolates your agent from the host machine. Any provider, any sandbox backend, one package.
+The agent runtime you `npm install`. noumen gives you the full agentic loop — tool execution, file editing, shell commands, context compaction, and session management — with sandboxed virtual infrastructure that isolates your agent from the host machine. Built for coding agents, ready for any agent that uses a computer. Any provider, any sandbox backend, one package.
 
 ## Install
 
@@ -37,7 +37,7 @@ for await (const event of agent.run("Add a health-check endpoint to server.ts"))
     All tool I/O routes through a Sandbox — the isolation boundary. Five built-in backends: `LocalSandbox` (OS-level), `UnsandboxedLocal`, sprites.dev containers, Docker, and E2B cloud. Or implement your own.
   </Card>
   <Card title="Read, write, edit, execute" href="/docs/tools">
-    ReadFile, WriteFile, EditFile, Bash, Glob, Grep, WebFetch, NotebookEdit, AskUser — the same nine tools shipping inside production coding agents.
+    ReadFile, WriteFile, EditFile, Bash, Glob, Grep, WebFetch, NotebookEdit, AskUser — nine tools for any agent that interacts with a computer.
   </Card>
   <Card title="Connect to anything" href="/docs/mcp">
     Client and server support for Model Context Protocol. Expose external tools and resources seamlessly.
