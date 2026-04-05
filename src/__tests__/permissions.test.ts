@@ -523,6 +523,134 @@ describe("resolvePermission", () => {
 });
 
 // =========================================================================
+// isDangerousPath
+// =========================================================================
+
+import { isDangerousPath } from "../permissions/pipeline.js";
+import { stripForRuleMatching } from "../permissions/rules.js";
+
+describe("isDangerousPath", () => {
+  it("detects .git/HEAD case-insensitively", () => {
+    expect(isDangerousPath(".git/HEAD")).toBe(true);
+    expect(isDangerousPath(".git/head")).toBe(true);
+  });
+
+  it("detects .ssh directory", () => {
+    expect(isDangerousPath(".ssh/id_rsa")).toBe(true);
+    expect(isDangerousPath(".ssh/config")).toBe(true);
+  });
+
+  it("detects .env files", () => {
+    expect(isDangerousPath(".env")).toBe(true);
+    expect(isDangerousPath("subdir/.env")).toBe(true);
+  });
+
+  it("detects newly added patterns (.vscode, .idea, .claude, .gitconfig, .mcp.json)", () => {
+    expect(isDangerousPath(".vscode/settings.json")).toBe(true);
+    expect(isDangerousPath(".idea/workspace.xml")).toBe(true);
+    expect(isDangerousPath(".claude/config")).toBe(true);
+    expect(isDangerousPath(".gitconfig")).toBe(true);
+    expect(isDangerousPath(".gitmodules")).toBe(true);
+    expect(isDangerousPath(".mcp.json")).toBe(true);
+  });
+
+  it("does not flag safe paths", () => {
+    expect(isDangerousPath("src/index.ts")).toBe(false);
+    expect(isDangerousPath("README.md")).toBe(false);
+  });
+});
+
+// =========================================================================
+// stripForRuleMatching
+// =========================================================================
+
+describe("stripForRuleMatching", () => {
+  it("strips env var prefixes", () => {
+    expect(stripForRuleMatching("FOO=bar npm test")).toBe("npm test");
+    expect(stripForRuleMatching("A=1 B=2 cmd arg")).toBe("cmd arg");
+  });
+
+  it("strips safe wrapper commands", () => {
+    expect(stripForRuleMatching("nice -n5 npm test")).toBe("npm test");
+    expect(stripForRuleMatching("nohup node server.js")).toBe("node server.js");
+    expect(stripForRuleMatching("stdbuf -oL npm test")).toBe("npm test");
+  });
+
+  it("strips combined env vars and wrappers", () => {
+    expect(stripForRuleMatching("FOO=bar nice -n5 npm test")).toBe("npm test");
+  });
+
+  it("returns command unchanged when no wrappers", () => {
+    expect(stripForRuleMatching("npm test")).toBe("npm test");
+    expect(stripForRuleMatching("git status")).toBe("git status");
+  });
+});
+
+// =========================================================================
+// acceptEdits mode
+// =========================================================================
+
+describe("acceptEdits mode", () => {
+  it("allows write tools without prompting", async () => {
+    const result = await resolvePermission(
+      writeFileTool,
+      { file_path: "/project/a.ts", content: "x" },
+      ctx,
+      makeContext({ mode: "acceptEdits" }),
+    );
+    expect(result.behavior).toBe("allow");
+  });
+
+  it("allows Bash commands in the allowlist", async () => {
+    const result = await resolvePermission(
+      bashTool,
+      { command: "mkdir -p /project/new" },
+      ctx,
+      makeContext({ mode: "acceptEdits" }),
+    );
+    expect(result.behavior).toBe("allow");
+  });
+
+  it("asks for Bash commands not in the allowlist", async () => {
+    const result = await resolvePermission(
+      bashTool,
+      { command: "curl https://example.com" },
+      ctx,
+      makeContext({ mode: "acceptEdits" }),
+    );
+    expect(result.behavior).toBe("ask");
+  });
+});
+
+// =========================================================================
+// Dangerous path bypass-immune
+// =========================================================================
+
+describe("dangerous path bypass-immune", () => {
+  it("prompts for .ssh writes even in bypassPermissions mode", async () => {
+    const result = await resolvePermission(
+      writeFileTool,
+      { file_path: ".ssh/authorized_keys", content: "key" },
+      ctx,
+      makeContext({ mode: "bypassPermissions", workingDirectories: [] }),
+    );
+    expect(result.behavior).toBe("ask");
+    expect(result.reason).toBe("safetyCheck");
+  });
+
+  it("prompts for .env writes even in bypassPermissions mode", async () => {
+    const result = await resolvePermission(
+      writeFileTool,
+      { file_path: ".env", content: "SECRET=1" },
+      ctx,
+      makeContext({ mode: "bypassPermissions", workingDirectories: [] }),
+    );
+    expect(result.behavior).toBe("ask");
+    expect(result.reason).toBe("safetyCheck");
+  });
+});
+
+// =========================================================================
 // Thread integration: permission gating
 // =========================================================================
 

@@ -301,4 +301,37 @@ describe("Agent", () => {
       expect(result.sessionId).toBeTruthy();
     });
   });
+
+  describe("Agent lifecycle", () => {
+    it("resumeThread returns a Thread for an existing session", async () => {
+      const agent = new Agent({
+        provider: provider,
+        sandbox: { fs, computer },
+      });
+
+      provider.addResponse(textResponse("reply"));
+      const thread1 = await agent.createThread({ sessionId: "s1" });
+      for await (const _ of thread1.run("hi")) { /* consume */ }
+
+      const thread2 = await agent.resumeThread("s1");
+      expect(thread2).toBeInstanceOf(Thread);
+      expect(thread2.sessionId).toBe("s1");
+    });
+
+    it("close() calls sandbox.dispose if available", async () => {
+      let disposed = false;
+      const disposableSandbox = {
+        fs, computer,
+        dispose: async () => { disposed = true; },
+      };
+
+      const agent = new Agent({
+        provider: provider,
+        sandbox: disposableSandbox,
+      });
+
+      await agent.close();
+      expect(disposed).toBe(true);
+    });
+  });
 });

@@ -41,13 +41,13 @@ describe("compactConversation", () => {
     expect(result[0].content).toContain("[Conversation Summary]");
     expect(result[0].content).toContain("This is the summary.");
 
-    // Verify it was persisted (summary before boundary for crash safety:
-    // an orphaned boundary with no summary after it falls back to the prior boundary)
+    // Verify it was persisted (boundary then summary; crash safety: an
+    // orphaned boundary with no summary after it falls back to the prior boundary)
     const entries = await storage.loadAllEntries("s1");
-    expect(entries.map((e) => e.type)).toEqual([
-      "summary",
-      "compact-boundary",
-    ]);
+    const types = entries.map((e) => e.type);
+    expect(types).toContain("compact-boundary");
+    expect(types).toContain("summary");
+    expect(types.indexOf("compact-boundary")).toBeLessThan(types.indexOf("summary"));
 
     // AI was called with the messages + summary prompt
     expect(provider.calls).toHaveLength(1);
@@ -70,6 +70,56 @@ describe("compactConversation", () => {
     const lastMsg =
       provider.calls[0].messages[provider.calls[0].messages.length - 1];
     expect(lastMsg.content).toBe("Summarize briefly.");
+  });
+});
+
+describe("compactConversation write ordering", () => {
+  it("writes compact-boundary then summary (boundary before summary)", async () => {
+    provider.addResponse(textResponse("Summary text."));
+
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "hi" },
+    ];
+
+    await compactConversation(provider, "mock-model", messages, storage, "s1");
+
+    const entries = await storage.loadAllEntries("s1");
+    const types = entries.map((e) => e.type);
+    const boundaryIdx = types.indexOf("compact-boundary");
+    const summaryIdx = types.indexOf("summary");
+
+    expect(boundaryIdx).not.toBe(-1);
+    expect(summaryIdx).not.toBe(-1);
+    // Boundary comes first, then summary
+    expect(boundaryIdx).toBeLessThan(summaryIdx);
+  });
+});
+
+describe("compactConversation merges consecutive same-role after summary", () => {
+  it("merges summary (user) with user-role tail message", async () => {
+    provider.addResponse(textResponse("Summary."));
+
+    const messages: ChatMessage[] = [
+      { role: "user", content: "first" },
+      { role: "assistant", content: "reply" },
+      { role: "user", content: "second" },
+      { role: "assistant", content: "reply2" },
+      { role: "user", content: "tail user message" },
+    ];
+
+    const result = await compactConversation(
+      provider, "mock-model", messages, storage, "s1",
+      { tailMessagesToKeep: 1 },
+    );
+
+    // Summary (user) + tail user message should be merged into one
+    const userMsgs = result.filter((m) => m.role === "user");
+    expect(userMsgs).toHaveLength(1);
+    const content = typeof userMsgs[0].content === "string"
+      ? userMsgs[0].content : "";
+    expect(content).toContain("[Conversation Summary]");
+    expect(content).toContain("tail user message");
   });
 });
 

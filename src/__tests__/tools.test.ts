@@ -267,4 +267,17 @@ describe("ToolRegistry", () => {
     expect(registry.listTools()).toHaveLength(10);
     expect(registry.get("Custom")).toBeDefined();
   });
+
+  it("returns error result when tool.call throws", async () => {
+    const throwingTool = {
+      name: "Throwy",
+      description: "throws",
+      parameters: { type: "object" as const, properties: {} },
+      call: async () => { throw new Error("tool exploded"); },
+    };
+    const registry = new ToolRegistry([throwingTool]);
+    const result = await registry.execute("Throwy", {}, ctx);
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("tool exploded");
+  });
 });

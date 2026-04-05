@@ -662,3 +662,87 @@ interface GeminiPartLike {
   functionCall?: { name: string; args: Record<string, unknown> };
   functionResponse?: { name: string; response: { result: unknown } };
 }
+
+describe("OpenAIProvider — O-series models", () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  it("sets max_completion_tokens instead of max_tokens for O-series models", async () => {
+    let capturedParams: Record<string, unknown> = {};
+
+    vi.doMock("openai", () => ({
+      default: class {
+        chat = {
+          completions: {
+            create: vi.fn().mockImplementation(async (params: Record<string, unknown>) => {
+              capturedParams = params;
+              return (async function* () {
+                yield {
+                  id: "c1", model: "o1",
+                  choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+                };
+              })();
+            }),
+          },
+        };
+      },
+    }));
+
+    const { OpenAIProvider } = await import("../providers/openai.js");
+    const provider = new OpenAIProvider({ apiKey: "test-key" });
+
+    for await (const _ of provider.chat({
+      model: "o1",
+      messages: [{ role: "user", content: "hi" }],
+      max_tokens: 4096,
+    })) {
+      // consume
+    }
+
+    expect(capturedParams.max_completion_tokens).toBe(4096);
+    expect(capturedParams.max_tokens).toBeUndefined();
+  });
+
+  it("maps reasoning_content to thinking_content in deltas", async () => {
+    vi.doMock("openai", () => ({
+      default: class {
+        chat = {
+          completions: {
+            create: vi.fn().mockResolvedValue(
+              (async function* () {
+                yield {
+                  id: "c1", model: "o1",
+                  choices: [{
+                    index: 0,
+                    delta: { content: "answer", reasoning_content: "thought process" },
+                    finish_reason: null,
+                  }],
+                };
+                yield {
+                  id: "c2", model: "o1",
+                  choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+                };
+              })(),
+            ),
+          },
+        };
+      },
+    }));
+
+    const { OpenAIProvider } = await import("../providers/openai.js");
+    const provider = new OpenAIProvider({ apiKey: "test-key" });
+
+    const chunks: ChatStreamChunk[] = [];
+    for await (const chunk of provider.chat({
+      model: "o1",
+      messages: [{ role: "user", content: "hi" }],
+    })) {
+      chunks.push(chunk);
+    }
+
+    const thinkingChunk = chunks.find((c) => c.choices[0].delta.thinking_content);
+    expect(thinkingChunk).toBeDefined();
+    expect(thinkingChunk!.choices[0].delta.thinking_content).toBe("thought process");
+  });
+});

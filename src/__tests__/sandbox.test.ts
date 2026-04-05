@@ -95,6 +95,13 @@ describe("LocalFs", () => {
     await fs.rm(dir, { recursive: true });
   });
 
+  it("rejects paths using .. traversal outside basePath", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "localfs-trav-"));
+    const lfs = new LocalFs({ basePath: dir });
+    await expect(lfs.readFile("../../etc/passwd")).rejects.toThrow("resolves outside base directory");
+    await fs.rm(dir, { recursive: true });
+  });
+
   it("allows absolute paths inside basePath", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "localfs-abs-"));
     const absFile = path.join(dir, "abs.txt");

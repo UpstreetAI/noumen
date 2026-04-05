@@ -225,6 +225,150 @@ describe("convertAnthropicMessages", () => {
   });
 });
 
+describe("convertAnthropicMessages — thinking and redacted_thinking", () => {
+  it("includes thinking blocks with signature for assistant messages", () => {
+    const { messages } = convertAnthropicMessages(
+      undefined,
+      [
+        {
+          role: "assistant",
+          content: "Answer",
+          thinking_content: "Let me think...",
+          thinking_signature: "sig123",
+        },
+      ],
+    );
+
+    const assistantContent = (messages[0] as Record<string, unknown>).content as Record<string, unknown>[];
+    const thinkingBlock = assistantContent.find((b) => b.type === "thinking");
+    expect(thinkingBlock).toBeDefined();
+    expect(thinkingBlock!.thinking).toBe("Let me think...");
+    expect(thinkingBlock!.signature).toBe("sig123");
+  });
+
+  it("includes redacted_thinking blocks for assistant messages", () => {
+    const { messages } = convertAnthropicMessages(
+      undefined,
+      [
+        {
+          role: "assistant",
+          content: "Answer",
+          redacted_thinking_data: "opaque-data",
+        },
+      ],
+    );
+
+    const assistantContent = (messages[0] as Record<string, unknown>).content as Record<string, unknown>[];
+    const redactedBlock = assistantContent.find((b) => b.type === "redacted_thinking");
+    expect(redactedBlock).toBeDefined();
+    expect(redactedBlock!.data).toBe("opaque-data");
+  });
+});
+
+describe("convertAnthropicMessages — isError on tool results", () => {
+  it("sets is_error on tool result when isError is true", () => {
+    const { messages } = convertAnthropicMessages(
+      undefined,
+      [
+        { role: "tool", tool_call_id: "tc1", content: "Error occurred", isError: true },
+      ],
+    );
+
+    const content = (messages[0] as Record<string, unknown>).content as Record<string, unknown>[];
+    const toolResult = content[0];
+    expect(toolResult.is_error).toBe(true);
+  });
+
+  it("does not set is_error when isError is not set", () => {
+    const { messages } = convertAnthropicMessages(
+      undefined,
+      [
+        { role: "tool", tool_call_id: "tc1", content: "ok" },
+      ],
+    );
+
+    const content = (messages[0] as Record<string, unknown>).content as Record<string, unknown>[];
+    const toolResult = content[0];
+    expect(toolResult.is_error).toBeUndefined();
+  });
+});
+
+describe("convertAnthropicMessages — cache_control skips thinking blocks", () => {
+  it("places cache_control on the text block, not thinking or redacted_thinking", () => {
+    const { messages } = convertAnthropicMessages(
+      undefined,
+      [
+        { role: "user", content: "hi" },
+        {
+          role: "assistant",
+          content: "Answer",
+          thinking_content: "Thinking...",
+          thinking_signature: "sig",
+          redacted_thinking_data: "opaque",
+        },
+      ],
+      { enabled: true },
+    );
+
+    const assistantContent = (messages[1] as Record<string, unknown>).content as Record<string, unknown>[];
+    const thinkingBlock = assistantContent.find((b) => b.type === "thinking");
+    const redactedBlock = assistantContent.find((b) => b.type === "redacted_thinking");
+    const textBlock = assistantContent.find((b) => b.type === "text");
+
+    // cache_control should be on text, not on thinking blocks
+    expect(thinkingBlock!.cache_control).toBeUndefined();
+    expect(redactedBlock!.cache_control).toBeUndefined();
+    expect(textBlock!.cache_control).toBeDefined();
+  });
+});
+
+describe("streamAnthropicChat — redacted_thinking", () => {
+  it("yields redacted_thinking_data for redacted_thinking blocks", async () => {
+    const events = [
+      { type: "message_start", message: { usage: { input_tokens: 10, output_tokens: 0 } } },
+      { type: "content_block_start", content_block: { type: "redacted_thinking", data: "opaque-data" } },
+      { type: "content_block_start", content_block: { type: "text" } },
+      { type: "content_block_delta", delta: { type: "text_delta", text: "Answer" } },
+      { type: "message_stop" },
+    ];
+
+    const client = makeMockClient(events);
+    const chunks: ChatStreamChunk[] = [];
+    for await (const chunk of streamAnthropicChat(client, {
+      model: "claude-test",
+      messages: [{ role: "user", content: "hi" }],
+      thinking: { type: "enabled", budgetTokens: 5000 },
+    }, "claude-test")) {
+      chunks.push(chunk);
+    }
+
+    const redactedChunk = chunks.find((c) => c.choices[0].delta.redacted_thinking_data !== undefined);
+    expect(redactedChunk).toBeDefined();
+  });
+});
+
+describe("streamAnthropicChat — incomplete stream detection", () => {
+  it("throws ChatStreamError when stream ends without message_stop", async () => {
+    const events = [
+      { type: "message_start", message: { usage: { input_tokens: 10, output_tokens: 0 } } },
+      { type: "content_block_start", content_block: { type: "text" } },
+      { type: "content_block_delta", delta: { type: "text_delta", text: "partial" } },
+      // No message_stop
+    ];
+
+    const client = makeMockClient(events);
+
+    await expect(async () => {
+      for await (const _chunk of streamAnthropicChat(client, {
+        model: "claude-test",
+        messages: [{ role: "user", content: "hi" }],
+      }, "claude-test")) {
+        // consume
+      }
+    }).rejects.toThrow("message_stop");
+  });
+});
+
 describe("buildAnthropicSystemBlocks", () => {
   it("returns string when caching disabled", () => {
     expect(buildAnthropicSystemBlocks("Hello")).toBe("Hello");

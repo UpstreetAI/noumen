@@ -209,6 +209,103 @@ describe("sanitizeForResume", () => {
   });
 });
 
+describe("filterUnresolvedToolUses — orphaned tool results", () => {
+  it("removes orphaned tool results when their assistant is dropped", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "do it" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          { id: "tc_1", type: "function", function: { name: "Bash", arguments: '{}' } },
+          { id: "tc_2", type: "function", function: { name: "Grep", arguments: '{}' } },
+        ],
+      },
+      // tc_1 is resolved, tc_2 is not — but since at least one is resolved, assistant stays
+      { role: "tool", tool_call_id: "tc_1", content: "ok" },
+      // Second assistant: ALL unresolved → should be dropped, along with its tool results
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          { id: "tc_3", type: "function", function: { name: "ReadFile", arguments: '{}' } },
+        ],
+      },
+    ];
+    const result = filterUnresolvedToolUses(messages);
+    // Second assistant (tc_3 unresolved) dropped
+    expect(result.removed).toBe(1);
+    // Only user + first assistant + tc_1 result remain
+    expect(result.messages).toHaveLength(3);
+    expect(result.messages.every((m) => {
+      if (m.role === "tool") return (m as any).tool_call_id !== "tc_3";
+      return true;
+    })).toBe(true);
+  });
+});
+
+describe("detectTurnInterruption with array content", () => {
+  it("detects Conversation Summary in ContentPart[] user message", () => {
+    const messages: ChatMessage[] = [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "[Conversation Summary]\n\nSome summary text." },
+        ],
+      },
+    ];
+    expect(detectTurnInterruption(messages).kind).toBe("none");
+  });
+
+  it("detects interrupted_prompt for non-summary ContentPart[] user message", () => {
+    const messages: ChatMessage[] = [
+      { role: "assistant", content: "hello" },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "what is this?" },
+        ],
+      },
+    ];
+    expect(detectTurnInterruption(messages).kind).toBe("interrupted_prompt");
+  });
+});
+
+describe("sanitizeForResume — fillPartiallyResolvedToolCalls", () => {
+  it("inserts synthetic results after the last real tool result, not after assistant", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "do it" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          { id: "tc_1", type: "function", function: { name: "Bash", arguments: '{}' } },
+          { id: "tc_2", type: "function", function: { name: "Grep", arguments: '{}' } },
+        ],
+      },
+      { role: "tool", tool_call_id: "tc_1", content: "ok" },
+      // tc_2 is unresolved — synthetic should go after tc_1 result, not after assistant
+    ];
+
+    const result = sanitizeForResume(messages);
+    // Find the synthetic result
+    const synthetic = result.messages.find(
+      (m) => m.role === "tool" && (m as any).tool_call_id === "tc_2",
+    );
+    expect(synthetic).toBeDefined();
+    expect(typeof synthetic!.content === "string" && synthetic!.content).toContain("missing");
+
+    // Verify ordering: synthetic should be after the tc_1 tool result
+    const tc1Idx = result.messages.findIndex(
+      (m) => m.role === "tool" && (m as any).tool_call_id === "tc_1",
+    );
+    const tc2Idx = result.messages.findIndex(
+      (m) => m.role === "tool" && (m as any).tool_call_id === "tc_2",
+    );
+    expect(tc2Idx).toBeGreaterThan(tc1Idx);
+  });
+});
+
 describe("generateMissingToolResults", () => {
   it("generates synthetic results for unresolved tool_calls", () => {
     const assistant: AssistantMessage = {

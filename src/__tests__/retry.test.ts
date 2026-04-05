@@ -305,6 +305,100 @@ describe("withRetry engine", () => {
   });
 });
 
+describe("Nested connection errors", () => {
+  it("detects connection error in nested cause chain", () => {
+    const deepError = {
+      message: "wrapper",
+      cause: {
+        message: "mid",
+        cause: {
+          code: "ECONNRESET",
+          message: "connection reset",
+        },
+      },
+    };
+    const classified = classifyError(deepError);
+    expect(isRetryable(classified, DEFAULT_RETRY_CONFIG)).toBe(true);
+  });
+
+  it("detects APIConnectionError at depth > 1", () => {
+    const wrappedError = {
+      message: "outer",
+      cause: {
+        name: "APIConnectionError",
+        message: "conn failed",
+      },
+    };
+    const classified = classifyError(wrappedError);
+    expect(isRetryable(classified, DEFAULT_RETRY_CONFIG)).toBe(true);
+  });
+});
+
+describe("Overloaded always retryable", () => {
+  it("529 is retryable regardless of retryableStatuses config", () => {
+    const error = { status: 529, message: "Overloaded" };
+    const classified = classifyError(error);
+    expect(classified.isOverloaded).toBe(true);
+    // Even with a restrictive retryableStatuses list, overloaded should be retryable
+    expect(isRetryable(classified, { ...DEFAULT_RETRY_CONFIG, retryableStatuses: [429] })).toBe(true);
+  });
+});
+
+describe("baseDelayMs parameter", () => {
+  it("produces different delays with custom baseDelayMs", () => {
+    const defaultDelay = getRetryDelay(1, null, 32000, 500);
+    const customDelay = getRetryDelay(1, null, 32000, 100);
+    // Custom base should be ~5x smaller
+    expect(customDelay).toBeLessThan(defaultDelay);
+    expect(customDelay).toBeLessThanOrEqual(125); // 100 + 25% jitter
+  });
+});
+
+describe("Attempt counter reset on fallback", () => {
+  it("gives fallback model full retry budget after switching", async () => {
+    let callCount = 0;
+    const models: string[] = [];
+
+    async function* mockStream(ctx: { model: string }): AsyncIterable<ChatStreamChunk> {
+      callCount++;
+      models.push(ctx.model);
+      if (models.length <= 3) {
+        // First 3 calls: overloaded on primary
+        throw Object.assign(new Error("Overloaded"), { status: 529 });
+      }
+      if (models.length === 4) {
+        // First call on fallback: also fails with retryable
+        throw Object.assign(new Error("Rate limited"), { status: 429 });
+      }
+      // Second call on fallback succeeds
+      yield textChunk("success");
+      yield stopChunk();
+    }
+
+    const gen = withRetry(
+      (ctx) => mockStream(ctx),
+      {
+        ...DEFAULT_RETRY_CONFIG,
+        model: "primary",
+        fallbackModel: "fallback",
+        maxConsecutiveOverloaded: 3,
+        maxRetries: 3,
+        baseDelayMs: 1,
+      },
+    );
+
+    let result = await gen.next();
+    while (!result.done) {
+      result = await gen.next();
+    }
+
+    // Should have: 3 primary overloaded + 1 fallback 429 + 1 fallback success = 5
+    expect(callCount).toBe(5);
+    expect(models[3]).toBe("fallback");
+    expect(models[4]).toBe("fallback");
+  });
+});
+
 describe("Retry in Thread", () => {
   let fs: MockFs;
   let computer: MockComputer;

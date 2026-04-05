@@ -114,6 +114,25 @@ describe("partitionToolCalls", () => {
     expect(batches).toHaveLength(1);
     expect(batches[0].isConcurrencySafe).toBe(false);
   });
+
+  it("isolates tool calls with malformed JSON args into their own batch", () => {
+    const malformedTc: ToolCallContent = {
+      id: "bad1",
+      type: "function",
+      function: { name: "SafeTool", arguments: "{not valid json" },
+    };
+    const goodTc = makeTc("SafeTool", "good1");
+    const tcs = [goodTc, malformedTc];
+    const batches = partitionToolCalls(tcs, (n) => tools.get(n));
+
+    // Malformed should be in its own non-concurrent batch
+    expect(batches.length).toBeGreaterThanOrEqual(2);
+    const malformedBatch = batches.find((b) =>
+      b.items.some((item) => item.toolCall.id === "bad1"),
+    );
+    expect(malformedBatch).toBeDefined();
+    expect(malformedBatch!.isConcurrencySafe).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -148,6 +167,31 @@ describe("runToolsBatched", () => {
     }
     expect(results).toHaveLength(2);
     expect(results.map((r) => r.result.content).sort()).toEqual(["result-1", "result-2"]);
+  });
+
+  it("catches executor error and returns error result instead of crashing", async () => {
+    const tcs = [makeTc("SafeTool", "1"), makeTc("SafeTool", "2")];
+    const results = [];
+    for await (const r of runToolsBatched(
+      tcs,
+      () => safeTool,
+      async (tc) => {
+        if (tc.id === "1") {
+          throw new Error("executor failed");
+        }
+        return {
+          toolCall: tc,
+          parsedArgs: {},
+          result: { content: "ok" },
+        };
+      },
+    )) {
+      results.push(r);
+    }
+    // Both calls should produce results (the failing one as an error)
+    expect(results).toHaveLength(2);
+    const errorResult = results.find((r) => r.result.isError);
+    expect(errorResult).toBeDefined();
   });
 });
 

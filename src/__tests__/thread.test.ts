@@ -9,7 +9,7 @@ import {
 import { Thread } from "../thread.js";
 import type { ThreadConfig } from "../thread.js";
 import type { StreamEvent } from "../session/types.js";
-import type { ChatStreamChunk } from "../providers/types.js";
+import type { AIProvider, ChatStreamChunk } from "../providers/types.js";
 import { createAutoCompactConfig } from "../compact/auto-compact.js";
 
 let fs: MockFs;
@@ -355,6 +355,328 @@ describe("Thread", () => {
 
       // Should have stopped early
       expect(events.length).toBeLessThan(100);
+    });
+  });
+
+  describe("malformed tool calls", () => {
+    it("handles all-malformed tool calls by emitting error results and continuing", async () => {
+      // First response: model emits a tool call with invalid JSON args
+      const malformedChunks: ChatStreamChunk[] = [
+        {
+          id: "m1",
+          model: "mock-model",
+          choices: [{
+            index: 0,
+            delta: {
+              tool_calls: [{
+                index: 0,
+                id: "tc_bad",
+                type: "function",
+                function: { name: "ReadFile", arguments: "" },
+              }],
+            },
+            finish_reason: null,
+          }],
+        },
+        {
+          id: "m2",
+          model: "mock-model",
+          choices: [{
+            index: 0,
+            delta: {
+              tool_calls: [{
+                index: 0,
+                function: { arguments: "{not valid json" },
+              }],
+            },
+            finish_reason: null,
+          }],
+        },
+        {
+          id: "m3",
+          model: "mock-model",
+          choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+        },
+      ];
+      provider.addResponse(malformedChunks);
+      // Second call: model gives a final text response
+      provider.addResponse(textResponse("recovered"));
+
+      const thread = new Thread(config, { sessionId: "s1" });
+      const events = await collectEvents(thread.run("test"));
+
+      const toolResult = events.find(
+        (e) => e.type === "tool_result" && e.toolUseId === "tc_bad",
+      );
+      expect(toolResult).toBeDefined();
+      if (toolResult?.type === "tool_result") {
+        expect(toolResult.result.isError).toBe(true);
+      }
+
+      const complete = events.find((e) => e.type === "message_complete");
+      expect(complete).toBeDefined();
+      // Provider was called twice: once for malformed, once for recovery
+      expect(provider.calls).toHaveLength(2);
+    });
+
+    it("handles mixed valid and malformed tool calls", async () => {
+      fs.files.set("/test.txt", "hello");
+
+      // Two tool calls: one valid, one with bad JSON
+      const mixedChunks: ChatStreamChunk[] = [
+        {
+          id: "m1",
+          model: "mock-model",
+          choices: [{
+            index: 0,
+            delta: {
+              tool_calls: [{
+                index: 0,
+                id: "tc_good",
+                type: "function",
+                function: { name: "ReadFile", arguments: "" },
+              }],
+            },
+            finish_reason: null,
+          }],
+        },
+        {
+          id: "m2",
+          model: "mock-model",
+          choices: [{
+            index: 0,
+            delta: {
+              tool_calls: [{
+                index: 0,
+                function: { arguments: JSON.stringify({ file_path: "/test.txt" }) },
+              }],
+            },
+            finish_reason: null,
+          }],
+        },
+        {
+          id: "m3",
+          model: "mock-model",
+          choices: [{
+            index: 0,
+            delta: {
+              tool_calls: [{
+                index: 1,
+                id: "tc_bad",
+                type: "function",
+                function: { name: "WriteFile", arguments: "" },
+              }],
+            },
+            finish_reason: null,
+          }],
+        },
+        {
+          id: "m4",
+          model: "mock-model",
+          choices: [{
+            index: 0,
+            delta: {
+              tool_calls: [{
+                index: 1,
+                function: { arguments: "not json at all" },
+              }],
+            },
+            finish_reason: null,
+          }],
+        },
+        {
+          id: "m5",
+          model: "mock-model",
+          choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+        },
+      ];
+      provider.addResponse(mixedChunks);
+      provider.addResponse(textResponse("done"));
+
+      const thread = new Thread(config, { sessionId: "s1" });
+      const events = await collectEvents(thread.run("test"));
+
+      const toolResults = events.filter((e) => e.type === "tool_result");
+      expect(toolResults.length).toBeGreaterThanOrEqual(2);
+
+      const goodResult = toolResults.find(
+        (e) => e.type === "tool_result" && e.toolName === "ReadFile",
+      );
+      expect(goodResult).toBeDefined();
+      if (goodResult?.type === "tool_result") {
+        expect(goodResult.result.isError).toBeFalsy();
+      }
+
+      const badResult = toolResults.find(
+        (e) => e.type === "tool_result" && e.toolName === "WriteFile",
+      );
+      expect(badResult).toBeDefined();
+      if (badResult?.type === "tool_result") {
+        expect(badResult.result.isError).toBe(true);
+      }
+    });
+  });
+
+  describe("preventContinuation emits turn_complete", () => {
+    it("yields turn_complete when hook sets preventContinuation", async () => {
+      fs.files.set("/test.txt", "content");
+
+      provider.addResponse(
+        toolCallResponse("tc_1", "ReadFile", { file_path: "/test.txt" }),
+      );
+
+      const hookConfig: ThreadConfig = {
+        ...config,
+        hooks: [
+          {
+            event: "PostToolUse",
+            handler: () => ({ preventContinuation: true }),
+          },
+        ],
+      };
+
+      const thread = new Thread(hookConfig, { sessionId: "s1" });
+      const events = await collectEvents(thread.run("read file"));
+
+      const turnComplete = events.find((e) => e.type === "turn_complete");
+      expect(turnComplete).toBeDefined();
+      if (turnComplete?.type === "turn_complete") {
+        expect(turnComplete.callCount).toBe(1);
+      }
+    });
+  });
+
+  describe("max_turns", () => {
+    it("emits turn_complete before max_turns_reached", async () => {
+      fs.files.set("/test.txt", "content");
+
+      provider.addResponse(
+        toolCallResponse("tc_1", "ReadFile", { file_path: "/test.txt" }),
+      );
+      provider.addResponse(
+        toolCallResponse("tc_2", "ReadFile", { file_path: "/test.txt" }),
+      );
+
+      const thread = new Thread(config, { sessionId: "s1" });
+      const events = await collectEvents(thread.run("read file", { maxTurns: 1 }));
+
+      const turnCompleteIdx = events.findIndex((e) => e.type === "turn_complete");
+      const maxTurnsIdx = events.findIndex((e) => e.type === "max_turns_reached");
+
+      expect(turnCompleteIdx).not.toBe(-1);
+      expect(maxTurnsIdx).not.toBe(-1);
+      expect(turnCompleteIdx).toBeLessThan(maxTurnsIdx);
+    });
+  });
+
+  describe("truncated response", () => {
+    it("appends truncation notice on finish_reason length", async () => {
+      const truncatedChunks: ChatStreamChunk[] = [
+        {
+          id: "t1",
+          model: "mock-model",
+          choices: [{ index: 0, delta: { content: "partial output" }, finish_reason: null }],
+        },
+        {
+          id: "t2",
+          model: "mock-model",
+          choices: [{ index: 0, delta: {}, finish_reason: "length" }],
+        },
+      ];
+      provider.addResponse(truncatedChunks);
+
+      const thread = new Thread(config, { sessionId: "s1" });
+      const events = await collectEvents(thread.run("generate long text"));
+
+      const textDeltas = events
+        .filter((e) => e.type === "text_delta")
+        .map((e) => (e as { text: string }).text)
+        .join("");
+      expect(textDeltas).toContain("[Response truncated");
+    });
+  });
+
+  describe("all-malformed with maxTurns", () => {
+    it("emits turn_complete and max_turns_reached when all tool calls are malformed at limit", async () => {
+      const malformedChunks: ChatStreamChunk[] = [
+        {
+          id: "m1", model: "mock-model",
+          choices: [{
+            index: 0,
+            delta: {
+              tool_calls: [{ index: 0, id: "tc_x", type: "function", function: { name: "ReadFile", arguments: "" } }],
+            },
+            finish_reason: null,
+          }],
+        },
+        {
+          id: "m2", model: "mock-model",
+          choices: [{
+            index: 0,
+            delta: { tool_calls: [{ index: 0, function: { arguments: "{{bad" } }] },
+            finish_reason: null,
+          }],
+        },
+        {
+          id: "m3", model: "mock-model",
+          choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+        },
+      ];
+      provider.addResponse(malformedChunks);
+
+      const thread = new Thread(config, { sessionId: "s1" });
+      const events = await collectEvents(thread.run("test", { maxTurns: 1 }));
+
+      const turnComplete = events.find((e) => e.type === "turn_complete");
+      const maxTurns = events.find((e) => e.type === "max_turns_reached");
+      expect(turnComplete).toBeDefined();
+      expect(maxTurns).toBeDefined();
+    });
+  });
+
+  describe("tool result budget snapshot", () => {
+    it("does not mutate canonical messages when budget is applied", async () => {
+      // Build a thread with pre-seeded long tool results and budget enabled
+      const longContent = "x".repeat(10000);
+      const entry1 = JSON.stringify({
+        type: "message", uuid: "u1", parentUuid: null, sessionId: "s1",
+        timestamp: new Date().toISOString(),
+        message: { role: "user", content: "hi" },
+      });
+      const entry2 = JSON.stringify({
+        type: "message", uuid: "u2", parentUuid: "u1", sessionId: "s1",
+        timestamp: new Date().toISOString(),
+        message: {
+          role: "assistant", content: null,
+          tool_calls: [{ id: "tc_1", type: "function", function: { name: "ReadFile", arguments: '{"file_path":"/f"}' } }],
+        },
+      });
+      const entry3 = JSON.stringify({
+        type: "message", uuid: "u3", parentUuid: "u2", sessionId: "s1",
+        timestamp: new Date().toISOString(),
+        message: { role: "tool", tool_call_id: "tc_1", content: longContent },
+      });
+      fs.files.set("/sessions/s1.jsonl", [entry1, entry2, entry3].join("\n") + "\n");
+
+      provider.addResponse(textResponse("ok"));
+
+      const budgetConfig: ThreadConfig = {
+        ...config,
+        toolResultBudget: { enabled: true, maxCharsPerResult: 100, maxTotalChars: 500 },
+      };
+
+      const thread = new Thread(budgetConfig, { sessionId: "s1", resume: true });
+      await collectEvents(thread.run("continue"));
+
+      // The canonical messages should still have the original long content
+      const messages = await thread.getMessages();
+      const toolMsg = messages.find((m) => m.role === "tool");
+      expect(toolMsg).toBeDefined();
+      // The original long content should be preserved in canonical messages
+      // (budget only applies to the API snapshot)
+      if (toolMsg && typeof toolMsg.content === "string") {
+        expect(toolMsg.content.length).toBeGreaterThan(100);
+      }
     });
   });
 });

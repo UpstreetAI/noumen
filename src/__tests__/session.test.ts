@@ -113,4 +113,42 @@ describe("SessionStorage", () => {
     await storage.ensureDir();
     expect(fs.dirs.has("/sessions")).toBe(true);
   });
+
+  it("concurrent appendMessage calls do not interleave", async () => {
+    const promises = [];
+    for (let i = 0; i < 10; i++) {
+      promises.push(
+        storage.appendMessage("s1", { role: "user", content: `msg-${i}` }),
+      );
+    }
+    await Promise.all(promises);
+
+    const raw = fs.files.get("/sessions/s1.jsonl")!;
+    const lines = raw.trim().split("\n");
+    expect(lines).toHaveLength(10);
+
+    // Each line should be valid JSON
+    for (const line of lines) {
+      expect(() => JSON.parse(line)).not.toThrow();
+    }
+
+    // All messages should be present
+    const messages = await storage.loadMessages("s1");
+    expect(messages).toHaveLength(10);
+  });
+
+  it("orphaned boundary at end falls back to prior boundary on loadMessages", async () => {
+    await storage.appendMessage("s1", { role: "user", content: "old" });
+    await storage.appendCompactBoundary("s1");
+    await storage.appendSummary("s1", { role: "user", content: "summary" });
+    await storage.appendMessage("s1", { role: "user", content: "new" });
+    // Write a second orphaned boundary with no summary/message after
+    await storage.appendCompactBoundary("s1");
+
+    const messages = await storage.loadMessages("s1");
+    // Should fall back to first boundary + summary + "new"
+    expect(messages.length).toBeGreaterThanOrEqual(2);
+    const hasNew = messages.some((m) => m.content === "new");
+    expect(hasNew).toBe(true);
+  });
 });

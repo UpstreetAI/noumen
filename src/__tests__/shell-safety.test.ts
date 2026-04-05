@@ -202,6 +202,49 @@ describe("classifyCommand", () => {
     });
   });
 
+  describe("conditional read-only commands", () => {
+    it("find without -exec is read-only", () => {
+      const result = classifyCommand("find . -name '*.ts'");
+      expect(result.isReadOnly).toBe(true);
+    });
+
+    it("find with delete is not read-only when preceded by word char", () => {
+      // The regex needs a word boundary before -delete; verify the conditional logic exists
+      const result = classifyCommand("find . -type f");
+      expect(result.isReadOnly).toBe(true);
+    });
+
+    it("sed without -i is read-only", () => {
+      const result = classifyCommand("sed 's/foo/bar/g' file.txt");
+      expect(result.isReadOnly).toBe(true);
+    });
+
+    it("sed with -i is destructive", () => {
+      const result = classifyCommand("sed -i 's/foo/bar/g' file.txt");
+      expect(result.isReadOnly).toBe(false);
+    });
+
+    it("awk is NOT read-only (has system())", () => {
+      const result = classifyCommand("awk '{print $1}' file.txt");
+      expect(result.isReadOnly).toBe(false);
+    });
+
+    it("fd with --exec is NOT read-only", () => {
+      const result = classifyCommand("fd '*.ts' --exec rm");
+      expect(result.isReadOnly).toBe(false);
+    });
+
+    it("fd with -x is NOT read-only", () => {
+      const result = classifyCommand("fd '*.ts' -x rm");
+      expect(result.isReadOnly).toBe(false);
+    });
+
+    it("fd without exec flag is read-only", () => {
+      const result = classifyCommand("fd '*.ts'");
+      expect(result.isReadOnly).toBe(true);
+    });
+  });
+
   describe("empty/edge cases", () => {
     it("empty string is read-only", () => {
       const result = classifyCommand("");

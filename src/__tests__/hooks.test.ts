@@ -119,6 +119,48 @@ describe("runPostToolUseHooks", () => {
   });
 });
 
+describe("blocking hook errors", () => {
+  it("PreToolUse blocking hook error returns deny decision", async () => {
+    const blockingHook: HookDefinition = {
+      event: "PreToolUse",
+      blocking: true,
+      handler: async () => {
+        throw new Error("hook failed");
+      },
+    };
+    const output = await runPreToolUseHooks([blockingHook], {
+      event: "PreToolUse",
+      toolName: "Bash",
+      toolInput: {},
+      toolUseId: "tc1",
+      sessionId: "s1",
+    });
+    expect(output.decision).toBe("deny");
+    expect(output.message).toContain("hook failed");
+  });
+
+  it("PostToolUse blocking hook error returns preventContinuation", async () => {
+    const blockingHook: HookDefinition = {
+      event: "PostToolUse",
+      blocking: true,
+      handler: async () => {
+        throw new Error("post hook failed");
+      },
+    };
+    const output = await runPostToolUseHooks([blockingHook], {
+      event: "PostToolUse",
+      toolName: "Bash",
+      toolInput: {},
+      toolUseId: "tc1",
+      toolOutput: "ok",
+      isError: false,
+      sessionId: "s1",
+    });
+    expect(output.preventContinuation).toBe(true);
+    expect(output.updatedOutput).toContain("post hook failed");
+  });
+});
+
 describe("runNotificationHooks", () => {
   it("runs hooks without errors even if one throws", async () => {
     const called: string[] = [];

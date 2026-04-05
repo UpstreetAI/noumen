@@ -109,6 +109,48 @@ describe("restoreSession", () => {
     expect(payload.checkpointSnapshots).toEqual([]);
     expect(payload.overflowEntries).toEqual([]);
   });
+
+  it("collects checkpoints from before a compact boundary", async () => {
+    const uuid1 = await storage.appendMessage("s1", { role: "user", content: "old" });
+    await storage.appendCheckpointEntry("s1", uuid1, {
+      messageId: uuid1,
+      trackedFileBackups: { "/a.ts": { backupFileName: "a@v1", version: 1, backupTime: "t1" } },
+      timestamp: "t1",
+    }, false);
+
+    await storage.appendCompactBoundary("s1");
+    await storage.appendSummary("s1", { role: "user", content: "summary" });
+
+    const uuid2 = await storage.appendMessage("s1", { role: "user", content: "new" });
+    await storage.appendCheckpointEntry("s1", uuid2, {
+      messageId: uuid2,
+      trackedFileBackups: { "/b.ts": { backupFileName: "b@v1", version: 1, backupTime: "t2" } },
+      timestamp: "t2",
+    }, false);
+
+    const payload = await restoreSession(storage, "s1");
+    // Checkpoint from before the boundary should still be available
+    expect(payload.checkpointSnapshots.length).toBeGreaterThanOrEqual(1);
+    const allFiles = payload.checkpointSnapshots.flatMap((s) =>
+      Object.keys(s.trackedFileBackups),
+    );
+    expect(allFiles).toContain("/b.ts");
+  });
+
+  it("handles orphaned boundary at end by falling back", async () => {
+    await storage.appendMessage("s1", { role: "user", content: "old" });
+    await storage.appendCompactBoundary("s1");
+    await storage.appendSummary("s1", { role: "user", content: "summary" });
+    await storage.appendMessage("s1", { role: "user", content: "new" });
+    // Orphaned boundary with no summary after
+    await storage.appendCompactBoundary("s1");
+
+    const payload = await restoreSession(storage, "s1");
+    // Should fall back to the prior boundary
+    expect(payload.messages.length).toBeGreaterThanOrEqual(2);
+    const hasNew = payload.messages.some((m) => m.content === "new");
+    expect(hasNew).toBe(true);
+  });
 });
 
 describe("CostTracker getState/restore", () => {
