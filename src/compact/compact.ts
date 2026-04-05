@@ -110,6 +110,10 @@ export async function compactConversation(
     throw new DOMException("Compaction aborted", "AbortError");
   }
 
+  if (!summaryText.trim()) {
+    throw new Error("Compaction produced an empty summary — aborting to prevent context loss");
+  }
+
   const summaryMessage: ChatMessage = {
     role: "user",
     content: `[Conversation Summary]\n\n${summaryText}`,

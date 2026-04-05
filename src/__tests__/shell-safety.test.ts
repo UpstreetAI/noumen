@@ -256,4 +256,46 @@ describe("classifyCommand", () => {
       expect(result.isReadOnly).toBe(true);
     });
   });
+
+  describe("dotnet conditional read-only", () => {
+    it("dotnet --version is read-only", () => {
+      const result = classifyCommand("dotnet --version");
+      expect(result.isReadOnly).toBe(true);
+    });
+
+    it("dotnet --info is read-only", () => {
+      const result = classifyCommand("dotnet --info");
+      expect(result.isReadOnly).toBe(true);
+    });
+
+    it("dotnet --list-sdks is read-only", () => {
+      const result = classifyCommand("dotnet --list-sdks");
+      expect(result.isReadOnly).toBe(true);
+    });
+
+    it("bare dotnet (no args) is read-only", () => {
+      const result = classifyCommand("dotnet");
+      expect(result.isReadOnly).toBe(true);
+    });
+
+    it("dotnet run is NOT read-only", () => {
+      const result = classifyCommand("dotnet run");
+      expect(result.isReadOnly).toBe(false);
+    });
+
+    it("dotnet build is NOT read-only", () => {
+      const result = classifyCommand("dotnet build");
+      expect(result.isReadOnly).toBe(false);
+    });
+
+    it("dotnet publish is NOT read-only", () => {
+      const result = classifyCommand("dotnet publish");
+      expect(result.isReadOnly).toBe(false);
+    });
+
+    it("dotnet script malicious.cs is NOT read-only", () => {
+      const result = classifyCommand("dotnet script malicious.cs");
+      expect(result.isReadOnly).toBe(false);
+    });
+  });
 });

@@ -91,7 +91,6 @@ const READ_ONLY_COMMANDS = new Set([
   "sw_vers",
   "sysctl",
   "getconf",
-  "dotnet",
 ]);
 
 // Commands that are read-only only when specific dangerous flags are absent.
@@ -115,6 +114,14 @@ const CONDITIONAL_READ_ONLY: Record<
   },
   info: (_cmd, tokens) => !tokens.some((t) => ["-o", "--output", "--dribble", "--init-file"].includes(t)),
   tree: (_cmd, tokens) => !tokens.some((t) => t === "-R"),
+  dotnet: (_cmd, tokens) => {
+    const positional = tokens.filter((t) => !t.startsWith("-"));
+    if (positional.length === 0) return true;
+    const sub = positional[0];
+    return ["--version", "--info", "--list-sdks", "--list-runtimes"].includes(sub)
+      || tokens.includes("--version") || tokens.includes("--info")
+      || tokens.includes("--list-sdks") || tokens.includes("--list-runtimes");
+  },
 };
 
 // -- Git read-only subcommands --

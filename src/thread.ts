@@ -37,7 +37,7 @@ import type { FileCheckpointManager } from "./checkpoint/manager.js";
 import { sortToolDefinitionsForCache } from "./providers/cache.js";
 import { saveCacheSafeParams, createCacheSafeParams } from "./providers/cache-safe-params.js";
 import { restoreSession } from "./session/resume.js";
-import { generateMissingToolResults } from "./session/recovery.js";
+import { generateMissingToolResults, ensureToolResultPairing } from "./session/recovery.js";
 import {
   runPreToolUseHooks,
   runPostToolUseHooks,
@@ -460,6 +460,9 @@ export class Thread {
           }
         }
 
+        // Repair orphaned tool_use blocks from interrupted streams
+        this.messages = ensureToolResultPairing(this.messages);
+
         // Apply budget to a snapshot so the canonical this.messages is not mutated
         let messagesForApi: ChatMessage[] = this.messages;
         if (this.config.toolResultBudget?.enabled) {
@@ -625,6 +628,7 @@ export class Thread {
             if (event.type === "model_switch") {
               const sw = event as { type: "model_switch"; from: string; to: string };
               this.model = sw.to;
+              stripThinkingSignatures(this.messages);
               if (hooks.length > 0) {
                 await runNotificationHooks(hooks, "ModelSwitch", {
                   event: "ModelSwitch",
@@ -654,6 +658,8 @@ export class Thread {
           stream = this.config.provider.chat(chatParams);
         }
         } catch (providerErr) {
+          streamingExec?.discard();
+
           // Reactive compact: recover from context overflow by compacting
           const isOverflow =
             (providerErr instanceof CannotRetryError &&
@@ -849,6 +855,7 @@ export class Thread {
           }
         }
         } catch (streamErr) {
+          streamingExec?.discard();
           if (accumulatedToolCalls.size > 0 || accumulatedContent.length > 0) {
             const partialCalls: ToolCallContent[] = Array.from(accumulatedToolCalls.values()).map((tc) => ({
               id: tc.id, type: "function" as const, function: { name: tc.name, arguments: tc.arguments },
@@ -1603,6 +1610,7 @@ export class Thread {
 
         yield { type: "message_complete", message: assistantMsg };
 
+        this.hasAttemptedReactiveCompact = false;
         await runNotificationHooks(hooks, "TurnEnd", {
           event: "TurnEnd",
           sessionId: this.sessionId,
@@ -2092,5 +2100,19 @@ export class Thread {
 
   abort(): void {
     this.abortController?.abort();
+  }
+}
+
+/**
+ * Remove thinking_signature and redacted_thinking_data from assistant
+ * messages. These fields are model-bound — replaying them to a different
+ * model (after a fallback) causes a 400 error.
+ */
+function stripThinkingSignatures(messages: ChatMessage[]): void {
+  for (const msg of messages) {
+    if (msg.role !== "assistant") continue;
+    const asst = msg as AssistantMessage;
+    if (asst.thinking_signature) delete asst.thinking_signature;
+    if (asst.redacted_thinking_data) delete asst.redacted_thinking_data;
   }
 }

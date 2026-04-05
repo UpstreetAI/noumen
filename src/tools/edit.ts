@@ -150,7 +150,9 @@ export const editFileTool: Tool = {
         await ctx.checkpointManager.trackEdit(filePath, ctx.currentMessageId, ctx.sessionId ?? "");
       }
 
-      const content = await ctx.fs.readFile(filePath);
+      const rawContent = await ctx.fs.readFile(filePath);
+      const hasCRLF = rawContent.includes("\r\n");
+      const content = hasCRLF ? rawContent.replaceAll("\r\n", "\n") : rawContent;
 
       // Fuzzy matching: try exact match first, then quote-normalized match
       const actualOldString = findActualString(content, oldString);
@@ -187,6 +189,10 @@ export const editFileTool: Tool = {
         updated = content.replace(deleteTarget, () => actualNewString);
       } else {
         updated = content.replace(actualOldString, () => actualNewString);
+      }
+
+      if (hasCRLF) {
+        updated = updated.replaceAll("\n", "\r\n");
       }
 
       const dir = nodePath.dirname(filePath);

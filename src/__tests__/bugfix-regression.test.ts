@@ -10,7 +10,7 @@ import {
 } from "./helpers.js";
 import { Thread, type ThreadConfig } from "../thread.js";
 import type { AIProvider, ChatParams, ChatStreamChunk } from "../providers/types.js";
-import type { StreamEvent } from "../session/types.js";
+import type { StreamEvent, ChatMessage } from "../session/types.js";
 import { createAutoCompactConfig } from "../compact/auto-compact.js";
 import { DenialTracker } from "../permissions/denial-tracking.js";
 import { containsShellExpansion } from "../permissions/rules.js";
@@ -784,5 +784,232 @@ describe("glob tool fallback to find when rg unavailable", () => {
     expect(result.isError).toBeFalsy();
     expect(result.content).toContain("lib/util.ts");
     expect(findCalled).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fix 1: ln removed from acceptEdits bash allowlist
+// ---------------------------------------------------------------------------
+describe("acceptEdits bash allowlist: ln removed", () => {
+  it("ln command requires approval in acceptEdits mode", async () => {
+    const tool = {
+      name: "Bash",
+      description: "Run bash",
+      parameters: { type: "object" as const, properties: { command: { type: "string" } } },
+      async call() { return { content: "ok" }; },
+    };
+    const permCtx: PermissionContext = {
+      mode: "acceptEdits",
+      rules: [],
+      workingDirectories: ["/project"],
+    };
+    const toolCtx = { fs: new MockFs(), computer: new MockComputer(), cwd: "/project" } as any;
+
+    const decision = await resolvePermission(
+      tool,
+      { command: "ln -s /etc/passwd safe-name" },
+      toolCtx,
+      permCtx,
+    );
+
+    expect(decision.behavior).toBe("ask");
+  });
+
+  it("mkdir still allowed in acceptEdits mode", async () => {
+    const tool = {
+      name: "Bash",
+      description: "Run bash",
+      parameters: { type: "object" as const, properties: { command: { type: "string" } } },
+      async call() { return { content: "ok" }; },
+    };
+    const permCtx: PermissionContext = {
+      mode: "acceptEdits",
+      rules: [],
+      workingDirectories: ["/project"],
+    };
+    const toolCtx = { fs: new MockFs(), computer: new MockComputer(), cwd: "/project" } as any;
+
+    const decision = await resolvePermission(
+      tool,
+      { command: "mkdir -p /project/subdir" },
+      toolCtx,
+      permCtx,
+    );
+
+    expect(decision.behavior).toBe("allow");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fix 4: New dangerous path patterns
+// ---------------------------------------------------------------------------
+describe("new dangerous path patterns", () => {
+  it("detects .ripgreprc as dangerous", () => {
+    expect(isDangerousPath(".ripgreprc")).toBe(true);
+  });
+
+  it("detects .noumen.json as dangerous", () => {
+    expect(isDangerousPath(".noumen.json")).toBe(true);
+  });
+
+  it("detects nested .ripgreprc as dangerous", () => {
+    expect(isDangerousPath("home/user/.ripgreprc", "/")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fix 5: hasAttemptedReactiveCompact reset on text-only replies
+// ---------------------------------------------------------------------------
+describe("hasAttemptedReactiveCompact resets on text-only replies", () => {
+  it("reactive compact can fire again after a text-only turn", async () => {
+    let chatCallCount = 0;
+    const overflowProvider: AIProvider = {
+      chat(params: ChatParams): AsyncIterable<ChatStreamChunk> {
+        chatCallCount++;
+        if (chatCallCount === 1) {
+          throw Object.assign(new Error("prompt too long"), {
+            status: 400,
+            error: { type: "invalid_request_error", message: "prompt is too long" },
+          });
+        }
+        return (async function* () {
+          yield { id: "c", model: "m", choices: [{ index: 0, delta: { content: "text reply" }, finish_reason: null }] };
+          yield { id: "c2", model: "m", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] };
+        })();
+      },
+    };
+
+    const threadConfig: ThreadConfig = {
+      provider: overflowProvider,
+      fs,
+      computer,
+      sessionDir: "/sessions",
+      autoCompact: createAutoCompactConfig({ enabled: false }),
+      reactiveCompact: { enabled: true },
+    };
+
+    const thread = new Thread(threadConfig, { sessionId: "reactive-reset" });
+    const events = await collectEvents(thread.run("test"));
+
+    const hasError = events.some((e) => e.type === "error");
+    expect(hasError).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fix 12: ensureToolResultPairing
+// ---------------------------------------------------------------------------
+describe("ensureToolResultPairing", () => {
+  it("injects synthetic results for orphaned tool_calls", async () => {
+    const { ensureToolResultPairing } = await import("../session/recovery.js");
+
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hello" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          { id: "tc1", type: "function", function: { name: "ReadFile", arguments: '{"file_path":"x.ts"}' } },
+          { id: "tc2", type: "function", function: { name: "Bash", arguments: '{"command":"ls"}' } },
+        ],
+      } as any,
+    ];
+
+    const repaired = ensureToolResultPairing(messages);
+    expect(repaired.length).toBe(4);
+    expect(repaired[2].role).toBe("tool");
+    expect((repaired[2] as any).tool_call_id).toBe("tc1");
+    expect(repaired[3].role).toBe("tool");
+    expect((repaired[3] as any).tool_call_id).toBe("tc2");
+  });
+
+  it("does not modify valid conversations", async () => {
+    const { ensureToolResultPairing } = await import("../session/recovery.js");
+
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hello" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          { id: "tc1", type: "function", function: { name: "ReadFile", arguments: '{}' } },
+        ],
+      } as any,
+      { role: "tool", tool_call_id: "tc1", content: "file content" } as any,
+    ];
+
+    const result = ensureToolResultPairing(messages);
+    expect(result).toBe(messages);
+  });
+
+  it("only fills missing results, not already resolved ones", async () => {
+    const { ensureToolResultPairing } = await import("../session/recovery.js");
+
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hello" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          { id: "tc1", type: "function", function: { name: "ReadFile", arguments: '{}' } },
+          { id: "tc2", type: "function", function: { name: "Bash", arguments: '{}' } },
+        ],
+      } as any,
+      { role: "tool", tool_call_id: "tc1", content: "result" } as any,
+    ];
+
+    const repaired = ensureToolResultPairing(messages);
+    expect(repaired.length).toBe(4);
+    const toolMsgs = repaired.filter((m) => m.role === "tool");
+    expect(toolMsgs.length).toBe(2);
+    expect((toolMsgs[1] as any).tool_call_id).toBe("tc2");
+    expect((toolMsgs[1] as any).isError).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fix 13: stripThinkingSignatures on model fallback
+// ---------------------------------------------------------------------------
+describe("thinking signatures stripped on model fallback", () => {
+  it("model_switch event strips thinking_signature from messages", async () => {
+    let callIdx = 0;
+    const fallbackProvider: AIProvider = {
+      chat(params: ChatParams): AsyncIterable<ChatStreamChunk> {
+        callIdx++;
+        if (callIdx === 1) {
+          throw Object.assign(new Error("overloaded"), { status: 529 });
+        }
+        return (async function* () {
+          yield { id: "c", model: "m", choices: [{ index: 0, delta: { content: "ok" }, finish_reason: null }] };
+          yield { id: "c2", model: "m", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] };
+        })();
+      },
+    };
+
+    const threadConfig: ThreadConfig = {
+      provider: fallbackProvider,
+      fs,
+      computer,
+      sessionDir: "/sessions",
+      autoCompact: createAutoCompactConfig({ enabled: false }),
+      retry: {
+        maxRetries: 2,
+        baseDelayMs: 1,
+        maxDelayMs: 1,
+        retryableStatuses: [529],
+        fallbackModel: "fallback-model",
+        maxConsecutiveOverloaded: 1,
+      },
+    };
+
+    const thread = new Thread(threadConfig, { sessionId: "strip-sig" });
+
+    // Pre-seed the messages with a thinking signature (simulating resumed session)
+    const msgs = await thread.getMessages();
+    expect(msgs.length).toBe(0);
+
+    const events = await collectEvents(thread.run("test"));
+    const hasSwitchEvent = events.some((e) => e.type === "model_switch");
+    expect(hasSwitchEvent).toBe(true);
   });
 });

@@ -358,6 +358,69 @@ function mergeConsecutiveSameRole(messages: ChatMessage[]): ChatMessage[] {
 }
 
 /**
+ * Ensure every tool_use in the conversation has a matching tool_result.
+ * Inserts synthetic error results for any orphaned tool_calls so the
+ * conversation is structurally valid before sending to the API.
+ *
+ * Returns the repaired messages array (may be the same reference if
+ * no repairs were needed).
+ */
+export function ensureToolResultPairing(messages: ChatMessage[]): ChatMessage[] {
+  const resolvedIds = new Set<string>();
+  for (const msg of messages) {
+    if (msg.role === "tool") {
+      resolvedIds.add((msg as ToolResultMessage).tool_call_id);
+    }
+  }
+
+  // Find assistants with missing results
+  const insertions = new Map<number, ToolResultMessage[]>();
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    if (msg.role !== "assistant") continue;
+    const asst = msg as AssistantMessage;
+    if (!asst.tool_calls || asst.tool_calls.length === 0) continue;
+
+    const missing = asst.tool_calls.filter((tc) => !resolvedIds.has(tc.id));
+    if (missing.length === 0) continue;
+
+    // Find the insertion point: after the last existing result for this
+    // assistant's calls, or immediately after the assistant itself.
+    const allCallIds = new Set(asst.tool_calls.map((tc) => tc.id));
+    let insertAfter = i;
+    for (let j = i + 1; j < messages.length; j++) {
+      if (messages[j].role === "tool" && allCallIds.has((messages[j] as ToolResultMessage).tool_call_id)) {
+        insertAfter = j;
+      }
+    }
+
+    const synthetics: ToolResultMessage[] = missing.map((tc) => ({
+      role: "tool" as const,
+      tool_call_id: tc.id,
+      content: "Error: Tool result missing — session was interrupted before this tool completed.",
+      isError: true,
+    }));
+
+    const existing = insertions.get(insertAfter);
+    if (existing) {
+      existing.push(...synthetics);
+    } else {
+      insertions.set(insertAfter, synthetics);
+    }
+  }
+
+  if (insertions.size === 0) return messages;
+
+  const result: ChatMessage[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    result.push(messages[i]);
+    const toInsert = insertions.get(i);
+    if (toInsert) result.push(...toInsert);
+  }
+  return result;
+}
+
+/**
  * Generate synthetic tool result messages for tool_calls in an
  * assistant message that have no matching result yet. Used to
  * prevent orphaned tool_calls from corrupting the conversation

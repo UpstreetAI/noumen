@@ -9,6 +9,7 @@ import type { AIProvider, ChatParams, ChatStreamChunk, ChatCompletionUsage } fro
 export class MockFs implements VirtualFs {
   files = new Map<string, string>();
   dirs = new Set<string>();
+  stats = new Map<string, Partial<FileStat>>();
 
   constructor(initial?: Record<string, string>) {
     if (initial) {
@@ -102,15 +103,17 @@ export class MockFs implements VirtualFs {
   }
 
   async stat(path: string): Promise<FileStat> {
+    const override = this.stats.get(path);
     if (this.files.has(path)) {
       return {
         size: this.files.get(path)!.length,
         isDirectory: false,
         isFile: true,
+        ...override,
       };
     }
     if (this.dirs.has(path)) {
-      return { size: 0, isDirectory: true, isFile: false };
+      return { size: 0, isDirectory: true, isFile: false, ...override };
     }
     throw new Error(`ENOENT: ${path}`);
   }

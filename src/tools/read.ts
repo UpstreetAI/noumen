@@ -10,7 +10,7 @@ import {
 import * as path from "node:path";
 
 const DEFAULT_MAX_IMAGE_TOKENS = 1600;
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+const MAX_FILE_SIZE = 256 * 1024; // 256 KB
 
 const BLOCKED_DEVICE_PATHS = new Set([
   "/dev/zero",
@@ -111,7 +111,7 @@ export const readFileTool: Tool = {
         const stat = await ctx.fs.stat(filePath);
         if (stat.size !== undefined && stat.size > MAX_FILE_SIZE) {
           return {
-            content: `Error: File is too large (${Math.round(stat.size / 1024 / 1024)}MB). Use offset/limit to read specific portions.`,
+            content: `Error: File is too large (${Math.round(stat.size / 1024)}KB, max ${MAX_FILE_SIZE / 1024}KB). Use offset/limit to read specific portions.`,
             isError: true,
           };
         }

@@ -3,7 +3,11 @@ import { MockFs, MockComputer } from "./helpers.js";
 import { notebookEditTool } from "../tools/notebook.js";
 import { askUserTool } from "../tools/ask-user.js";
 import { createWebSearchTool, webSearchToolPlaceholder } from "../tools/web-search.js";
+import { editFileTool } from "../tools/edit.js";
+import { readFileTool } from "../tools/read.js";
+import { writeFileTool } from "../tools/write.js";
 import type { ToolContext } from "../tools/types.js";
+import { FileStateCache } from "../file-state/cache.js";
 
 let fs: MockFs;
 let computer: MockComputer;
@@ -193,5 +197,121 @@ describe("webSearchToolPlaceholder", () => {
     const result = await webSearchToolPlaceholder.call({ query: "test" }, ctx);
     expect(result.isError).toBe(true);
     expect(result.content).toContain("not configured");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// EditFile: CRLF normalization
+// ---------------------------------------------------------------------------
+describe("EditFile CRLF normalization", () => {
+  it("matches and replaces text in CRLF files", async () => {
+    fs.files.set("/project/crlf.txt", "line one\r\nline two\r\nline three\r\n");
+    const cache = new FileStateCache();
+    cache.set("/project/crlf.txt", {
+      content: "line one\r\nline two\r\nline three\r\n",
+      timestamp: 0,
+    });
+
+    const editCtx = { ...ctx, fileStateCache: cache };
+    const result = await editFileTool.call(
+      { file_path: "/project/crlf.txt", old_string: "line two", new_string: "line TWO" },
+      editCtx,
+    );
+
+    expect(result.isError).toBeFalsy();
+    const updated = fs.files.get("/project/crlf.txt")!;
+    expect(updated).toContain("\r\n");
+    expect(updated).toContain("line TWO\r\n");
+    expect(updated).not.toContain("line two");
+  });
+
+  it("preserves LF endings in LF-only files", async () => {
+    fs.files.set("/project/lf.txt", "line one\nline two\nline three\n");
+    const cache = new FileStateCache();
+    cache.set("/project/lf.txt", {
+      content: "line one\nline two\nline three\n",
+      timestamp: 0,
+    });
+
+    const editCtx = { ...ctx, fileStateCache: cache };
+    const result = await editFileTool.call(
+      { file_path: "/project/lf.txt", old_string: "line two", new_string: "line TWO" },
+      editCtx,
+    );
+
+    expect(result.isError).toBeFalsy();
+    const updated = fs.files.get("/project/lf.txt")!;
+    expect(updated).not.toContain("\r\n");
+    expect(updated).toContain("line TWO\n");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ReadFile: 256KB size limit
+// ---------------------------------------------------------------------------
+describe("ReadFile size limit", () => {
+  it("rejects files larger than 256KB", async () => {
+    const bigContent = "x".repeat(300 * 1024);
+    fs.files.set("/project/big.txt", bigContent);
+    fs.stats.set("/project/big.txt", { size: 300 * 1024, modifiedAt: new Date() });
+
+    const result = await readFileTool.call({ file_path: "/project/big.txt" }, ctx);
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("too large");
+    expect(result.content).toContain("256KB");
+  });
+
+  it("allows files under 256KB", async () => {
+    const smallContent = "hello world\n";
+    fs.files.set("/project/small.txt", smallContent);
+    fs.stats.set("/project/small.txt", { size: smallContent.length, modifiedAt: new Date() });
+
+    const result = await readFileTool.call({ file_path: "/project/small.txt" }, ctx);
+    expect(result.isError).toBeFalsy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WriteFile: content comparison fallback on mtime mismatch
+// ---------------------------------------------------------------------------
+describe("WriteFile content comparison on mtime mismatch", () => {
+  it("allows write when mtime changed but content is identical", async () => {
+    fs.files.set("/project/touched.txt", "original content");
+    fs.stats.set("/project/touched.txt", { size: 16, modifiedAt: new Date(Date.now() + 5000) });
+
+    const cache = new FileStateCache();
+    cache.set("/project/touched.txt", {
+      content: "original content",
+      timestamp: Date.now() - 10000,
+    });
+
+    const writeCtx = { ...ctx, fileStateCache: cache };
+    const result = await writeFileTool.call(
+      { file_path: "/project/touched.txt", content: "new content" },
+      writeCtx,
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(fs.files.get("/project/touched.txt")).toBe("new content");
+  });
+
+  it("rejects write when mtime changed AND content differs", async () => {
+    fs.files.set("/project/changed.txt", "externally modified");
+    fs.stats.set("/project/changed.txt", { size: 19, modifiedAt: new Date(Date.now() + 5000) });
+
+    const cache = new FileStateCache();
+    cache.set("/project/changed.txt", {
+      content: "original content",
+      timestamp: Date.now() - 10000,
+    });
+
+    const writeCtx = { ...ctx, fileStateCache: cache };
+    const result = await writeFileTool.call(
+      { file_path: "/project/changed.txt", content: "overwrite" },
+      writeCtx,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("modified since last read");
   });
 });

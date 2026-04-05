@@ -371,4 +371,20 @@ describe("compactConversation preserves thinking fields on merge", () => {
     expect((assistants[0] as any).thinking_content).toBe("deep thoughts");
     expect((assistants[0] as any).thinking_signature).toBe("sig_xyz");
   });
+
+  it("throws when compact summary is empty", async () => {
+    // Provider returns empty content
+    provider.addResponse([
+      { id: "c", model: "m", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
+    ]);
+
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "hi there" },
+    ];
+
+    await expect(
+      compactConversation(provider, "mock-model", messages, storage, "s1"),
+    ).rejects.toThrow("empty summary");
+  });
 });

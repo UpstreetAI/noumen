@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import * as fs from "node:fs";
 import type { Tool, ToolContext } from "../tools/types.js";
 import type { AIProvider } from "../providers/types.js";
 import type { ChatMessage } from "../session/types.js";
@@ -15,7 +16,7 @@ import type { DenialTracker } from "./denial-tracking.js";
 import { extractCommandName, splitCompoundCommand } from "../tools/shell-safety/command-classification.js";
 
 const ACCEPT_EDITS_BASH_ALLOWLIST = new Set([
-  "mkdir", "touch", "mv", "cp", "sed", "chmod", "ln",
+  "mkdir", "touch", "mv", "cp", "sed", "chmod",
 ]);
 
 const DANGEROUS_PATH_PATTERNS = [
@@ -35,6 +36,8 @@ const DANGEROUS_PATH_PATTERNS = [
   /(?:^|\/)\.gitconfig$/,
   /(?:^|\/)\.gitmodules$/,
   /(?:^|\/)\.mcp\.json$/,
+  /(?:^|\/)\.ripgreprc$/,
+  /(?:^|\/)\.noumen\.json$/,
 ];
 
 /**
@@ -453,5 +456,19 @@ export function isDangerousPath(filePath: string, basePath?: string): boolean {
   const resolved = path.resolve(base, filePath);
   const relative = path.relative(base, resolved);
   const candidate = (relative.startsWith("..") ? resolved.replace(/^\/+/, "") : relative).toLowerCase();
-  return DANGEROUS_PATH_PATTERNS.some((p) => p.test(candidate));
+  if (DANGEROUS_PATH_PATTERNS.some((p) => p.test(candidate))) return true;
+
+  // Also check symlink-resolved path to prevent symlink-based bypasses
+  try {
+    const realPath = fs.realpathSync(resolved);
+    if (realPath !== resolved) {
+      const realRelative = path.relative(base, realPath);
+      const realCandidate = (realRelative.startsWith("..") ? realPath.replace(/^\/+/, "") : realRelative).toLowerCase();
+      if (DANGEROUS_PATH_PATTERNS.some((p) => p.test(realCandidate))) return true;
+    }
+  } catch {
+    // Path doesn't exist yet — only the logical check applies
+  }
+
+  return false;
 }
