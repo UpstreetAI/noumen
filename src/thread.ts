@@ -607,6 +607,18 @@ export class Thread {
           let retryResult = await retryGen.next();
           while (!retryResult.done) {
             const event = retryResult.value;
+            if (event.type === "model_switch") {
+              const sw = event as { type: "model_switch"; from: string; to: string };
+              this.model = sw.to;
+              if (hooks.length > 0) {
+                await runNotificationHooks(hooks, "ModelSwitch", {
+                  event: "ModelSwitch",
+                  sessionId: this.sessionId,
+                  from: sw.from,
+                  to: sw.to,
+                } as import("./hooks/types.js").ModelSwitchHookInput);
+              }
+            }
             if (event.type === "retry_attempt" && hooks.length > 0) {
               const re = event as { attempt: number; maxRetries: number; delayMs: number; error: Error };
               await runNotificationHooks(hooks, "RetryAttempt", {
@@ -717,6 +729,7 @@ export class Thread {
 
         const apiStartTime = Date.now();
 
+        try {
         for await (const chunk of stream) {
           if (signal.aborted) break;
 
@@ -807,6 +820,29 @@ export class Thread {
             }
           }
         }
+        } catch (streamErr) {
+          if (accumulatedToolCalls.size > 0 || accumulatedContent.length > 0) {
+            const partialCalls: ToolCallContent[] = Array.from(accumulatedToolCalls.values()).map((tc) => ({
+              id: tc.id, type: "function" as const, function: { name: tc.name, arguments: tc.arguments },
+            }));
+            const partialAssistant: AssistantMessage = {
+              role: "assistant",
+              content: accumulatedContent.join("") || null,
+              ...(partialCalls.length > 0 ? { tool_calls: partialCalls } : {}),
+            };
+            this.messages.push(partialAssistant);
+            await this.storage.appendMessage(this.sessionId, partialAssistant);
+            if (partialCalls.length > 0) {
+              const reason = `Stream error: ${streamErr instanceof Error ? streamErr.message : String(streamErr)}`;
+              const syntheticResults = generateMissingToolResults(partialAssistant, [], reason);
+              for (const sr of syntheticResults) {
+                this.messages.push(sr);
+                await this.storage.appendMessage(this.sessionId, sr);
+              }
+            }
+          }
+          throw streamErr;
+        }
 
         const apiDurationMs = Date.now() - apiStartTime;
 
@@ -815,6 +851,15 @@ export class Thread {
           providerSpan.setStatus(SpanStatusCode.OK);
           providerSpan.end();
           yield { type: "span_end", name: "noumen.provider.chat", spanId: providerSpanId, durationMs: Date.now() - providerStart };
+
+          // Drain any results the streaming executor already completed
+          const completedToolIds = new Set(streamingResults.map((r) => r.toolCall.id));
+          if (streamingExec) {
+            for (const result of streamingExec.getCompletedResults()) {
+              streamingResults.push(result);
+              completedToolIds.add(result.toolCall.id);
+            }
+          }
 
           const partialToolCalls: ToolCallContent[] = Array.from(accumulatedToolCalls.values()).map((tc) => ({
             id: tc.id, type: "function" as const, function: { name: tc.name, arguments: tc.arguments },
@@ -828,7 +873,23 @@ export class Thread {
             this.messages.push(partialAssistant);
             await this.storage.appendMessage(this.sessionId, partialAssistant);
 
-            const syntheticResults = generateMissingToolResults(partialAssistant, [], "Interrupted by abort");
+            // Persist real completed results before generating synthetics for the rest
+            for (const sr of streamingResults) {
+              const toolResultMsg: ChatMessage = {
+                role: "tool",
+                tool_call_id: sr.toolCall.id,
+                content: sr.result.content,
+                ...(sr.result.isError ? { isError: true } : {}),
+              };
+              this.messages.push(toolResultMsg);
+              await this.storage.appendMessage(this.sessionId, toolResultMsg);
+            }
+
+            // Build existing results list so generateMissingToolResults skips completed tools
+            const existingToolMsgs: ChatMessage[] = [...completedToolIds].map((id) => ({
+              role: "tool" as const, tool_call_id: id, content: "",
+            }));
+            const syntheticResults = generateMissingToolResults(partialAssistant, existingToolMsgs, "Interrupted by abort");
             for (const sr of syntheticResults) {
               this.messages.push(sr);
               await this.storage.appendMessage(this.sessionId, sr);

@@ -269,7 +269,12 @@ function fillPartiallyResolvedToolCalls(messages: ChatMessage[]): {
       content: "Error: Tool result missing due to interrupted session.",
       isError: true,
     }));
-    insertions.set(lastResultIdx, synthetics);
+    const existing = insertions.get(lastResultIdx);
+    if (existing) {
+      existing.push(...synthetics);
+    } else {
+      insertions.set(lastResultIdx, synthetics);
+    }
   }
 
   const result: ChatMessage[] = [];

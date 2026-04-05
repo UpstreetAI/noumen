@@ -252,6 +252,7 @@ export type StreamEvent =
       error: Error;
     }
   | { type: "retry_exhausted"; attempts: number; error: Error }
+  | { type: "model_switch"; from: string; to: string }
   | { type: "subagent_start"; toolUseId: string; prompt: string }
   | { type: "subagent_end"; toolUseId: string; result: string }
   | {

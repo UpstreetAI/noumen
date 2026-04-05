@@ -19,11 +19,11 @@ const ACCEPT_EDITS_BASH_ALLOWLIST = new Set([
 ]);
 
 const DANGEROUS_PATH_PATTERNS = [
-  /^\.git\/hooks\//,
-  /^\.git\/config$/,
-  /^\.git\/objects\//,
-  /^\.git\/refs\//,
-  /^\.git\/head$/,
+  /(?:^|\/)\.git\/hooks\//,
+  /(?:^|\/)\.git\/config$/,
+  /(?:^|\/)\.git\/objects\//,
+  /(?:^|\/)\.git\/refs\//,
+  /(?:^|\/)\.git\/head$/,
   /(?:^|\/)\.bashrc$/,
   /(?:^|\/)\.bash_profile$/,
   /(?:^|\/)\.zshrc$/,
@@ -248,6 +248,19 @@ export async function resolvePermission(
         };
       }
     }
+    if (permCtx.workingDirectories.length > 0) {
+      const filePath =
+        typeof input.file_path === "string" ? input.file_path
+        : typeof input.path === "string" ? input.path
+        : undefined;
+      if (filePath && !isPathInWorkingDirectories(filePath, permCtx.workingDirectories)) {
+        return {
+          behavior: "ask",
+          message: `Path "${filePath}" is outside working directories in acceptEdits mode.`,
+          reason: "workingDirectory",
+        };
+      }
+    }
     return {
       behavior: "allow",
       updatedInput: effectiveInput,
@@ -282,6 +295,7 @@ export async function resolvePermission(
       if (opts.denialTracker) {
         opts.denialTracker.recordDenial();
         if (opts.denialTracker.shouldFallback()) {
+          opts.denialTracker.resetAfterFallback();
           return {
             behavior: "ask",
             message: `Auto-mode classifier denied too many consecutive actions. Falling back to user prompt.`,

@@ -100,6 +100,12 @@ export async function* withRetry(
           fallbackUsed = true;
 
           yield {
+            type: "model_switch",
+            from: previousModel,
+            to: options.fallbackModel,
+          };
+
+          yield {
             type: "retry_attempt",
             attempt,
             maxRetries,

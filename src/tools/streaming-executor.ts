@@ -45,13 +45,41 @@ export type StreamingToolExecutorFn = (
 export class StreamingToolExecutor {
   private tools: TrackedTool[] = [];
   private progressResolve?: () => void;
+  private discarded = false;
 
   constructor(
     private readonly getTool: (name: string) => Tool | undefined,
     private readonly executeFn: StreamingToolExecutorFn,
   ) {}
 
+  /**
+   * Mark this executor as discarded. Queued tools get synthetic errors,
+   * in-flight tools are not awaited, and getRemainingResults() returns
+   * immediately.
+   */
+  discard(): void {
+    this.discarded = true;
+    this.progressResolve?.();
+  }
+
+  isDiscarded(): boolean {
+    return this.discarded;
+  }
+
   addTool(toolCall: ToolCallContent, parsedArgs: Record<string, unknown>): void {
+    if (this.discarded) {
+      this.tools.push({
+        id: toolCall.id,
+        toolCall,
+        parsedArgs,
+        status: "completed",
+        isConcurrencySafe: true,
+        result: { content: "Error: Executor was discarded", isError: true },
+        events: [],
+      });
+      return;
+    }
+
     const toolDef = this.getTool(toolCall.function.name);
 
     if (!toolDef) {
@@ -91,6 +119,8 @@ export class StreamingToolExecutor {
   }
 
   private async processQueue(): Promise<void> {
+    if (this.discarded) return;
+
     for (const tool of this.tools) {
       if (tool.status !== "queued") continue;
 
@@ -103,6 +133,14 @@ export class StreamingToolExecutor {
   }
 
   private async executeTool(tracked: TrackedTool): Promise<void> {
+    if (this.discarded) {
+      tracked.status = "completed";
+      tracked.result = { content: "Error: Executor was discarded", isError: true };
+      tracked.events = [];
+      this.progressResolve?.();
+      return;
+    }
+
     tracked.status = "executing";
 
     tracked.promise = (async () => {
@@ -134,6 +172,8 @@ export class StreamingToolExecutor {
    * Preserves declaration order: stops before a non-safe executing tool.
    */
   *getCompletedResults(): Generator<StreamingExecResult, void> {
+    if (this.discarded) return;
+
     for (const tool of this.tools) {
       if (tool.status === "yielded") continue;
 
@@ -155,9 +195,38 @@ export class StreamingToolExecutor {
 
   /**
    * Async drain: waits for all in-flight tools then yields remaining results.
+   * If discarded, yields synthetic errors for all non-yielded tools immediately.
    */
   async *getRemainingResults(): AsyncGenerator<StreamingExecResult, void> {
+    if (this.discarded) {
+      for (const tool of this.tools) {
+        if (tool.status === "yielded") continue;
+        if (tool.status === "completed" && tool.result) {
+          tool.status = "yielded";
+          yield {
+            toolCall: tool.toolCall,
+            parsedArgs: tool.parsedArgs,
+            result: tool.result,
+            permissionDenied: tool.permissionDenied,
+            preventContinuation: tool.preventContinuation,
+            events: tool.events,
+          };
+          continue;
+        }
+        tool.status = "yielded";
+        yield {
+          toolCall: tool.toolCall,
+          parsedArgs: tool.parsedArgs,
+          result: { content: "Error: Executor was discarded", isError: true },
+          events: [],
+        };
+      }
+      return;
+    }
+
     while (this.hasUnfinished()) {
+      if (this.discarded) return;
+
       await this.processQueue();
 
       for (const result of this.getCompletedResults()) {

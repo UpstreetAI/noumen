@@ -62,18 +62,6 @@ export async function compactConversation(
     opts?.customInstructions ??
     "Please summarize the conversation above concisely but thoroughly.";
 
-  const compactMessages: ChatMessage[] = [
-    ...cleanedMessages,
-    { role: "user", content: summaryPrompt },
-  ];
-
-  const params: ChatParams = {
-    model,
-    messages: compactMessages,
-    system: COMPACT_SYSTEM_PROMPT,
-    max_tokens: 4096,
-  };
-
   const MAX_PTL_RETRIES = 3;
   let currentToSummarize = cleanedMessages;
   let summaryText = "";
