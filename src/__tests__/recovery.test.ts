@@ -7,6 +7,7 @@ import {
   detectTurnInterruption,
   sanitizeForResume,
   generateMissingToolResults,
+  ensureToolResultPairing,
 } from "../session/recovery.js";
 
 describe("filterUnresolvedToolUses", () => {
@@ -422,5 +423,70 @@ describe("sanitizeForResume — preserves thinking fields on assistant merge", (
     expect(merged.content).toContain("second response");
     expect(merged.thinking_content).toBe("I need to think about this");
     expect(merged.thinking_signature).toBe("sig_abc123");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ensureToolResultPairing
+// ---------------------------------------------------------------------------
+describe("ensureToolResultPairing", () => {
+  it("injects synthetic results for orphaned tool_calls", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hello" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          { id: "tc1", type: "function", function: { name: "ReadFile", arguments: '{"file_path":"x.ts"}' } },
+          { id: "tc2", type: "function", function: { name: "Bash", arguments: '{"command":"ls"}' } },
+        ],
+      } as any,
+    ];
+
+    const repaired = ensureToolResultPairing(messages);
+    expect(repaired.length).toBe(4);
+    expect(repaired[2].role).toBe("tool");
+    expect((repaired[2] as any).tool_call_id).toBe("tc1");
+    expect(repaired[3].role).toBe("tool");
+    expect((repaired[3] as any).tool_call_id).toBe("tc2");
+  });
+
+  it("does not modify valid conversations", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hello" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          { id: "tc1", type: "function", function: { name: "ReadFile", arguments: '{}' } },
+        ],
+      } as any,
+      { role: "tool", tool_call_id: "tc1", content: "file content" } as any,
+    ];
+
+    const result = ensureToolResultPairing(messages);
+    expect(result).toBe(messages);
+  });
+
+  it("only fills missing results, not already resolved ones", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hello" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          { id: "tc1", type: "function", function: { name: "ReadFile", arguments: '{}' } },
+          { id: "tc2", type: "function", function: { name: "Bash", arguments: '{}' } },
+        ],
+      } as any,
+      { role: "tool", tool_call_id: "tc1", content: "result" } as any,
+    ];
+
+    const repaired = ensureToolResultPairing(messages);
+    expect(repaired.length).toBe(4);
+    const toolMsgs = repaired.filter((m) => m.role === "tool");
+    expect(toolMsgs.length).toBe(2);
+    expect((toolMsgs[1] as any).tool_call_id).toBe("tc2");
+    expect((toolMsgs[1] as any).isError).toBe(true);
   });
 });

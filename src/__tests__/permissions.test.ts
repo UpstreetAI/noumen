@@ -17,6 +17,7 @@ import {
   matchSimpleGlob,
   getMatchingRules,
   isPathInWorkingDirectories,
+  containsShellExpansion,
 } from "../permissions/rules.js";
 import { resolvePermission, isDangerousPath } from "../permissions/pipeline.js";
 import { resolveToolFlag } from "../tools/registry.js";
@@ -1017,5 +1018,214 @@ describe("auto mode classifier denial returns deny", () => {
 
     expect(result.behavior).toBe("deny");
     expect(result.reason).toBe("classifier");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// containsShellExpansion detects backticks
+// ---------------------------------------------------------------------------
+describe("containsShellExpansion detects backticks", () => {
+  it("detects backtick command substitution", () => {
+    expect(containsShellExpansion("`whoami`")).toBe(true);
+    expect(containsShellExpansion("/tmp/`id`/file")).toBe(true);
+  });
+
+  it("still detects dollar sign", () => {
+    expect(containsShellExpansion("$(command)")).toBe(true);
+    expect(containsShellExpansion("$HOME/file")).toBe(true);
+  });
+
+  it("still passes normal paths", () => {
+    expect(containsShellExpansion("/home/user/file.txt")).toBe(false);
+    expect(containsShellExpansion("~/file.txt")).toBe(false);
+    expect(containsShellExpansion("./relative/path")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// acceptEdits working-directory enforcement
+// ---------------------------------------------------------------------------
+describe("acceptEdits working-directory enforcement", () => {
+  it("returns ask (not deny) for paths outside working directories", async () => {
+    const tool = {
+      name: "WriteFile",
+      description: "Write a file",
+      parameters: { type: "object" as const, properties: { file_path: { type: "string" } } },
+      async call() { return { content: "ok" }; },
+    };
+    const permCtx: PermissionContext = {
+      mode: "acceptEdits",
+      rules: [],
+      workingDirectories: ["/home/user/project"],
+    };
+    const toolCtx = { fs: new MockFs(), computer: new MockComputer(), cwd: "/home/user/project" };
+
+    const decision = await resolvePermission(
+      tool,
+      { file_path: "/etc/outside/file.txt" },
+      toolCtx,
+      permCtx,
+    );
+
+    expect(decision.behavior).toBe("ask");
+    expect(decision.reason).toBe("workingDirectory");
+  });
+
+  it("allows paths inside working directories in acceptEdits mode", async () => {
+    const tool = {
+      name: "WriteFile",
+      description: "Write a file",
+      parameters: { type: "object" as const, properties: { file_path: { type: "string" } } },
+      async call() { return { content: "ok" }; },
+    };
+    const permCtx: PermissionContext = {
+      mode: "acceptEdits",
+      rules: [],
+      workingDirectories: ["/home/user/project"],
+    };
+    const toolCtx = { fs: new MockFs(), computer: new MockComputer(), cwd: "/home/user/project" };
+
+    const decision = await resolvePermission(
+      tool,
+      { file_path: "/home/user/project/src/file.txt" },
+      toolCtx,
+      permCtx,
+    );
+
+    expect(decision.behavior).toBe("allow");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// dangerous path patterns include .noumen/
+// ---------------------------------------------------------------------------
+describe("dangerous path patterns include .noumen/", () => {
+  it("detects .noumen/ as dangerous", () => {
+    expect(isDangerousPath(".noumen/config.json")).toBe(true);
+  });
+
+  it("detects .noumen/sessions/ as dangerous", () => {
+    expect(isDangerousPath(".noumen/sessions/abc.jsonl")).toBe(true);
+  });
+
+  it("still detects .claude/ as dangerous", () => {
+    expect(isDangerousPath(".claude/settings.json")).toBe(true);
+  });
+
+  it("still detects .ssh/ as dangerous", () => {
+    expect(isDangerousPath(".ssh/id_rsa")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// write/edit tool checkPermissions uses ctx.cwd
+// ---------------------------------------------------------------------------
+describe("write/edit tool checkPermissions uses ctx.cwd", () => {
+  it("writeFileTool detects dangerous path relative to ctx.cwd", async () => {
+    const ctx = { fs, computer, cwd: "/home/user/project" } as any;
+    const result = await writeFileTool.checkPermissions!(
+      { file_path: ".ssh/id_rsa" },
+      ctx,
+    );
+    expect(result.behavior).toBe("ask");
+    expect(result.reason).toBe("safetyCheck");
+  });
+
+  it("writeFileTool allows safe path relative to ctx.cwd", async () => {
+    const ctx = { fs, computer, cwd: "/home/user/project" } as any;
+    const result = await writeFileTool.checkPermissions!(
+      { file_path: "src/index.ts" },
+      ctx,
+    );
+    expect(result.behavior).toBe("passthrough");
+  });
+
+  it("editFileTool detects dangerous path relative to ctx.cwd", async () => {
+    const ctx = { fs, computer, cwd: "/home/user/project" } as any;
+    const result = await editFileTool.checkPermissions!(
+      { file_path: ".env" },
+      ctx,
+    );
+    expect(result.behavior).toBe("ask");
+    expect(result.reason).toBe("safetyCheck");
+  });
+
+  it("editFileTool allows safe path relative to ctx.cwd", async () => {
+    const ctx = { fs, computer, cwd: "/home/user/project" } as any;
+    const result = await editFileTool.checkPermissions!(
+      { file_path: "src/main.ts" },
+      ctx,
+    );
+    expect(result.behavior).toBe("passthrough");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// acceptEdits bash allowlist: ln removed
+// ---------------------------------------------------------------------------
+describe("acceptEdits bash allowlist: ln removed", () => {
+  it("ln command requires approval in acceptEdits mode", async () => {
+    const tool = {
+      name: "Bash",
+      description: "Run bash",
+      parameters: { type: "object" as const, properties: { command: { type: "string" } } },
+      async call() { return { content: "ok" }; },
+    };
+    const permCtx: PermissionContext = {
+      mode: "acceptEdits",
+      rules: [],
+      workingDirectories: ["/project"],
+    };
+    const toolCtx = { fs: new MockFs(), computer: new MockComputer(), cwd: "/project" } as any;
+
+    const decision = await resolvePermission(
+      tool,
+      { command: "ln -s /etc/passwd safe-name" },
+      toolCtx,
+      permCtx,
+    );
+
+    expect(decision.behavior).toBe("ask");
+  });
+
+  it("mkdir still allowed in acceptEdits mode", async () => {
+    const tool = {
+      name: "Bash",
+      description: "Run bash",
+      parameters: { type: "object" as const, properties: { command: { type: "string" } } },
+      async call() { return { content: "ok" }; },
+    };
+    const permCtx: PermissionContext = {
+      mode: "acceptEdits",
+      rules: [],
+      workingDirectories: ["/project"],
+    };
+    const toolCtx = { fs: new MockFs(), computer: new MockComputer(), cwd: "/project" } as any;
+
+    const decision = await resolvePermission(
+      tool,
+      { command: "mkdir -p /project/subdir" },
+      toolCtx,
+      permCtx,
+    );
+
+    expect(decision.behavior).toBe("allow");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// New dangerous path patterns (.ripgreprc, .noumen.json)
+// ---------------------------------------------------------------------------
+describe("new dangerous path patterns", () => {
+  it("detects .ripgreprc as dangerous", () => {
+    expect(isDangerousPath(".ripgreprc")).toBe(true);
+  });
+
+  it("detects .noumen.json as dangerous", () => {
+    expect(isDangerousPath(".noumen.json")).toBe(true);
+  });
+
+  it("detects nested .ripgreprc as dangerous", () => {
+    expect(isDangerousPath("home/user/.ripgreprc", "/")).toBe(true);
   });
 });

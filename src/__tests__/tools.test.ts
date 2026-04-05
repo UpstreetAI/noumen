@@ -281,3 +281,63 @@ describe("ToolRegistry", () => {
     expect(result.content).toContain("tool exploded");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Glob tool fallback to find when rg is unavailable
+// ---------------------------------------------------------------------------
+describe("glob tool fallback to find when rg unavailable", () => {
+  it("falls back to find when rg returns exit code 127", async () => {
+    const mockComputer = new MockComputer((cmd) => {
+      if (cmd.startsWith("rg ")) {
+        return { exitCode: 127, stdout: "", stderr: "rg: command not found" };
+      }
+      if (cmd.startsWith("find ")) {
+        return { exitCode: 0, stdout: "src/index.ts\nsrc/main.ts\n", stderr: "" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const findCtx = { fs, computer: mockComputer, cwd: "/project" } as any;
+    const result = await globTool.call({ pattern: "*.ts" }, findCtx);
+    expect(result.isError).toBeFalsy();
+    expect(result.content).toContain("src/index.ts");
+    expect(result.content).toContain("src/main.ts");
+  });
+
+  it("falls back to find when stderr says not found", async () => {
+    const mockComputer = new MockComputer((cmd) => {
+      if (cmd.startsWith("rg ")) {
+        return { exitCode: 1, stdout: "", stderr: "sh: rg: not found" };
+      }
+      if (cmd.startsWith("find ")) {
+        return { exitCode: 0, stdout: "README.md\n", stderr: "" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const findCtx = { fs, computer: mockComputer, cwd: "/project" } as any;
+    const result = await globTool.call({ pattern: "*.md" }, findCtx);
+    expect(result.isError).toBeFalsy();
+    expect(result.content).toContain("README.md");
+  });
+
+  it("does not fall back when rg succeeds", async () => {
+    let findCalled = false;
+    const mockComputer = new MockComputer((cmd) => {
+      if (cmd.startsWith("rg ")) {
+        return { exitCode: 0, stdout: "lib/util.ts\n", stderr: "" };
+      }
+      if (cmd.startsWith("find ")) {
+        findCalled = true;
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    const findCtx = { fs, computer: mockComputer, cwd: "/project" } as any;
+    const result = await globTool.call({ pattern: "*.ts" }, findCtx);
+    expect(result.isError).toBeFalsy();
+    expect(result.content).toContain("lib/util.ts");
+    expect(findCalled).toBe(false);
+  });
+});

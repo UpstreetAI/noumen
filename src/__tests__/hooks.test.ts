@@ -9,7 +9,7 @@ import {
 import { Thread, type ThreadConfig } from "../thread.js";
 import type { StreamEvent } from "../session/types.js";
 import type { HookDefinition, PreToolUseHookOutput, PostToolUseHookOutput } from "../hooks/types.js";
-import { runPreToolUseHooks, runPostToolUseHooks, runNotificationHooks } from "../hooks/runner.js";
+import { runPreToolUseHooks, runPostToolUseHooks, runNotificationHooks, runPostToolUseFailureHooks } from "../hooks/runner.js";
 import { createAutoCompactConfig } from "../compact/auto-compact.js";
 
 // ---------------------------------------------------------------------------
@@ -323,5 +323,91 @@ describe("Thread hooks integration", () => {
     const toolResults = events.filter((e) => e.type === "tool_result");
     expect(toolResults).toHaveLength(1);
     expect(provider.calls).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runPostToolUseFailureHooks blocking error handling
+// ---------------------------------------------------------------------------
+describe("runPostToolUseFailureHooks blocking error handling", () => {
+  it("returns preventContinuation when a blocking hook throws", async () => {
+    const hooks: HookDefinition[] = [
+      {
+        event: "PostToolUseFailure",
+        blocking: true,
+        handler: () => { throw new Error("audit hook crashed"); },
+      },
+    ];
+
+    const result = await runPostToolUseFailureHooks(hooks, {
+      event: "PostToolUseFailure",
+      toolName: "Bash",
+      toolUseId: "tc1",
+      sessionId: "s1",
+      toolInput: {},
+      toolOutput: "error output",
+      error: "tool failed",
+    });
+
+    expect(result.preventContinuation).toBe(true);
+    expect(result.updatedOutput).toContain("audit hook crashed");
+  });
+
+  it("swallows non-blocking hook errors", async () => {
+    const hooks: HookDefinition[] = [
+      {
+        event: "PostToolUseFailure",
+        handler: () => { throw new Error("non-blocking error"); },
+      },
+    ];
+
+    const result = await runPostToolUseFailureHooks(hooks, {
+      event: "PostToolUseFailure",
+      toolName: "Bash",
+      toolUseId: "tc1",
+      sessionId: "s1",
+      toolInput: {},
+      toolOutput: "error output",
+      error: "tool failed",
+    });
+
+    expect(result.preventContinuation).toBeUndefined();
+    expect(result.updatedOutput).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Anthropic thinking budget constraint
+// ---------------------------------------------------------------------------
+describe("Anthropic thinking budget constraint", () => {
+  it("ensures effectiveMaxTokens > clampedBudget when maxOutputTokens is low", async () => {
+    const { streamAnthropicChat } = await import("../providers/anthropic-shared.js");
+
+    let capturedParams: Record<string, unknown> | undefined;
+    const mockClient = {
+      messages: {
+        async *stream(params: Record<string, unknown>) {
+          capturedParams = params;
+          yield { type: "message_start", message: { usage: { input_tokens: 0, output_tokens: 0 } } };
+          yield { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 0 } };
+          yield { type: "message_stop" };
+        },
+      },
+    };
+
+    const gen = streamAnthropicChat(mockClient as any, {
+      model: "claude-sonnet-4",
+      messages: [{ role: "user", content: "hi" }],
+      max_tokens: 1024,
+      thinking: { type: "enabled", budgetTokens: 2048 },
+    }, "claude-sonnet-4");
+
+    for await (const _chunk of gen) { /* drain */ }
+
+    expect(capturedParams).toBeDefined();
+    const maxTokens = capturedParams!.max_tokens as number;
+    const thinking = capturedParams!.thinking as { budget_tokens: number };
+    expect(maxTokens).toBeGreaterThan(thinking.budget_tokens);
+    expect(thinking.budget_tokens).toBeGreaterThanOrEqual(1024);
   });
 });

@@ -548,3 +548,61 @@ describe("Error classification — 401 not retryable by default", () => {
     expect(isRetryable(classified, { retryableStatuses: [401] })).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Retry engine default status codes
+// ---------------------------------------------------------------------------
+describe("retry engine fixes", () => {
+  it("401 is not in default retryable statuses", () => {
+    expect(DEFAULT_RETRY_CONFIG.retryableStatuses).not.toContain(401);
+  });
+
+  it("401 errors are not retryable with defaults", () => {
+    const classified = classifyError({ status: 401, message: "Unauthorized" });
+    expect(isRetryable(classified, DEFAULT_RETRY_CONFIG)).toBe(false);
+  });
+
+  it("429 errors are still retryable", () => {
+    const classified = classifyError({ status: 429, message: "Rate limited" });
+    expect(isRetryable(classified, DEFAULT_RETRY_CONFIG)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// retry engine totalAttempts budget
+// ---------------------------------------------------------------------------
+describe("retry engine totalAttempts budget", () => {
+  it("does not exceed maxRetries total attempts even after fallback", async () => {
+    let callCount = 0;
+
+    async function* mockStream(): AsyncIterable<ChatStreamChunk> {
+      callCount++;
+      throw Object.assign(new Error("Overloaded"), { status: 529 });
+    }
+
+    const gen = withRetry(
+      () => mockStream(),
+      {
+        ...DEFAULT_RETRY_CONFIG,
+        model: "primary",
+        fallbackModel: "fallback",
+        maxConsecutiveOverloaded: 2,
+        maxRetries: 6,
+        baseDelayMs: 1,
+      },
+    );
+
+    const events: StreamEvent[] = [];
+    try {
+      let result = await gen.next();
+      while (!result.done) {
+        events.push(result.value);
+        result = await gen.next();
+      }
+    } catch {
+      // expected exhaustion
+    }
+
+    expect(callCount).toBeLessThanOrEqual(7);
+  });
+});

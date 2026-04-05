@@ -792,3 +792,20 @@ describe("OpenAIProvider — O-series models", () => {
     expect(thinkingChunk!.choices[0].delta.thinking_content).toBe("thought process");
   });
 });
+
+// ---------------------------------------------------------------------------
+// OpenAI compatMode
+// ---------------------------------------------------------------------------
+describe("OpenAI compatMode", () => {
+  it("OllamaProvider inherits compatMode and omits stream_options", async () => {
+    const { OllamaProvider } = await import("../providers/ollama.js");
+    const p = new OllamaProvider({ model: "test-model" });
+    expect((p as any).compatMode).toBe(true);
+  });
+
+  it("default OpenAI provider does not use compatMode", async () => {
+    const { OpenAIProvider } = await import("../providers/openai.js");
+    const p = new OpenAIProvider({ apiKey: "test" });
+    expect((p as any).compatMode).toBe(false);
+  });
+});

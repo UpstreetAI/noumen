@@ -84,4 +84,15 @@ describe("DenialTracker", () => {
     expect(tracker.getState().consecutiveDenials).toBe(0);
     expect(tracker.getState().totalDenials).toBe(0);
   });
+
+  it("resetAfterFallback resets consecutiveDenials but preserves totalDenials", () => {
+    const tracker = new DenialTracker({ maxConsecutive: 100, maxTotal: 5 });
+    for (let i = 0; i < 5; i++) tracker.recordDenial();
+    expect(tracker.shouldFallback()).toBe(true);
+
+    tracker.resetAfterFallback();
+    expect(tracker.getState().consecutiveDenials).toBe(0);
+    expect(tracker.getState().totalDenials).toBe(5);
+    expect(tracker.shouldFallback()).toBe(true);
+  });
 });

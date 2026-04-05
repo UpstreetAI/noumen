@@ -13,6 +13,12 @@ import type { Tool } from "../tools/types.js";
 import { StreamingToolExecutor } from "../tools/streaming-executor.js";
 import { createAutoCompactConfig } from "../compact/auto-compact.js";
 
+async function collectEvents(gen: AsyncGenerator<StreamEvent>): Promise<StreamEvent[]> {
+  const events: StreamEvent[] = [];
+  for await (const e of gen) events.push(e);
+  return events;
+}
+
 // ---------------------------------------------------------------------------
 // StreamingToolExecutor unit tests
 // ---------------------------------------------------------------------------
@@ -236,5 +242,88 @@ describe("Thread with streamingToolExecution", () => {
 
     const results = events.filter((e) => e.type === "tool_result");
     expect(results).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Deferred tool_use_start emission
+// ---------------------------------------------------------------------------
+describe("deferred tool_use_start emission", () => {
+  it("emits tool_use_start when id and name arrive in separate chunks", async () => {
+    const splitChunks: import("../providers/types.js").ChatStreamChunk[] = [
+      {
+        id: "s1", model: "m",
+        choices: [{
+          index: 0,
+          delta: {
+            tool_calls: [{
+              index: 0,
+              id: "tc_split",
+              type: "function",
+              function: { name: undefined as unknown as string, arguments: "" },
+            }],
+          },
+          finish_reason: null,
+        }],
+      },
+      {
+        id: "s2", model: "m",
+        choices: [{
+          index: 0,
+          delta: {
+            tool_calls: [{
+              index: 0,
+              function: { name: "ReadFile", arguments: "" },
+            }],
+          },
+          finish_reason: null,
+        }],
+      },
+      {
+        id: "s3", model: "m",
+        choices: [{
+          index: 0,
+          delta: {
+            tool_calls: [{
+              index: 0,
+              function: { arguments: JSON.stringify({ file_path: "/test.txt" }) },
+            }],
+          },
+          finish_reason: null,
+        }],
+      },
+      {
+        id: "s4", model: "m",
+        choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+      },
+    ];
+
+    const fs = new MockFs();
+    fs.files.set("/test.txt", "content");
+    const computer = new MockComputer();
+    const provider = new MockAIProvider();
+    provider.addResponse(splitChunks);
+    provider.addResponse([
+      { id: "d1", model: "m", choices: [{ index: 0, delta: { content: "done" }, finish_reason: null }] },
+      { id: "d2", model: "m", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
+    ]);
+
+    const config: ThreadConfig = {
+      provider,
+      fs,
+      computer,
+      sessionDir: "/sessions",
+      autoCompact: createAutoCompactConfig({ enabled: false }),
+    };
+
+    const thread = new Thread(config, { sessionId: "split-tc" });
+    const events = await collectEvents(thread.run("read"));
+
+    const toolStarts = events.filter((e) => e.type === "tool_use_start");
+    expect(toolStarts).toHaveLength(1);
+    if (toolStarts[0].type === "tool_use_start") {
+      expect(toolStarts[0].toolName).toBe("ReadFile");
+      expect(toolStarts[0].toolUseId).toBe("tc_split");
+    }
   });
 });

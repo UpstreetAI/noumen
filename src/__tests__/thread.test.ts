@@ -13,7 +13,7 @@ import {
 import { Thread } from "../thread.js";
 import type { ThreadConfig } from "../thread.js";
 import type { StreamEvent } from "../session/types.js";
-import type { AIProvider, ChatStreamChunk, ChatCompletionUsage } from "../providers/types.js";
+import type { AIProvider, ChatParams, ChatStreamChunk, ChatCompletionUsage } from "../providers/types.js";
 import { createAutoCompactConfig } from "../compact/auto-compact.js";
 
 let fs: MockFs;
@@ -856,5 +856,254 @@ describe("Thread", () => {
         expect(toolResults.length).toBe(toolCallIds.size);
       }
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Abort signal linking
+// ---------------------------------------------------------------------------
+describe("abort signal linking", () => {
+  it("abort() works when external signal is provided", async () => {
+    const chunks: ChatStreamChunk[] = Array.from({ length: 100 }, (_, i) => ({
+      id: `c${i}`,
+      model: "m",
+      choices: [{ index: 0, delta: { content: `chunk${i} ` }, finish_reason: null as string | null }],
+    }));
+    chunks.push({ id: "final", model: "m", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] });
+    provider.addResponse(chunks);
+
+    const externalController = new AbortController();
+    const thread = new Thread(config, { sessionId: "abort-test" });
+    const events: StreamEvent[] = [];
+
+    for await (const event of thread.run("hi", { signal: externalController.signal })) {
+      events.push(event);
+      if (events.length >= 3) {
+        thread.abort();
+        break;
+      }
+    }
+
+    expect(events.length).toBeLessThan(100);
+  });
+
+  it("external signal abort propagates to thread", async () => {
+    const chunks: ChatStreamChunk[] = Array.from({ length: 100 }, (_, i) => ({
+      id: `c${i}`,
+      model: "m",
+      choices: [{ index: 0, delta: { content: `chunk${i} ` }, finish_reason: null as string | null }],
+    }));
+    chunks.push({ id: "final", model: "m", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] });
+    provider.addResponse(chunks);
+
+    const externalController = new AbortController();
+    const thread = new Thread(config, { sessionId: "ext-abort-test" });
+    const events: StreamEvent[] = [];
+
+    for await (const event of thread.run("hi", { signal: externalController.signal })) {
+      events.push(event);
+      if (events.length >= 3) {
+        externalController.abort();
+        break;
+      }
+    }
+
+    expect(events.length).toBeLessThan(100);
+  });
+
+  it("passes signal to provider via ChatParams", async () => {
+    provider.addResponse(textResponse("ok"));
+    const thread = new Thread(config, { sessionId: "signal-pass" });
+    await collectEvents(thread.run("test"));
+
+    expect(provider.calls).toHaveLength(1);
+    expect(provider.calls[0].signal).toBeDefined();
+    expect(provider.calls[0].signal).toBeInstanceOf(AbortSignal);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ToolContext receives signal
+// ---------------------------------------------------------------------------
+describe("ToolContext receives signal", () => {
+  it("signal is passed to tool context during run", async () => {
+    let receivedSignal: AbortSignal | undefined;
+
+    const toolConfig: ThreadConfig = {
+      ...config,
+      tools: [
+        {
+          name: "TestTool",
+          description: "Test tool",
+          parameters: { type: "object", properties: { x: { type: "string" } } },
+          async call(_args, ctx) {
+            receivedSignal = ctx.signal;
+            return { content: "ok" };
+          },
+        },
+      ],
+    };
+
+    const toolCallChunks: ChatStreamChunk[] = [
+      {
+        id: "t1", model: "m",
+        choices: [{
+          index: 0,
+          delta: {
+            tool_calls: [{ index: 0, id: "tc_test", type: "function", function: { name: "TestTool", arguments: "" } }],
+          },
+          finish_reason: null,
+        }],
+      },
+      {
+        id: "t2", model: "m",
+        choices: [{
+          index: 0,
+          delta: { tool_calls: [{ index: 0, function: { arguments: '{"x":"val"}' } }] },
+          finish_reason: null,
+        }],
+      },
+      {
+        id: "t3", model: "m",
+        choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+      },
+    ];
+
+    provider.addResponse(toolCallChunks);
+    provider.addResponse(textResponse("done"));
+
+    const thread = new Thread(toolConfig, { sessionId: "signal-ctx" });
+    await collectEvents(thread.run("test"));
+
+    expect(receivedSignal).toBeDefined();
+    expect(receivedSignal).toBeInstanceOf(AbortSignal);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Malformed JSON tool calls hard cap
+// ---------------------------------------------------------------------------
+describe("malformed tool call hard cap", () => {
+  it("breaks out of the loop after 5 consecutive all-malformed iterations", async () => {
+    for (let i = 0; i < 7; i++) {
+      const malformedChunks: ChatStreamChunk[] = [
+        {
+          id: `m${i}-1`, model: "m",
+          choices: [{
+            index: 0,
+            delta: {
+              tool_calls: [{ index: 0, id: `tc_${i}`, type: "function", function: { name: "Bash", arguments: "" } }],
+            },
+            finish_reason: null,
+          }],
+        },
+        {
+          id: `m${i}-2`, model: "m",
+          choices: [{
+            index: 0,
+            delta: { tool_calls: [{ index: 0, function: { arguments: "{{not json" } }] },
+            finish_reason: null,
+          }],
+        },
+        {
+          id: `m${i}-3`, model: "m",
+          choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+        },
+      ];
+      provider.addResponse(malformedChunks);
+    }
+
+    const thread = new Thread(config, { sessionId: "malformed-cap" });
+    const events = await collectEvents(thread.run("test"));
+
+    const errorEvent = events.find(
+      (e) => e.type === "error" && (e as any).error?.message?.includes("malformed"),
+    );
+    expect(errorEvent).toBeDefined();
+    expect(provider.calls.length).toBeLessThanOrEqual(7);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// hasAttemptedReactiveCompact resets on text-only replies
+// ---------------------------------------------------------------------------
+describe("hasAttemptedReactiveCompact resets on text-only replies", () => {
+  it("reactive compact can fire again after a text-only turn", async () => {
+    let chatCallCount = 0;
+    const overflowProvider: AIProvider = {
+      chat(params: ChatParams): AsyncIterable<ChatStreamChunk> {
+        chatCallCount++;
+        if (chatCallCount === 1) {
+          throw Object.assign(new Error("prompt too long"), {
+            status: 400,
+            error: { type: "invalid_request_error", message: "prompt is too long" },
+          });
+        }
+        return (async function* () {
+          yield { id: "c", model: "m", choices: [{ index: 0, delta: { content: "text reply" }, finish_reason: null }] };
+          yield { id: "c2", model: "m", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] };
+        })();
+      },
+    };
+
+    const threadConfig: ThreadConfig = {
+      provider: overflowProvider,
+      fs,
+      computer,
+      sessionDir: "/sessions",
+      autoCompact: createAutoCompactConfig({ enabled: false }),
+      reactiveCompact: { enabled: true },
+    };
+
+    const thread = new Thread(threadConfig, { sessionId: "reactive-reset" });
+    const events = await collectEvents(thread.run("test"));
+
+    const hasError = events.some((e) => e.type === "error");
+    expect(hasError).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Thinking signatures stripped on model fallback
+// ---------------------------------------------------------------------------
+describe("thinking signatures stripped on model fallback", () => {
+  it("model_switch event strips thinking_signature from messages", async () => {
+    let callIdx = 0;
+    const fallbackProvider: AIProvider = {
+      chat(params: ChatParams): AsyncIterable<ChatStreamChunk> {
+        callIdx++;
+        if (callIdx === 1) {
+          throw Object.assign(new Error("overloaded"), { status: 529 });
+        }
+        return (async function* () {
+          yield { id: "c", model: "m", choices: [{ index: 0, delta: { content: "ok" }, finish_reason: null }] };
+          yield { id: "c2", model: "m", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] };
+        })();
+      },
+    };
+
+    const threadConfig: ThreadConfig = {
+      provider: fallbackProvider,
+      fs,
+      computer,
+      sessionDir: "/sessions",
+      autoCompact: createAutoCompactConfig({ enabled: false }),
+      retry: {
+        maxRetries: 2,
+        baseDelayMs: 1,
+        maxDelayMs: 1,
+        retryableStatuses: [529],
+        fallbackModel: "fallback-model",
+        maxConsecutiveOverloaded: 1,
+      },
+    };
+
+    const thread = new Thread(threadConfig, { sessionId: "strip-sig" });
+    const msgs = await thread.getMessages();
+    expect(msgs.length).toBe(0);
+
+    const events = await collectEvents(thread.run("test"));
+    const hasSwitchEvent = events.some((e) => e.type === "model_switch");
+    expect(hasSwitchEvent).toBe(true);
   });
 });
