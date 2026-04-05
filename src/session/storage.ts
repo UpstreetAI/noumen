@@ -275,6 +275,14 @@ export class SessionStorage {
     return this.fs.exists(this.getTranscriptPath(sessionId));
   }
 
+  async deleteSession(sessionId: string): Promise<void> {
+    const filePath = this.getTranscriptPath(sessionId);
+    const exists = await this.fs.exists(filePath);
+    if (exists) {
+      await this.fs.deleteFile(filePath);
+    }
+  }
+
   async listSessions(): Promise<SessionInfo[]> {
     await this.ensureDir();
 

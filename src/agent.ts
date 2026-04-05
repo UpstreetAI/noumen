@@ -1,3 +1,5 @@
+import * as nodeFs from "node:fs/promises";
+import * as nodePath from "node:path";
 import type { AIProvider, OutputFormat, ChatCompletionUsage } from "./providers/types.js";
 import type { ProviderName } from "./providers/resolve.js";
 import type { VirtualFs } from "./virtual/fs.js";
@@ -426,6 +428,14 @@ export class Agent {
   async createThread(opts?: ThreadOptions): Promise<Thread> {
     await this.init();
 
+    if (this.sandbox.init) {
+      let storedSandboxId: string | undefined;
+      if (opts?.resume && opts?.sessionId) {
+        storedSandboxId = await this.loadSandboxId(opts.sessionId);
+      }
+      await this.sandbox.init(storedSandboxId);
+    }
+
     const autoCompact = createAutoCompactConfig({
       enabled: this.autoCompactEnabled,
       threshold: this.autoCompactThreshold,
@@ -483,6 +493,12 @@ export class Agent {
         cwd,
       },
     );
+
+    const sid = this.sandbox.sandboxId?.();
+    if (sid && !(opts?.resume)) {
+      await this.storeSandboxId(thread.sessionId, sid);
+    }
+
     return thread;
   }
 
@@ -795,6 +811,37 @@ export class Agent {
       lsp: lspResults,
       timestamp: new Date().toISOString(),
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sandbox index — local host file mapping sessionId → sandboxId so we can
+  // reconnect to auto-created containers on resume without accessing the
+  // (potentially unreachable) sandbox filesystem.
+  // ---------------------------------------------------------------------------
+
+  private get sandboxIndexPath(): string {
+    return nodePath.resolve(this.cwd, this.sessionDir, ".sandbox-index.json");
+  }
+
+  private async loadSandboxId(sessionId: string): Promise<string | undefined> {
+    try {
+      const content = await nodeFs.readFile(this.sandboxIndexPath, "utf-8");
+      const index = JSON.parse(content) as Record<string, string>;
+      return index[sessionId];
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async storeSandboxId(sessionId: string, sandboxId: string): Promise<void> {
+    let index: Record<string, string> = {};
+    try {
+      const content = await nodeFs.readFile(this.sandboxIndexPath, "utf-8");
+      index = JSON.parse(content) as Record<string, string>;
+    } catch { /* file doesn't exist yet */ }
+    index[sessionId] = sandboxId;
+    await nodeFs.mkdir(nodePath.dirname(this.sandboxIndexPath), { recursive: true });
+    await nodeFs.writeFile(this.sandboxIndexPath, JSON.stringify(index, null, 2));
   }
 
   /**
