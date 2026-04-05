@@ -25,9 +25,7 @@ const READ_ONLY_COMMANDS = new Set([
   "whereis",
   "type",
   "pwd",
-  "date",
   "uname",
-  "hostname",
   "whoami",
   "id",
   "groups",
@@ -35,7 +33,6 @@ const READ_ONLY_COMMANDS = new Set([
   "ll",
   "la",
   "dir",
-  "tree",
   "stat",
   "du",
   "df",
@@ -60,9 +57,6 @@ const READ_ONLY_COMMANDS = new Set([
   "rg",
   "ag",
   "ack",
-  "find",
-  "fd",
-  "fdfind",
   "locate",
   "readlink",
   "realpath",
@@ -74,8 +68,6 @@ const READ_ONLY_COMMANDS = new Set([
   "uniq",
   "cut",
   "tr",
-  "awk",
-  "sed", // sed -i is destructive but caught by destructive patterns
   "jq",
   "yq",
   "xxd",
@@ -92,7 +84,6 @@ const READ_ONLY_COMMANDS = new Set([
   "[[",
   "man",
   "help",
-  "info",
   "nproc",
   "arch",
   "lscpu",
@@ -100,8 +91,28 @@ const READ_ONLY_COMMANDS = new Set([
   "sw_vers",
   "sysctl",
   "getconf",
-  "dotnet", // dotnet --info, dotnet --list-sdks
+  "dotnet",
 ]);
+
+// Commands that are read-only only when specific dangerous flags are absent.
+// Moved out of READ_ONLY_COMMANDS to enforce flag-level validation.
+const CONDITIONAL_READ_ONLY: Record<
+  string,
+  (command: string, tokens: string[]) => boolean
+> = {
+  awk: () => false, // awk has system() — never read-only
+  sed: (cmd) => !/\bsed\s+(-[a-zA-Z]*i[a-zA-Z]*|--in-place)\b/.test(cmd),
+  find: (cmd) => !/\b(-exec\b|-execdir\b|-ok\b|-okdir\b|-delete\b|-fprint\b|-fls\b|-fprintf\b)/.test(cmd),
+  fd: (_cmd, tokens) => !tokens.some((t) => ["-x", "--exec", "-X", "--exec-batch"].includes(t)),
+  fdfind: (_cmd, tokens) => !tokens.some((t) => ["-x", "--exec", "-X", "--exec-batch"].includes(t)),
+  date: (_cmd, tokens) => !tokens.some((t) => ["-s", "--set"].includes(t)),
+  hostname: (_cmd, tokens) => {
+    const positional = tokens.filter((t) => !t.startsWith("-"));
+    return positional.length === 0;
+  },
+  info: (_cmd, tokens) => !tokens.some((t) => ["-o", "--output", "--dribble", "--init-file"].includes(t)),
+  tree: (_cmd, tokens) => !tokens.some((t) => t === "-R"),
+};
 
 // -- Git read-only subcommands --
 
@@ -224,6 +235,44 @@ function splitCompoundCommand(command: string): string[] {
     .split(/\s*(?:;|&&|\|\||(?<!\|)\|(?!\|))\s*/)
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+const DANGEROUS_ENV_VARS = new Set([
+  "GIT_CONFIG_GLOBAL",
+  "GIT_CONFIG_SYSTEM",
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_EXEC_PATH",
+  "GIT_TEMPLATE_DIR",
+  "LD_PRELOAD",
+  "LD_LIBRARY_PATH",
+  "PATH",
+  "PYTHONPATH",
+  "NODE_PATH",
+  "PERL5LIB",
+]);
+
+/**
+ * Check whether a command contains dangerous env var prefix assignments.
+ * Returns true if any env var in the prefix is in the DANGEROUS_ENV_VARS set.
+ */
+function hasDangerousEnvVars(command: string): boolean {
+  const envPattern = /^[A-Za-z_][A-Za-z0-9_]*(?==)/;
+  let cmd = command.trim();
+  while (/^[A-Za-z_][A-Za-z0-9_]*=\S*\s/.test(cmd)) {
+    const match = cmd.match(envPattern);
+    if (match && DANGEROUS_ENV_VARS.has(match[0])) return true;
+    cmd = cmd.replace(/^[A-Za-z_][A-Za-z0-9_]*=\S*\s+/, "");
+  }
+  return false;
+}
+
+/**
+ * Check whether a command contains command substitution or process substitution.
+ * These can embed arbitrary commands inside otherwise safe commands.
+ */
+function hasCommandSubstitution(command: string): boolean {
+  return /\$\(/.test(command) || /`[^`]+`/.test(command) || /<\(/.test(command);
 }
 
 /**
@@ -390,8 +439,29 @@ function classifySingleCommand(
     return classifyGitCommand(command);
   }
 
+  // Commands with command substitution are never read-only
+  if (hasCommandSubstitution(command)) {
+    return { isReadOnly: false, isDestructive: false, reason: `Command contains command substitution` };
+  }
+
+  // Commands with dangerous env var prefixes are never read-only
+  if (hasDangerousEnvVars(command)) {
+    return { isReadOnly: false, isDestructive: false, reason: `Command uses dangerous environment variable prefix` };
+  }
+
   if ((name === "echo" || name === "printf") && SAFE_ECHO_RE.test(stripPrefixes(command).trim())) {
     return { isReadOnly: true, isDestructive: false, reason: `${name} with safe arguments is read-only` };
+  }
+
+  // Check conditional read-only commands (require flag-level validation)
+  const conditionalCheck = CONDITIONAL_READ_ONLY[name];
+  if (conditionalCheck) {
+    const stripped = stripPrefixes(command).trim();
+    const tokens = stripped.split(/\s+/).slice(1);
+    if (conditionalCheck(command, tokens)) {
+      return { isReadOnly: true, isDestructive: false, reason: `${name} is read-only (flags validated)` };
+    }
+    return { isReadOnly: false, isDestructive: false, reason: `${name} has potentially dangerous flags` };
   }
 
   // Check against read-only allowlist

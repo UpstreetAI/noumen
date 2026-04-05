@@ -21,8 +21,12 @@ export class LocalFs implements VirtualFs {
   }
 
   private resolve(p: string): string {
-    if (path.isAbsolute(p)) return p;
-    return path.resolve(this.basePath, p);
+    const resolved = path.isAbsolute(p) ? path.normalize(p) : path.resolve(this.basePath, p);
+    const normalizedBase = path.resolve(this.basePath);
+    if (resolved !== normalizedBase && !resolved.startsWith(normalizedBase + path.sep)) {
+      throw new Error(`Path "${p}" resolves outside base directory "${this.basePath}"`);
+    }
+    return resolved;
   }
 
   async readFile(filePath: string, opts?: ReadOptions): Promise<string> {

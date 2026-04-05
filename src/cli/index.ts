@@ -12,7 +12,7 @@ import { Agent, LocalSandbox, UnsandboxedLocal, type Sandbox, type DiagnoseResul
 import type { ThinkingConfig } from "../thinking/types.js";
 import type { PermissionMode } from "../permissions/types.js";
 
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 
 async function listLocalOllamaModels(baseURL: string): Promise<string[]> {
   try {
@@ -284,19 +284,21 @@ async function runAgent(config: MergedConfig): Promise<void> {
 
   await agent.init();
 
-  if (config.prompt) {
-    await runOneShot(agent, config);
-  } else {
-    if (!process.stdin.isTTY) {
-      process.stderr.write(
-        chalk.red("Interactive mode requires a TTY. Use -c or pipe input.\n"),
-      );
-      process.exit(1);
+  try {
+    if (config.prompt) {
+      await runOneShot(agent, config);
+    } else {
+      if (!process.stdin.isTTY) {
+        process.stderr.write(
+          chalk.red("Interactive mode requires a TTY. Use -c or pipe input.\n"),
+        );
+        process.exit(1);
+      }
+      await startRepl(agent, config);
     }
-    await startRepl(agent, config);
+  } finally {
+    await agent.close();
   }
-
-  await agent.close();
 }
 
 async function runOneShot(agent: Agent, config: MergedConfig): Promise<void> {

@@ -73,8 +73,13 @@ export class SandboxedLocalComputer implements VirtualComputer {
 
     if (!this.initPromise) {
       this.initPromise = (async () => {
-        await SandboxManager.initialize(this.buildRuntimeConfig());
-        this.initialized = true;
+        try {
+          await SandboxManager.initialize(this.buildRuntimeConfig());
+          this.initialized = true;
+        } catch (err) {
+          this.initPromise = null;
+          throw err;
+        }
       })();
     }
 
@@ -100,15 +105,17 @@ export class SandboxedLocalComputer implements VirtualComputer {
           shell: process.env.SHELL || "/bin/sh",
         },
         (error, stdout, stderr) => {
-          SandboxManager.cleanupAfterCommand();
-          resolve({
+          const result: CommandResult = {
             exitCode:
               error && "code" in error
                 ? (error.code as number) ?? 1
                 : child.exitCode ?? 0,
             stdout: stdout ?? "",
             stderr: stderr ?? "",
-          });
+          };
+          Promise.resolve(SandboxManager.cleanupAfterCommand())
+            .then(() => resolve(result))
+            .catch(() => resolve(result));
         },
       );
     });

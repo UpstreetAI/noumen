@@ -91,8 +91,10 @@ export function LocalSandbox(opts?: LocalSandboxOptions): Sandbox {
       defaultTimeout: opts?.defaultTimeout,
       sandbox: {
         filesystem: {
-          allowWrite: [cwd],
-          ...opts?.sandbox?.filesystem,
+          allowWrite: [cwd, ...(opts?.sandbox?.filesystem?.allowWrite ?? [])],
+          denyWrite: opts?.sandbox?.filesystem?.denyWrite,
+          denyRead: opts?.sandbox?.filesystem?.denyRead,
+          allowRead: opts?.sandbox?.filesystem?.allowRead,
         },
         network: opts?.sandbox?.network,
       },

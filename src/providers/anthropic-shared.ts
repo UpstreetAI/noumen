@@ -144,7 +144,7 @@ export function convertAnthropicMessages(
       }
     } else if (msg.role === "assistant") {
       const content: Record<string, unknown>[] = [];
-      if (msg.content) {
+      if (msg.content && (typeof msg.content !== "string" || msg.content.trim() !== "")) {
         content.push({ type: "text", text: msg.content });
       }
       if (msg.tool_calls) {
@@ -319,6 +319,7 @@ export async function* streamAnthropicChat(
   let outputTokens = 0;
   let cacheReadTokens = 0;
   let cacheCreationTokens = 0;
+  let thinkingTokens = 0;
   let stopReason: string | undefined;
 
   for await (const event of stream) {
@@ -333,6 +334,7 @@ export async function* streamAnthropicChat(
         outputTokens = (usage.output_tokens as number) ?? 0;
         cacheReadTokens = (usage.cache_read_input_tokens as number) ?? 0;
         cacheCreationTokens = (usage.cache_creation_input_tokens as number) ?? 0;
+        if (usage.thinking_tokens) thinkingTokens = usage.thinking_tokens as number;
       }
       continue;
     }
@@ -347,6 +349,9 @@ export async function* streamAnthropicChat(
         | undefined;
       if (usage?.output_tokens) {
         outputTokens = usage.output_tokens as number;
+      }
+      if (usage?.thinking_tokens) {
+        thinkingTokens = usage.thinking_tokens as number;
       }
       continue;
     }
@@ -444,6 +449,7 @@ export async function* streamAnthropicChat(
           total_tokens: inputTokens + outputTokens,
           cache_read_tokens: cacheReadTokens || undefined,
           cache_creation_tokens: cacheCreationTokens || undefined,
+          thinking_tokens: thinkingTokens || undefined,
         },
       };
     }

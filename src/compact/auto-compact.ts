@@ -59,6 +59,8 @@ export function createAutoCompactTracking(
  *
  * @param tokensFreed — tokens already reclaimed by microcompact/budget in
  *   this turn; subtracted from the estimate so we don't over-eagerly compact.
+ * @param querySource — the source of the current query; prevents recursive
+ *   compaction when called from a compact or session_memory context.
  */
 export function shouldAutoCompact(
   messages: ChatMessage[],
@@ -66,8 +68,10 @@ export function shouldAutoCompact(
   lastUsage?: ChatCompletionUsage,
   anchorMessageIndex?: number,
   tokensFreed?: number,
+  querySource?: string,
 ): boolean {
   if (!config.enabled) return false;
+  if (querySource === "compact" || querySource === "session_memory") return false;
 
   const tokens = lastUsage
     ? tokenCountWithEstimation(messages, lastUsage, anchorMessageIndex)

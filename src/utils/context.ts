@@ -6,9 +6,15 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   // Anthropic (evergreen prefixes — also match dated variants via startsWith)
   "claude-sonnet-4": 200_000,
   "claude-opus-4": 200_000,
+  "claude-haiku-4": 200_000,
   "claude-haiku-3-5": 200_000,
   "claude-3-5-sonnet": 200_000,
   "claude-3-5-haiku": 200_000,
+  // Bedrock / Vertex model ID patterns (prefix-matched)
+  "us.anthropic.claude": 200_000,
+  "eu.anthropic.claude": 200_000,
+  "ap.anthropic.claude": 200_000,
+  "anthropic.claude": 200_000,
   // OpenAI
   "gpt-4o": 128_000,
   "gpt-4o-mini": 128_000,
@@ -31,9 +37,14 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
 const MODEL_MAX_OUTPUT_TOKENS: Record<string, number> = {
   "claude-sonnet-4": 16_384,
   "claude-opus-4": 16_384,
+  "claude-haiku-4": 16_384,
   "claude-haiku-3-5": 8_192,
   "claude-3-5-sonnet": 8_192,
   "claude-3-5-haiku": 8_192,
+  "us.anthropic.claude": 16_384,
+  "eu.anthropic.claude": 16_384,
+  "ap.anthropic.claude": 16_384,
+  "anthropic.claude": 16_384,
   "gpt-4o": 16_384,
   "gpt-4o-mini": 16_384,
   "gpt-4-turbo": 4_096,

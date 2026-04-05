@@ -443,8 +443,6 @@ export class Thread {
       this.microcompactTokensFreed = 0;
 
       while (!signal.aborted) {
-        this.hasAttemptedReactiveCompact = false;
-
         // --- Pre-call compaction pipeline ---
         if (this.config.toolResultBudget?.enabled) {
           const budgetResult = enforceToolResultBudget(
@@ -675,17 +673,38 @@ export class Thread {
             });
           }
 
-          // Generate synthetic tool results for any pending tool_calls before re-throwing
-          const lastMsg = this.messages[this.messages.length - 1];
-          if (lastMsg && lastMsg.role === "assistant" && (lastMsg as AssistantMessage).tool_calls) {
-            const syntheticResults = generateMissingToolResults(
-              lastMsg as AssistantMessage,
-              this.messages,
-              `Provider error: ${providerErr instanceof Error ? providerErr.message : String(providerErr)}`,
-            );
+          // Save any partially-streamed tool calls accumulated before the error
+          const errorReason = `Provider error: ${providerErr instanceof Error ? providerErr.message : String(providerErr)}`;
+          if (accumulatedToolCalls.size > 0) {
+            const partialCalls: ToolCallContent[] = Array.from(accumulatedToolCalls.values()).map((tc) => ({
+              id: tc.id, type: "function" as const, function: { name: tc.name, arguments: tc.arguments },
+            }));
+            const partialAssistant: AssistantMessage = {
+              role: "assistant",
+              content: accumulatedContent.join("") || null,
+              tool_calls: partialCalls,
+            };
+            this.messages.push(partialAssistant);
+            await this.storage.appendMessage(this.sessionId, partialAssistant);
+
+            const syntheticResults = generateMissingToolResults(partialAssistant, [], errorReason);
             for (const sr of syntheticResults) {
               this.messages.push(sr);
               await this.storage.appendMessage(this.sessionId, sr);
+            }
+          } else {
+            // Check the last persisted message for pending tool_calls
+            const lastMsg = this.messages[this.messages.length - 1];
+            if (lastMsg && lastMsg.role === "assistant" && (lastMsg as AssistantMessage).tool_calls) {
+              const syntheticResults = generateMissingToolResults(
+                lastMsg as AssistantMessage,
+                this.messages,
+                errorReason,
+              );
+              for (const sr of syntheticResults) {
+                this.messages.push(sr);
+                await this.storage.appendMessage(this.sessionId, sr);
+              }
             }
           }
 
@@ -774,6 +793,19 @@ export class Thread {
         }
 
         const apiDurationMs = Date.now() - apiStartTime;
+
+        // Handle truncated responses (max output tokens reached)
+        if (finishReason === "length") {
+          yield { type: "text_delta", text: "\n\n[Response truncated due to max output tokens]" };
+          // Drop any incomplete tool calls — their JSON arguments are likely truncated
+          for (const [idx, tc] of accumulatedToolCalls) {
+            try {
+              JSON.parse(tc.arguments);
+            } catch {
+              accumulatedToolCalls.delete(idx);
+            }
+          }
+        }
 
         if (streamingExec) {
           for (const [, tc] of accumulatedToolCalls) {
@@ -1332,9 +1364,20 @@ export class Thread {
           if (preventContinuation) break;
 
           if (opts?.maxTurns !== undefined && callCount >= opts.maxTurns) {
+            await runNotificationHooks(hooks, "TurnEnd", {
+              event: "TurnEnd",
+              sessionId: this.sessionId,
+            });
+            yield {
+              type: "turn_complete",
+              usage: turnUsage,
+              model: this.model,
+              callCount,
+            };
             yield { type: "max_turns_reached", maxTurns: opts.maxTurns, turnCount: callCount };
             break;
           }
+          this.hasAttemptedReactiveCompact = false;
           continue;
         }
 
@@ -1378,7 +1421,18 @@ export class Thread {
         break;
       }
 
-      // --- Memory extraction ---
+      // --- Memory extraction (skip on abort) ---
+      if (signal.aborted) {
+        interactionSpan.setStatus(SpanStatusCode.OK);
+        interactionSpan.end();
+        yield { type: "span_end", name: "noumen.interaction", spanId: this.sessionId, durationMs: Date.now() - interactionStart };
+        await runNotificationHooks(this.hooks, "SessionEnd", {
+          event: "SessionEnd",
+          sessionId: this.sessionId,
+          reason: "abort",
+        } as import("./hooks/types.js").SessionEndHookInput);
+        return;
+      }
       const memCfg = this.config.memory;
       if (memCfg && memCfg.autoExtract && memCfg.provider) {
         try {

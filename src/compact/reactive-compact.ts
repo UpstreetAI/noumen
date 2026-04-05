@@ -34,13 +34,14 @@ export async function tryReactiveCompact(
   if (messages.length < 2) return null;
 
   try {
+    const tailKeep = Math.min(6, messages.length - 1);
     const compacted = await compactConversation(
       provider,
       model,
       messages,
       storage,
       sessionId,
-      { stripBinaryContent: true },
+      { stripBinaryContent: true, tailMessagesToKeep: tailKeep },
     );
     return { messages: compacted, strategy: "compacted" };
   } catch (err) {

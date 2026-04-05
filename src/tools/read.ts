@@ -162,6 +162,7 @@ export const readFileTool: Tool = {
           timestamp: mtime,
           offset,
           limit,
+          isPartialView: !!(limit || offset > 1),
         });
       }
 

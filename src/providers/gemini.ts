@@ -87,6 +87,7 @@ export class GeminiProvider implements AIProvider {
 
     let chunkIndex = 0;
     let toolCallIndex = 0;
+    let responseHasToolCalls = false;
     let lastUsage: ChatStreamChunk["usage"] | undefined;
 
     for await (const chunk of stream) {
@@ -147,6 +148,7 @@ export class GeminiProvider implements AIProvider {
           const fc = part.functionCall;
           const tcId = `gemini-tc-${toolCallIndex}`;
           const idx = toolCallIndex++;
+          responseHasToolCalls = true;
 
           yield {
             id: chunkId,
@@ -178,7 +180,7 @@ export class GeminiProvider implements AIProvider {
       if (finishReason && finishReason !== "FINISH_REASON_UNSPECIFIED") {
         let mapped: string;
         if (finishReason === "STOP") {
-          mapped = toolCallIndex > 0 ? "tool_calls" : "stop";
+          mapped = responseHasToolCalls ? "tool_calls" : "stop";
         } else if (finishReason === "MAX_TOKENS") {
           mapped = "length";
         } else if (finishReason === "SAFETY" || finishReason === "RECITATION") {

@@ -10,6 +10,7 @@ import type {
 import { getMatchingRules, isPathInWorkingDirectories } from "./rules.js";
 import { resolveToolFlag } from "../tools/registry.js";
 import { classifyPermission } from "./classifier.js";
+import type { DenialTracker } from "./denial-tracking.js";
 
 /**
  * Resolve the permission decision for a tool invocation.
@@ -28,6 +29,7 @@ export interface ResolvePermissionOptions {
   recentMessages?: ChatMessage[];
   autoModeConfig?: AutoModeConfig;
   signal?: AbortSignal;
+  denialTracker?: DenialTracker;
 }
 
 export async function resolvePermission(
@@ -128,7 +130,7 @@ export async function resolvePermission(
     }
     if (toolResult.behavior === "ask") {
       const isSafetyCheck = toolResult.reason === "safetyCheck";
-      const isInteractive = tool.requiresUserInteraction === true;
+      const isInteractive = !!tool.requiresUserInteraction;
       const isContentSpecificRule = toolResult.reason === "rule";
 
       if (isSafetyCheck || isInteractive || isContentSpecificRule || permCtx.mode !== "bypassPermissions") {

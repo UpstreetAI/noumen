@@ -97,7 +97,7 @@ export function microcompactMessages(
   let tokensFreed = 0;
   const result = messages.map((msg, idx) => {
     if (!indicesToClear.has(idx)) return msg;
-    const originalText = contentToString(msg.content as string);
+    const originalText = contentToString(msg.content as string | import("../session/types.js").ContentPart[]);
     tokensFreed += estimateTokens(originalText) - estimateTokens(CLEARED_PLACEHOLDER);
     return { ...msg, content: CLEARED_PLACEHOLDER };
   });

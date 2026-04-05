@@ -3,6 +3,9 @@ import type { ChatMessage, ContentPart } from "../session/types.js";
 import type { SessionStorage } from "../session/storage.js";
 import { estimateMessagesTokens } from "../utils/tokens.js";
 import { contentToString, hasImageContent, stripImageContent } from "../utils/content.js";
+import { truncateHeadForPTLRetry } from "../utils/tokens.js";
+import { getEffectiveContextWindow } from "../utils/context.js";
+import { classifyError } from "../retry/classify.js";
 
 const COMPACT_SYSTEM_PROMPT = `You are a helpful AI assistant tasked with summarizing conversations. 
 Create a concise but comprehensive summary of the conversation so far. 
@@ -66,15 +69,47 @@ export async function compactConversation(
     max_tokens: 4096,
   };
 
+  const MAX_PTL_RETRIES = 3;
+  let currentToSummarize = cleanedMessages;
   let summaryText = "";
-  for await (const chunk of provider.chat(params)) {
-    if (opts?.signal?.aborted) {
-      throw new DOMException("Compaction aborted", "AbortError");
-    }
-    for (const choice of chunk.choices) {
-      if (choice.delta.content) {
-        summaryText += choice.delta.content;
+
+  for (let ptlAttempt = 0; ptlAttempt <= MAX_PTL_RETRIES; ptlAttempt++) {
+    summaryText = "";
+    const attemptMessages: ChatMessage[] = [
+      ...currentToSummarize,
+      { role: "user", content: summaryPrompt },
+    ];
+    const attemptParams: ChatParams = {
+      model,
+      messages: attemptMessages,
+      system: COMPACT_SYSTEM_PROMPT,
+      max_tokens: 4096,
+    };
+
+    try {
+      for await (const chunk of provider.chat(attemptParams)) {
+        if (opts?.signal?.aborted) {
+          throw new DOMException("Compaction aborted", "AbortError");
+        }
+        for (const choice of chunk.choices) {
+          if (choice.delta.content) {
+            summaryText += choice.delta.content;
+          }
+        }
       }
+      break; // Success
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") throw err;
+      const classification = classifyError(err);
+      if (!classification.isContextOverflow || ptlAttempt >= MAX_PTL_RETRIES) {
+        throw err;
+      }
+      const targetTokens = getEffectiveContextWindow(model);
+      const truncated = truncateHeadForPTLRetry(currentToSummarize, targetTokens);
+      if (truncated.length >= currentToSummarize.length || truncated.length === 0) {
+        throw err;
+      }
+      currentToSummarize = truncated;
     }
   }
 
@@ -115,6 +150,22 @@ const LONG_HEX_PATTERN = /^[0-9a-f]{256,}$/i;
 
 function stripBinaryFromMessages(messages: ChatMessage[]): ChatMessage[] {
   return messages.map((msg) => {
+    // Handle array content (can contain images in tool results)
+    if (Array.isArray(msg.content)) {
+      const parts = msg.content as ContentPart[];
+      let hasMedia = false;
+      const cleaned = parts.map((part) => {
+        if (part.type === "image") {
+          hasMedia = true;
+          return { type: "text" as const, text: "[image removed for summarization]" };
+        }
+        return part;
+      });
+      if (hasMedia) {
+        return { ...msg, content: cleaned } as ChatMessage;
+      }
+    }
+
     if (hasImageContent(msg.content as string | ContentPart[])) {
       return {
         ...msg,

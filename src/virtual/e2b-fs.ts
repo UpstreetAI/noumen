@@ -83,7 +83,7 @@ export class E2BFs implements VirtualFs {
       name: entry.name,
       path: entry.path,
       isDirectory: entry.type === "dir",
-      isFile: entry.type === "file" || entry.type !== "dir",
+      isFile: entry.type === "file",
       size: entry.size,
     }));
   }
@@ -97,7 +97,7 @@ export class E2BFs implements VirtualFs {
     return {
       size: info.size ?? 0,
       isDirectory: info.type === "dir",
-      isFile: info.type === "file" || info.type !== "dir",
+      isFile: info.type === "file",
       modifiedAt: info.modifiedTime,
     };
   }

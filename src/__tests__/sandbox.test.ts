@@ -84,12 +84,23 @@ describe("LocalFs", () => {
     await fs.rm(dir, { recursive: true });
   });
 
-  it("handles absolute paths bypassing basePath", async () => {
+  it("rejects absolute paths outside basePath", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "localfs-abs-"));
     const absFile = path.join(dir, "abs.txt");
     await fs.writeFile(absFile, "absolute");
 
     const lfs = new LocalFs({ basePath: "/some/other/path" });
+    await expect(lfs.readFile(absFile)).rejects.toThrow("resolves outside base directory");
+
+    await fs.rm(dir, { recursive: true });
+  });
+
+  it("allows absolute paths inside basePath", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "localfs-abs-"));
+    const absFile = path.join(dir, "abs.txt");
+    await fs.writeFile(absFile, "absolute");
+
+    const lfs = new LocalFs({ basePath: dir });
     const content = await lfs.readFile(absFile);
     expect(content).toBe("absolute");
 

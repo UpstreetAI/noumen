@@ -29,6 +29,10 @@ describe("tryReactiveCompact", () => {
       { role: "assistant", content: "world" },
       { role: "user", content: "more stuff" },
       { role: "assistant", content: "more answers" },
+      { role: "user", content: "even more" },
+      { role: "assistant", content: "even more answers" },
+      { role: "user", content: "last question" },
+      { role: "assistant", content: "last answer" },
     ];
 
     const result = await tryReactiveCompact(provider, "mock-model", msgs, storage, "s1");

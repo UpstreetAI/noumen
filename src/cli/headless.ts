@@ -142,8 +142,7 @@ export async function runHeadless(code: Agent, _config: MergedConfig): Promise<v
             emit({ type: "error", error: { message: e.message, name: e.name }, sessionId });
           }
         } finally {
-          const entry = sessions.get(sessionId);
-          if (entry) entry.running = false;
+          sessions.delete(sessionId);
           emit({ type: "session_done", sessionId });
         }
       })();

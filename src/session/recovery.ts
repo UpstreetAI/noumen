@@ -54,7 +54,10 @@ export function filterUnresolvedToolUses(messages: ChatMessage[]): {
     }
   }
 
+  // Collect tool_call IDs from assistant messages that will be removed
+  const removedToolCallIds = new Set<string>();
   let removed = 0;
+
   const filtered = messages.filter((msg) => {
     if (msg.role !== "assistant") return true;
     const asst = msg as AssistantMessage;
@@ -64,13 +67,26 @@ export function filterUnresolvedToolUses(messages: ChatMessage[]): {
       (tc) => !resolvedToolCallIds.has(tc.id),
     );
     if (allUnresolved) {
+      for (const tc of asst.tool_calls) {
+        removedToolCallIds.add(tc.id);
+      }
       removed++;
       return false;
     }
     return true;
   });
 
-  return { messages: filtered, removed };
+  // Also remove orphaned tool result messages whose assistant was dropped
+  const cleaned = filtered.filter((msg) => {
+    if (msg.role !== "tool") return true;
+    const toolMsg = msg as ToolResultMessage;
+    if (removedToolCallIds.has(toolMsg.tool_call_id)) {
+      return false;
+    }
+    return true;
+  });
+
+  return { messages: cleaned, removed };
 }
 
 /**
@@ -265,6 +281,20 @@ function mergeConsecutiveSameRole(messages: ChatMessage[]): ChatMessage[] {
         role: "user",
         content: [...prevParts, ...currParts],
       };
+    } else if (prev.role === "assistant" && curr.role === "assistant") {
+      const prevAsst = prev as AssistantMessage;
+      const currAsst = curr as AssistantMessage;
+      const mergedContent =
+        (prevAsst.content ?? "") + (currAsst.content ? "\n" + currAsst.content : "");
+      const mergedToolCalls = [
+        ...(prevAsst.tool_calls ?? []),
+        ...(currAsst.tool_calls ?? []),
+      ];
+      result[result.length - 1] = {
+        role: "assistant",
+        content: mergedContent || null,
+        ...(mergedToolCalls.length > 0 ? { tool_calls: mergedToolCalls } : {}),
+      } as AssistantMessage;
     } else {
       result.push(curr);
     }

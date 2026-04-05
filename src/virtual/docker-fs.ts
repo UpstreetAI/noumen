@@ -117,13 +117,20 @@ export class DockerFs implements VirtualFs {
   }
 
   async appendFile(path: string, content: string): Promise<void> {
-    let existing = "";
-    try {
-      existing = await this.readFile(path);
-    } catch {
-      // file may not exist yet
+    const resolved = this.resolvePath(path);
+    const dir = resolved.substring(0, resolved.lastIndexOf("/"));
+    if (dir) {
+      await this.exec(["mkdir", "-p", dir]);
     }
-    await this.writeFile(path, existing + content);
+    const encoded = Buffer.from(content, "utf-8").toString("base64");
+    const { exitCode, stderr } = await this.exec([
+      "bash",
+      "-c",
+      `echo ${shellEscape(encoded)} | base64 -d >> ${shellEscape(resolved)}`,
+    ]);
+    if (exitCode !== 0) {
+      throw new Error(`DockerFs appendFile failed: ${stderr.trim()}`);
+    }
   }
 
   async deleteFile(

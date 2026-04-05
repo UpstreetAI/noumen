@@ -56,22 +56,53 @@ export function looksLikeBareRepo(dirEntries: string[]): boolean {
 }
 
 /**
+ * Patterns for bare repo top-level paths that are security-sensitive.
+ * In a bare repo, these exist at the root without a `.git/` prefix.
+ */
+const BARE_REPO_INTERNAL_PATTERNS = [
+  /^hooks\//,
+  /^config$/,
+  /^info\//,
+  /^objects\//,
+  /^refs\//,
+  /^HEAD$/,
+  /^index$/,
+  /^packed-refs$/,
+  /^shallow$/,
+  /^modules\//,
+];
+
+/**
+ * Returns true if `filePath` targets a bare repo internal path
+ * (e.g. `hooks/pre-commit`, `HEAD`, `refs/heads/main`).
+ */
+export function isBareRepoInternalPath(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, "/").replace(/^\.\//, "");
+  return BARE_REPO_INTERNAL_PATTERNS.some((p) => p.test(normalized));
+}
+
+/**
  * Check if a shell command targets git-internal paths for writes.
  * Scans for redirect operators (`>`, `>>`, `tee`) whose target is
- * inside `.git/`.
+ * inside `.git/` or matches a bare repo internal path.
  */
 export function commandWritesGitInternals(command: string): boolean {
-  // Redirect targets: > .git/hooks/pre-commit, >> .git/config, tee .git/hooks/x
   const redirectPattern = /(?:>{1,2}|tee\s+)\s*(\S+)/g;
   let match: RegExpExecArray | null;
   while ((match = redirectPattern.exec(command)) !== null) {
-    if (isGitInternalPath(match[1])) return true;
+    if (isGitInternalPath(match[1]) || isBareRepoInternalPath(match[1])) return true;
   }
 
-  // cp/mv/ln targeting .git/ paths
-  const copyPattern = /\b(?:cp|mv|ln)\b.*\s(\S*\.git\/\S+)/;
-  const copyMatch = command.match(copyPattern);
-  if (copyMatch && isGitInternalPath(copyMatch[1])) return true;
+  // cp/mv/ln targeting .git/ or bare repo paths
+  const copyPatternDotGit = /\b(?:cp|mv|ln)\b.*\s(\S*\.git\/\S+)/;
+  const copyMatchDotGit = command.match(copyPatternDotGit);
+  if (copyMatchDotGit && isGitInternalPath(copyMatchDotGit[1])) return true;
+
+  const copyPatternBare = /\b(?:cp|mv|ln)\b.*\s(\S+)/g;
+  let bareMatch: RegExpExecArray | null;
+  while ((bareMatch = copyPatternBare.exec(command)) !== null) {
+    if (isBareRepoInternalPath(bareMatch[1])) return true;
+  }
 
   return false;
 }
