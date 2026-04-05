@@ -929,18 +929,12 @@ export class Thread {
         // Handle truncated responses (max output tokens reached)
         if (finishReason === "length") {
           yield { type: "text_delta", text: "\n\n[Response truncated due to max output tokens]" };
-          // Drop any incomplete tool calls — their JSON arguments are likely truncated
-          for (const [idx, tc] of accumulatedToolCalls) {
-            try {
-              JSON.parse(tc.arguments);
-            } catch {
-              accumulatedToolCalls.delete(idx);
-            }
-          }
+          accumulatedToolCalls.clear();
         }
 
         if (finishReason === "content_filter") {
           yield { type: "text_delta", text: "\n\n[Response blocked by content filter]" };
+          accumulatedToolCalls.clear();
         }
 
         if (streamingExec && !signal.aborted) {

@@ -116,10 +116,15 @@ describe("compactConversation merges consecutive same-role after summary", () =>
     // Summary (user) + tail user message should be merged into one
     const userMsgs = result.filter((m) => m.role === "user");
     expect(userMsgs).toHaveLength(1);
-    const content = typeof userMsgs[0].content === "string"
-      ? userMsgs[0].content : "";
-    expect(content).toContain("[Conversation Summary]");
-    expect(content).toContain("tail user message");
+    // After the ContentPart[] fix, merged content is an array of parts
+    const raw = userMsgs[0].content;
+    const contentText = typeof raw === "string"
+      ? raw
+      : Array.isArray(raw)
+        ? (raw as Array<{ type: string; text?: string }>).map((p) => p.text ?? "").join("")
+        : "";
+    expect(contentText).toContain("[Conversation Summary]");
+    expect(contentText).toContain("tail user message");
   });
 });
 
@@ -230,6 +235,110 @@ describe("adjustSplitForToolPairs", () => {
     // splitIdx=3 lands on second tool result
     const adjusted = adjustSplitForToolPairs(messages, 3);
     expect(adjusted).toBe(1);
+  });
+});
+
+describe("compactConversation tail messages survive resume", () => {
+  it("tail messages are persisted after boundary and recoverable via loadMessages", async () => {
+    provider.addResponse(textResponse("Summary."));
+
+    const messages: ChatMessage[] = [
+      { role: "user", content: "first" },
+      { role: "assistant", content: "reply" },
+      { role: "user", content: "second" },
+      { role: "assistant", content: "reply2" },
+      { role: "user", content: "tail-1" },
+      { role: "assistant", content: "tail-2" },
+    ];
+
+    await compactConversation(
+      provider, "mock-model", messages, storage, "s1",
+      { tailMessagesToKeep: 2 },
+    );
+
+    // Simulate resume: loadMessages only reads post-boundary entries
+    const loaded = await storage.loadMessages("s1");
+    const contents = loaded.map((m) =>
+      typeof m.content === "string" ? m.content : JSON.stringify(m.content),
+    );
+
+    // Should contain the summary + tail messages
+    expect(contents.some((c) => c.includes("[Conversation Summary]"))).toBe(true);
+    expect(contents.some((c) => c.includes("tail-1") || c.includes("tail-2"))).toBe(true);
+  });
+});
+
+describe("compactConversation merge preserves ContentPart arrays", () => {
+  it("preserves image content parts when merging user messages", async () => {
+    provider.addResponse(textResponse("Summary."));
+
+    const messages: ChatMessage[] = [
+      { role: "user", content: "first" },
+      { role: "assistant", content: "reply" },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "look at this" },
+          { type: "image_url", image_url: { url: "data:image/png;base64,abc123" } },
+        ] as any,
+      },
+    ];
+
+    // tailMessagesToKeep: 1 keeps the last user message with image content.
+    // The summary (user role) will merge with it.
+    const result = await compactConversation(
+      provider, "mock-model", messages, storage, "s1",
+      { tailMessagesToKeep: 1 },
+    );
+
+    const userMsgs = result.filter((m) => m.role === "user");
+    expect(userMsgs).toHaveLength(1);
+    // Content should be an array (ContentPart[]), not a string
+    const content = userMsgs[0].content;
+    expect(Array.isArray(content)).toBe(true);
+
+    // Should contain both the summary text and the image part
+    const parts = content as unknown as Array<{ type: string; [key: string]: unknown }>;
+    const hasImage = parts.some((p) => p.type === "image_url");
+    expect(hasImage).toBe(true);
+    const hasText = parts.some(
+      (p) => p.type === "text" && typeof (p as any).text === "string",
+    );
+    expect(hasText).toBe(true);
+  });
+
+  it("does not produce [object Object] when merging assistant array content", async () => {
+    provider.addResponse(textResponse("Summary."));
+
+    const messages: ChatMessage[] = [
+      { role: "user", content: "first" },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "part1" }] as any,
+      },
+      { role: "user", content: "second" },
+      {
+        role: "assistant",
+        content: "part2",
+      },
+    ];
+
+    // tailMessagesToKeep: 2 keeps the last user + assistant.
+    // Summary (user) + user tail → merge. Then assistant + assistant → merge.
+    const result = await compactConversation(
+      provider, "mock-model", messages, storage, "s1",
+      { tailMessagesToKeep: 2 },
+    );
+
+    const assistants = result.filter((m) => m.role === "assistant");
+    for (const a of assistants) {
+      if (a.content !== null) {
+        const text = typeof a.content === "string"
+          ? a.content
+          : JSON.stringify(a.content);
+        expect(text).not.toContain("[object Object]");
+      }
+    }
   });
 });
 

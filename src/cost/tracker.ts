@@ -24,6 +24,7 @@ export class CostTracker {
       this.byModel[model] = {
         inputTokens: 0,
         outputTokens: 0,
+        thinkingTokens: 0,
         cacheReadTokens: 0,
         cacheCreationTokens: 0,
         costUSD: 0,
@@ -33,6 +34,7 @@ export class CostTracker {
     const m = this.byModel[model];
     m.inputTokens += usage.prompt_tokens;
     m.outputTokens += usage.completion_tokens;
+    m.thinkingTokens += usage.thinking_tokens ?? 0;
     m.cacheReadTokens += usage.cache_read_tokens ?? 0;
     m.cacheCreationTokens += usage.cache_creation_tokens ?? 0;
     m.costUSD += cost;
@@ -48,6 +50,7 @@ export class CostTracker {
     let totalCostUSD = 0;
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
+    let totalThinkingTokens = 0;
     let totalCacheReadTokens = 0;
     let totalCacheCreationTokens = 0;
 
@@ -55,6 +58,7 @@ export class CostTracker {
       totalCostUSD += m.costUSD;
       totalInputTokens += m.inputTokens;
       totalOutputTokens += m.outputTokens;
+      totalThinkingTokens += m.thinkingTokens;
       totalCacheReadTokens += m.cacheReadTokens;
       totalCacheCreationTokens += m.cacheCreationTokens;
     }
@@ -63,6 +67,7 @@ export class CostTracker {
       totalCostUSD,
       totalInputTokens,
       totalOutputTokens,
+      totalThinkingTokens,
       totalCacheReadTokens,
       totalCacheCreationTokens,
       byModel: { ...this.byModel },
@@ -109,6 +114,7 @@ export class CostTracker {
           `${formatNum(m.inputTokens)} input`,
           `${formatNum(m.outputTokens)} output`,
         ];
+        if (m.thinkingTokens > 0) parts.push(`${formatNum(m.thinkingTokens)} thinking`);
         if (m.cacheReadTokens > 0) parts.push(`${formatNum(m.cacheReadTokens)} cache read`);
         if (m.cacheCreationTokens > 0) parts.push(`${formatNum(m.cacheCreationTokens)} cache write`);
         parts.push(`($${m.costUSD.toFixed(4)})`);

@@ -1,4 +1,4 @@
-import type { ChatStreamChunk } from "../providers/types.js";
+import { ChatStreamError, type ChatStreamChunk } from "../providers/types.js";
 import type { StreamEvent } from "../session/types.js";
 import type { RetryEngineOptions, RetryContext } from "./types.js";
 import { classifyError, isRetryable } from "./classify.js";
@@ -59,7 +59,10 @@ export async function* withRetry(
       const first = await iterator.next();
 
       if (first.done) {
-        return emptyStream();
+        throw new ChatStreamError("Provider returned empty stream", {
+          status: 502,
+          cause: new Error("empty_stream"),
+        });
       }
 
       return prependChunk(first.value, iterator);
@@ -164,10 +167,6 @@ export async function* withRetry(
   }
 
   throw new CannotRetryError(lastError, retryContext);
-}
-
-async function* emptyStream(): AsyncIterable<ChatStreamChunk> {
-  // yields nothing
 }
 
 function toAsyncIterator<T>(

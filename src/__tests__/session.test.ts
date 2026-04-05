@@ -153,6 +153,19 @@ describe("SessionStorage", () => {
   });
 });
 
+describe("listSessions messageCount", () => {
+  it("does not double-count messages for small session files", async () => {
+    await storage.appendMessage("s1", { role: "user", content: "hello" });
+    await storage.appendMessage("s1", { role: "assistant", content: "hi" });
+    await storage.appendMessage("s1", { role: "user", content: "bye" });
+
+    const sessions = await storage.listSessions();
+    const s = sessions.find((s) => s.sessionId === "s1");
+    expect(s).toBeDefined();
+    expect(s!.messageCount).toBe(3);
+  });
+});
+
 describe("reAppendMetadataAfterCompact", () => {
   it("re-appends custom-title and metadata entries after compact boundary", async () => {
     // Write some initial entries including metadata

@@ -135,7 +135,7 @@ function parseContextOverflow(
     const totalTokens = parseInt(openaiMatch[2], 10);
     const overflow = totalTokens - contextLimit;
     return {
-      inputTokens: contextLimit,
+      inputTokens: totalTokens,
       maxTokens: Math.max(0, overflow),
       contextLimit,
     };

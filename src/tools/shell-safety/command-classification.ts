@@ -233,7 +233,7 @@ function hasTokenFlag(tokens: string[], ...flags: string[]): boolean {
  * fragments will fail to match the read-only allowlist, so the bias is toward
  * requiring permission (safe default). A proper fix would use a shell parser.
  */
-function splitCompoundCommand(command: string): string[] {
+export function splitCompoundCommand(command: string): string[] {
   return command
     .split(/\s*(?:;|&&|\|\||(?<!\|)\|(?!\|))\s*/)
     .map((s) => s.trim())

@@ -27,6 +27,7 @@ export interface UsageRecord {
 export interface ModelUsageSummary {
   inputTokens: number;
   outputTokens: number;
+  thinkingTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
   costUSD: number;
@@ -39,6 +40,7 @@ export interface CostSummary {
   totalCostUSD: number;
   totalInputTokens: number;
   totalOutputTokens: number;
+  totalThinkingTokens: number;
   totalCacheReadTokens: number;
   totalCacheCreationTokens: number;
   byModel: Record<string, ModelUsageSummary>;

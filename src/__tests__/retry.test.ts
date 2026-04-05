@@ -446,6 +446,94 @@ describe("Retry in Thread", () => {
   });
 });
 
+describe("OpenAI context overflow classification", () => {
+  it("parses OpenAI overflow with correct inputTokens (totalTokens, not contextLimit)", () => {
+    const error = {
+      status: 400,
+      message:
+        "This model's maximum context length is 128000 tokens. However, your messages resulted in 130000 tokens.",
+    };
+    const classified = classifyError(error);
+    expect(classified.isContextOverflow).toBe(true);
+    expect(classified.contextOverflowData).toBeDefined();
+    expect(classified.contextOverflowData!.inputTokens).toBe(130000);
+    expect(classified.contextOverflowData!.contextLimit).toBe(128000);
+    expect(classified.contextOverflowData!.maxTokens).toBe(2000);
+  });
+
+  it("throws CannotRetryError for large OpenAI overflow (available < FLOOR)", async () => {
+    let callCount = 0;
+
+    async function* mockStream(): AsyncIterable<ChatStreamChunk> {
+      callCount++;
+      throw Object.assign(
+        new Error(
+          "This model's maximum context length is 128000 tokens. However, your messages resulted in 130000 tokens.",
+        ),
+        { status: 400 },
+      );
+    }
+
+    // With the fix: inputTokens=130000, available = 128000 - 130000 - 1000 = -3000 → 0 < 3000 → CannotRetryError
+    const gen = withRetry(
+      () => mockStream(),
+      { ...DEFAULT_RETRY_CONFIG, model: "test", baseDelayMs: 1 },
+    );
+
+    await expect(async () => {
+      let result = await gen.next();
+      while (!result.done) {
+        result = await gen.next();
+      }
+    }).rejects.toThrow(CannotRetryError);
+
+    expect(callCount).toBe(1);
+  });
+});
+
+describe("withRetry — empty stream triggers retry", () => {
+  it("retries when provider returns empty stream", async () => {
+    let callCount = 0;
+
+    async function* mockStream(): AsyncIterable<ChatStreamChunk> {
+      callCount++;
+      if (callCount === 1) {
+        return; // empty stream
+      }
+      yield textChunk("recovered");
+      yield stopChunk();
+    }
+
+    const gen = withRetry(
+      () => mockStream(),
+      { ...DEFAULT_RETRY_CONFIG, maxRetries: 3, model: "test", baseDelayMs: 1 },
+    );
+
+    const events: StreamEvent[] = [];
+    let result = await gen.next();
+    while (!result.done) {
+      events.push(result.value);
+      result = await gen.next();
+    }
+
+    expect(callCount).toBe(2);
+    const retryEvents = events.filter((e) => e.type === "retry_attempt");
+    expect(retryEvents).toHaveLength(1);
+  });
+});
+
+describe("Backoff — Retry-After capped by maxDelayMs", () => {
+  it("caps Retry-After at maxDelayMs instead of 6 hours", () => {
+    const delay = getRetryDelay(1, "3600", 32000);
+    expect(delay).toBe(32000);
+  });
+
+  it("allows Retry-After below maxDelayMs", () => {
+    const delay = getRetryDelay(1, "5", 32000);
+    expect(delay).toBe(5000);
+  });
+});
+
 describe("Error classification — 401 not retryable by default", () => {
   it("classifies 401 as not retryable (credentials not refreshed)", () => {
     const error = { status: 401, message: "Unauthorized" };

@@ -122,6 +122,11 @@ export async function compactConversation(
   await storage.appendCompactBoundary(sessionId);
   await storage.appendSummary(sessionId, summaryMessage);
 
+  // Re-append tail messages after the boundary so they survive resume
+  for (const msg of tail) {
+    await storage.appendMessage(sessionId, msg);
+  }
+
   // Re-append session metadata (custom title) after the boundary so it stays
   // discoverable in the active-entries window.
   await storage.reAppendMetadataAfterCompact(sessionId);
@@ -235,14 +240,32 @@ function mergeConsecutiveSameRoleForCompact(messages: ChatMessage[]): ChatMessag
     const curr = messages[i];
 
     if (prev.role === "user" && curr.role === "user") {
-      const prevText = typeof prev.content === "string" ? prev.content : contentToString(prev.content as string | ContentPart[]);
-      const currText = typeof curr.content === "string" ? curr.content : contentToString(curr.content as string | ContentPart[]);
-      result[result.length - 1] = { role: "user", content: prevText + "\n" + currText };
+      const prevParts: ContentPart[] = typeof prev.content === "string"
+        ? [{ type: "text", text: prev.content }]
+        : Array.isArray(prev.content)
+          ? (prev.content as ContentPart[])
+          : [{ type: "text", text: contentToString(prev.content) }];
+      const currParts: ContentPart[] = typeof curr.content === "string"
+        ? [{ type: "text", text: curr.content }]
+        : Array.isArray(curr.content)
+          ? (curr.content as ContentPart[])
+          : [{ type: "text", text: contentToString(curr.content) }];
+      result[result.length - 1] = { role: "user", content: [...prevParts, ...currParts] };
     } else if (prev.role === "assistant" && curr.role === "assistant") {
       const prevAsst = prev as AssistantMessage;
       const currAsst = curr as AssistantMessage;
-      const mergedContent = (prevAsst.content || currAsst.content)
-        ? ((prevAsst.content ?? "") + (currAsst.content ? "\n" + currAsst.content : ""))
+      const prevText = typeof prevAsst.content === "string"
+        ? prevAsst.content
+        : Array.isArray(prevAsst.content)
+          ? contentToString(prevAsst.content as ContentPart[])
+          : "";
+      const currText = typeof currAsst.content === "string"
+        ? currAsst.content
+        : Array.isArray(currAsst.content)
+          ? contentToString(currAsst.content as ContentPart[])
+          : "";
+      const mergedContent = (prevText || currText)
+        ? (prevText + (currText ? "\n" + currText : ""))
         : null;
       const mergedToolCalls = [...(prevAsst.tool_calls ?? []), ...(currAsst.tool_calls ?? [])];
       result[result.length - 1] = {

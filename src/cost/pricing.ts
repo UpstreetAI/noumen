@@ -100,14 +100,17 @@ export function calculateCost(
 
   const perMillion = 1_000_000;
   let cost = 0;
-  cost += (usage.prompt_tokens / perMillion) * p.inputTokens;
+  const cacheRead = usage.cache_read_tokens ?? 0;
+  const cacheWrite = usage.cache_creation_tokens ?? 0;
+  const nonCachedInput = Math.max(0, usage.prompt_tokens - cacheRead - cacheWrite);
+  cost += (nonCachedInput / perMillion) * p.inputTokens;
   cost += (usage.completion_tokens / perMillion) * p.outputTokens;
   cost += ((usage.thinking_tokens ?? 0) / perMillion) * p.outputTokens;
-  if (usage.cache_read_tokens && p.cacheReadTokens) {
-    cost += (usage.cache_read_tokens / perMillion) * p.cacheReadTokens;
+  if (cacheRead && p.cacheReadTokens) {
+    cost += (cacheRead / perMillion) * p.cacheReadTokens;
   }
-  if (usage.cache_creation_tokens && p.cacheWriteTokens) {
-    cost += (usage.cache_creation_tokens / perMillion) * p.cacheWriteTokens;
+  if (cacheWrite && p.cacheWriteTokens) {
+    cost += (cacheWrite / perMillion) * p.cacheWriteTokens;
   }
   return cost;
 }

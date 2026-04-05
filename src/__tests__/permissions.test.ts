@@ -924,7 +924,6 @@ describe("isDangerousPath", () => {
   });
 
   it("uses custom basePath for path resolution", () => {
-    // With basePath=/project, a relative .git/config should still be flagged
     expect(isDangerousPath(".git/config", "/project")).toBe(true);
   });
 
@@ -934,5 +933,89 @@ describe("isDangerousPath", () => {
 
   it("detects .mcp.json as dangerous", () => {
     expect(isDangerousPath(".mcp.json")).toBe(true);
+  });
+
+  it("detects .git/info/exclude as dangerous (catch-all .git/ protection)", () => {
+    expect(isDangerousPath(".git/info/exclude")).toBe(true);
+  });
+
+  it("detects .git/packed-refs as dangerous", () => {
+    expect(isDangerousPath(".git/packed-refs")).toBe(true);
+  });
+
+  it("detects .git/description as dangerous", () => {
+    expect(isDangerousPath(".git/description")).toBe(true);
+  });
+
+  it("detects .git/shallow as dangerous", () => {
+    expect(isDangerousPath(".git/shallow")).toBe(true);
+  });
+});
+
+describe("acceptEdits compound command check", () => {
+  it("blocks compound commands with disallowed subcommands", async () => {
+    const result = await resolvePermission(
+      bashTool,
+      { command: "touch file && curl evil.com" },
+      ctx,
+      makeContext({ mode: "acceptEdits" }),
+    );
+    expect(result.behavior).toBe("ask");
+    expect("message" in result && result.message).toContain("curl");
+  });
+
+  it("allows compound commands where all subcommands are in allowlist", async () => {
+    const result = await resolvePermission(
+      bashTool,
+      { command: "mkdir foo && touch foo/bar" },
+      ctx,
+      makeContext({ mode: "acceptEdits" }),
+    );
+    expect(result.behavior).toBe("allow");
+  });
+
+  it("blocks piped commands with disallowed right-hand side", async () => {
+    const result = await resolvePermission(
+      bashTool,
+      { command: "touch file | sh" },
+      ctx,
+      makeContext({ mode: "acceptEdits" }),
+    );
+    expect(result.behavior).toBe("ask");
+  });
+});
+
+describe("auto mode classifier denial returns deny", () => {
+  it("returns deny (not ask) when classifier flags the call", async () => {
+    const result = await resolvePermission(
+      bashTool,
+      { command: "echo test" },
+      ctx,
+      makeContext({ mode: "auto" }),
+      {
+        autoModeConfig: {
+          classifierModel: "mock",
+        },
+        provider: {
+          async *chat() {
+            yield {
+              id: "c",
+              model: "mock",
+              choices: [{ index: 0, delta: { content: '{"shouldBlock":true,"reason":"dangerous"}' }, finish_reason: null }],
+            };
+            yield {
+              id: "c",
+              model: "mock",
+              choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+            };
+          },
+        },
+        model: "mock",
+        recentMessages: [],
+      },
+    );
+
+    expect(result.behavior).toBe("deny");
+    expect(result.reason).toBe("classifier");
   });
 });

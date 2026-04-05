@@ -84,7 +84,10 @@ export class GeminiProvider implements AIProvider {
     }
 
     if (params.signal) {
-      (config as Record<string, unknown>).abortSignal = params.signal;
+      (config as Record<string, unknown>).httpOptions = {
+        ...((config as Record<string, unknown>).httpOptions as Record<string, unknown> ?? {}),
+        signal: params.signal,
+      };
     }
 
     try {

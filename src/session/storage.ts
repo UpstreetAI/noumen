@@ -334,12 +334,14 @@ export class SessionStorage {
           if (e.type === "custom-title") title = e.title;
         }
 
-        for (const e of tailEntries) {
-          if (e.type === "message" || e.type === "summary") {
-            messageCount++;
-            if (e.timestamp) lastTimestamp = e.timestamp;
+        if (isSplit) {
+          for (const e of tailEntries) {
+            if (e.type === "message" || e.type === "summary") {
+              messageCount++;
+              if (e.timestamp) lastTimestamp = e.timestamp;
+            }
+            if (e.type === "custom-title") title = e.title;
           }
-          if (e.type === "custom-title") title = e.title;
         }
 
         sessions.push({

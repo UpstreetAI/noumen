@@ -12,18 +12,14 @@ import { getMatchingRules, isPathInWorkingDirectories } from "./rules.js";
 import { resolveToolFlag } from "../tools/registry.js";
 import { classifyPermission } from "./classifier.js";
 import type { DenialTracker } from "./denial-tracking.js";
-import { extractCommandName } from "../tools/shell-safety/command-classification.js";
+import { extractCommandName, splitCompoundCommand } from "../tools/shell-safety/command-classification.js";
 
 const ACCEPT_EDITS_BASH_ALLOWLIST = new Set([
   "mkdir", "touch", "mv", "cp", "sed", "chmod", "ln",
 ]);
 
 const DANGEROUS_PATH_PATTERNS = [
-  /(?:^|\/)\.git\/hooks\//,
-  /(?:^|\/)\.git\/config$/,
-  /(?:^|\/)\.git\/objects\//,
-  /(?:^|\/)\.git\/refs\//,
-  /(?:^|\/)\.git\/head$/,
+  /(?:^|\/)\.git\//,
   /(?:^|\/)\.bashrc$/,
   /(?:^|\/)\.bash_profile$/,
   /(?:^|\/)\.zshrc$/,
@@ -243,13 +239,16 @@ export async function resolvePermission(
     }
     if (toolName === "Bash") {
       const cmd = typeof input.command === "string" ? input.command : "";
-      const baseName = extractCommandName(cmd);
-      if (!ACCEPT_EDITS_BASH_ALLOWLIST.has(baseName)) {
-        return {
-          behavior: "ask",
-          message: `Tool "${toolName}" (${baseName}) is not in the acceptEdits allowlist.`,
-          reason: "mode",
-        };
+      const subCommands = splitCompoundCommand(cmd);
+      for (const sub of subCommands) {
+        const baseName = extractCommandName(sub);
+        if (!ACCEPT_EDITS_BASH_ALLOWLIST.has(baseName)) {
+          return {
+            behavior: "ask",
+            message: `Tool "${toolName}" (${baseName}) is not in the acceptEdits allowlist.`,
+            reason: "mode",
+          };
+        }
       }
     }
     if (permCtx.workingDirectories.length > 0) {
@@ -308,7 +307,7 @@ export async function resolvePermission(
         }
       }
       return {
-        behavior: "ask",
+        behavior: "deny",
         message: `Auto-mode classifier flagged this call: ${result.reason}`,
         reason: "classifier",
       };

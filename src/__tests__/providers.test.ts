@@ -529,6 +529,52 @@ describe("GeminiProvider", () => {
   });
 });
 
+describe("GeminiProvider — abort signal wiring", () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  it("passes abort signal via httpOptions, not as top-level config", async () => {
+    let capturedConfig: Record<string, unknown> = {};
+
+    vi.doMock("@google/genai", () => ({
+      GoogleGenAI: class {
+        models = {
+          generateContentStream: vi.fn().mockImplementation(async (params: Record<string, unknown>) => {
+            capturedConfig = params.config as Record<string, unknown>;
+            return (async function* () {
+              yield {
+                candidates: [
+                  {
+                    content: { parts: [{ text: "ok" }] },
+                    finishReason: "STOP",
+                  },
+                ],
+              };
+            })();
+          }),
+        };
+      },
+    }));
+
+    const { GeminiProvider } = await import("../providers/gemini.js");
+    const provider = new GeminiProvider({ apiKey: "test-key" });
+
+    const ac = new AbortController();
+    for await (const _ of provider.chat({
+      model: "gemini-2.5-flash",
+      messages: [{ role: "user", content: "hi" }],
+      signal: ac.signal,
+    })) {
+      // consume
+    }
+
+    // Signal should be under httpOptions, not as a top-level abortSignal
+    expect(capturedConfig.abortSignal).toBeUndefined();
+    expect((capturedConfig.httpOptions as Record<string, unknown>)?.signal).toBe(ac.signal);
+  });
+});
+
 describe("OpenRouterProvider", () => {
   beforeEach(() => {
     vi.resetModules();

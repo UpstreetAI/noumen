@@ -703,6 +703,96 @@ describe("Thread", () => {
       );
       expect(textDeltas).toHaveLength(1);
     });
+
+    it("does not execute tool calls when content_filter triggers", async () => {
+      let toolCalled = false;
+      const threadConfig: ThreadConfig = {
+        ...config,
+        tools: [
+          {
+            name: "Dangerous",
+            description: "dangerous tool",
+            parameters: { type: "object", properties: { x: { type: "string" } } },
+            async call() {
+              toolCalled = true;
+              return { content: "executed" };
+            },
+          },
+        ],
+      };
+
+      const cfProvider: AIProvider = {
+        async *chat() {
+          yield toolCallStartChunk("tc_cf", "Dangerous");
+          yield toolCallArgChunk('{"x":"val"}');
+          yield {
+            id: "cf-2",
+            model: "mock-model",
+            choices: [{ index: 0, delta: {}, finish_reason: "content_filter" }],
+            usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+          };
+        },
+      };
+
+      const thread = new Thread(
+        { ...threadConfig, provider: cfProvider },
+        { sessionId: "s-cf" },
+      );
+      const events = await collectEvents(thread.run("do it"));
+
+      expect(toolCalled).toBe(false);
+      const toolResults = events.filter((e) => e.type === "tool_result");
+      expect(toolResults).toHaveLength(0);
+    });
+  });
+
+  describe("finishReason length drops all tool calls", () => {
+    it("does not execute tool calls when response is truncated", async () => {
+      let toolCalled = false;
+      const threadConfig: ThreadConfig = {
+        ...config,
+        tools: [
+          {
+            name: "WriteFile",
+            description: "write a file",
+            parameters: { type: "object", properties: { file_path: { type: "string" }, content: { type: "string" } } },
+            async call() {
+              toolCalled = true;
+              return { content: "written" };
+            },
+          },
+        ],
+      };
+
+      const truncatedProvider: AIProvider = {
+        async *chat() {
+          yield textChunk("Starting to write...");
+          yield toolCallStartChunk("tc_trunc", "WriteFile");
+          yield toolCallArgChunk('{"file_path":"/foo"}');
+          yield {
+            id: "len-1",
+            model: "mock-model",
+            choices: [{ index: 0, delta: {}, finish_reason: "length" }],
+            usage: { prompt_tokens: 10, completion_tokens: 4096, total_tokens: 4106 },
+          };
+        },
+      };
+
+      const thread = new Thread(
+        { ...threadConfig, provider: truncatedProvider },
+        { sessionId: "s-trunc" },
+      );
+      const events = await collectEvents(thread.run("write file"));
+
+      expect(toolCalled).toBe(false);
+      const toolResults = events.filter((e) => e.type === "tool_result");
+      expect(toolResults).toHaveLength(0);
+
+      const truncNotice = events.filter(
+        (e) => e.type === "text_delta" && (e as any).text.includes("[Response truncated"),
+      );
+      expect(truncNotice).toHaveLength(1);
+    });
   });
 
   describe("auto_compact_failed event type", () => {

@@ -39,7 +39,13 @@ describe("tryReactiveCompact", () => {
     expect(result).not.toBeNull();
     expect(result!.strategy).toBe("compacted");
     expect(result!.messages.length).toBeLessThan(msgs.length);
-    expect(result!.messages[0].content).toContain("[Conversation Summary]");
+    const firstContent = result!.messages[0].content;
+    const contentStr = typeof firstContent === "string"
+      ? firstContent
+      : Array.isArray(firstContent)
+        ? (firstContent as Array<{ type: string; text?: string }>).map((p) => p.text ?? "").join("")
+        : "";
+    expect(contentStr).toContain("[Conversation Summary]");
   });
 
   it("falls back to truncation when compaction fails", async () => {

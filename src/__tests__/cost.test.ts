@@ -52,20 +52,37 @@ describe("Cost pricing", () => {
     expect(cost).toBeCloseTo((10000 / 1e6) * 2.5 + (2000 / 1e6) * 10, 6);
   });
 
-  it("includes cache tokens in cost calculation", () => {
+  it("includes cache tokens in cost calculation without double-counting", () => {
     const usage: UsageRecord = {
-      prompt_tokens: 1000,
+      prompt_tokens: 6000,
       completion_tokens: 500,
-      total_tokens: 1500,
+      total_tokens: 6500,
       cache_read_tokens: 5000,
-      cache_creation_tokens: 2000,
+      cache_creation_tokens: 0,
     };
     const cost = calculateCost("claude-sonnet-4", usage);
-    // $5/1M input + $25/1M output + $0.5/1M cache read + $6.25/1M cache write
+    // nonCachedInput = 6000 - 5000 - 0 = 1000
+    // $5/1M * 1000 input + $25/1M * 500 output + $0.5/1M * 5000 cache read
     const expected =
       (1000 / 1e6) * 5 +
       (500 / 1e6) * 25 +
-      (5000 / 1e6) * 0.5 +
+      (5000 / 1e6) * 0.5;
+    expect(cost).toBeCloseTo(expected, 6);
+  });
+
+  it("handles cache_creation_tokens in cost calculation", () => {
+    const usage: UsageRecord = {
+      prompt_tokens: 3000,
+      completion_tokens: 500,
+      total_tokens: 3500,
+      cache_read_tokens: 0,
+      cache_creation_tokens: 2000,
+    };
+    const cost = calculateCost("claude-sonnet-4", usage);
+    // nonCachedInput = 3000 - 0 - 2000 = 1000
+    const expected =
+      (1000 / 1e6) * 5 +
+      (500 / 1e6) * 25 +
       (2000 / 1e6) * 6.25;
     expect(cost).toBeCloseTo(expected, 6);
   });
@@ -173,6 +190,31 @@ describe("CostTracker", () => {
     expect(s.totalCostUSD).toBe(0);
     expect(s.totalInputTokens).toBe(0);
     expect(Object.keys(s.byModel)).toHaveLength(0);
+  });
+
+  it("accumulates thinking tokens in summary", () => {
+    tracker.addUsage("claude-sonnet-4", {
+      prompt_tokens: 1000,
+      completion_tokens: 500,
+      total_tokens: 1500,
+      thinking_tokens: 5000,
+    });
+
+    const s = tracker.getSummary();
+    expect(s.totalThinkingTokens).toBe(5000);
+    expect(s.byModel["claude-sonnet-4"].thinkingTokens).toBe(5000);
+  });
+
+  it("includes thinking tokens in formatted summary", () => {
+    tracker.addUsage("claude-sonnet-4", {
+      prompt_tokens: 1000,
+      completion_tokens: 500,
+      total_tokens: 1500,
+      thinking_tokens: 10000,
+    });
+
+    const formatted = tracker.formatSummary();
+    expect(formatted).toContain("10.0k thinking");
   });
 
   it("formats summary as readable string", () => {

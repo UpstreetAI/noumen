@@ -14,8 +14,7 @@ export function getRetryDelay(
   if (retryAfterHeader) {
     const seconds = parseInt(retryAfterHeader, 10);
     if (!isNaN(seconds)) {
-      const MAX_RETRY_AFTER_MS = 6 * 60 * 60 * 1000;
-      return Math.min(seconds * 1000, MAX_RETRY_AFTER_MS);
+      return Math.min(seconds * 1000, maxDelayMs);
     }
   }
 
