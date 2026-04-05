@@ -5,11 +5,15 @@ import {
   MockAIProvider,
   textResponse,
   toolCallResponse,
+  textChunk,
+  toolCallStartChunk,
+  toolCallArgChunk,
+  toolCallsFinishChunk,
 } from "./helpers.js";
 import { Thread } from "../thread.js";
 import type { ThreadConfig } from "../thread.js";
 import type { StreamEvent } from "../session/types.js";
-import type { AIProvider, ChatStreamChunk } from "../providers/types.js";
+import type { AIProvider, ChatStreamChunk, ChatCompletionUsage } from "../providers/types.js";
 import { createAutoCompactConfig } from "../compact/auto-compact.js";
 
 let fs: MockFs;
@@ -676,6 +680,90 @@ describe("Thread", () => {
       // (budget only applies to the API snapshot)
       if (toolMsg && typeof toolMsg.content === "string") {
         expect(toolMsg.content.length).toBeGreaterThan(100);
+      }
+    });
+  });
+
+  describe("content_filter finish reason", () => {
+    it("yields text_delta with content filter message", async () => {
+      const contentFilterChunk: ChatStreamChunk = {
+        id: "cf-1",
+        model: "mock-model",
+        choices: [{ index: 0, delta: {}, finish_reason: "content_filter" }],
+        usage: { prompt_tokens: 10, completion_tokens: 0, total_tokens: 10 },
+      };
+
+      provider.addResponse([textChunk("partial"), contentFilterChunk]);
+
+      const thread = new Thread(config, { sessionId: "s1" });
+      const events = await collectEvents(thread.run("generate something inappropriate"));
+
+      const textDeltas = events.filter(
+        (e) => e.type === "text_delta" && (e as any).text.includes("[Response blocked by content filter]"),
+      );
+      expect(textDeltas).toHaveLength(1);
+    });
+  });
+
+  describe("auto_compact_failed event type", () => {
+    it("auto_compact_failed is a valid StreamEvent type distinct from error", () => {
+      const event: StreamEvent = { type: "auto_compact_failed", error: new Error("test") };
+      expect(event.type).toBe("auto_compact_failed");
+      expect(event.type).not.toBe("error");
+    });
+  });
+
+  describe("outer catch generates synthetic tool results", () => {
+    it("synthesizes missing tool results on unexpected error", async () => {
+      // Create a provider that errors after yielding a tool call
+      let callCount = 0;
+      const errorProvider: AIProvider = {
+        async *chat(_params) {
+          callCount++;
+          if (callCount === 1) {
+            // Yield a tool call response
+            for (const chunk of toolCallResponse("tc_err", "ReadFile", { file_path: "/x" })) {
+              yield chunk;
+            }
+          } else {
+            throw new Error("Unexpected provider error");
+          }
+        },
+      };
+
+      const threadConfig: ThreadConfig = {
+        ...config,
+        provider: errorProvider,
+        tools: [
+          {
+            name: "ReadFile",
+            description: "Read a file",
+            parameters: { type: "object", properties: { file_path: { type: "string" } } },
+            async call() {
+              throw new Error("Unexpected tool error causing outer catch");
+            },
+          },
+        ],
+      };
+
+      const thread = new Thread(threadConfig, { sessionId: "s1" });
+      const events = await collectEvents(thread.run("read file"));
+
+      // After the error, messages should still be valid
+      const messages = await thread.getMessages();
+      const assistantWithToolCalls = messages.find(
+        (m) => m.role === "assistant" && (m as any).tool_calls?.length > 0,
+      );
+
+      if (assistantWithToolCalls) {
+        const toolCallIds = new Set(
+          ((assistantWithToolCalls as any).tool_calls || []).map((tc: any) => tc.id),
+        );
+        const toolResults = messages.filter(
+          (m) => m.role === "tool" && toolCallIds.has((m as any).tool_call_id),
+        );
+        // Every tool_call should have a corresponding tool result
+        expect(toolResults.length).toBe(toolCallIds.size);
       }
     });
   });

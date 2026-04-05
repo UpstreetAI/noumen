@@ -519,7 +519,7 @@ export class Thread {
               sessionId: this.sessionId,
               error,
             });
-            yield { type: "error", error };
+            yield { type: "auto_compact_failed", error };
           }
         }
 
@@ -623,10 +623,6 @@ export class Thread {
           }
 
           stream = retryResult.value;
-          if (retryResult.value === undefined) {
-            yield { type: "error", error: new Error("All retry attempts exhausted") };
-            break;
-          }
         } else {
           stream = this.config.provider.chat(chatParams);
         }
@@ -814,42 +810,12 @@ export class Thread {
 
         const apiDurationMs = Date.now() - apiStartTime;
 
-        // Handle truncated responses (max output tokens reached)
-        if (finishReason === "length") {
-          yield { type: "text_delta", text: "\n\n[Response truncated due to max output tokens]" };
-          // Drop any incomplete tool calls — their JSON arguments are likely truncated
-          for (const [idx, tc] of accumulatedToolCalls) {
-            try {
-              JSON.parse(tc.arguments);
-            } catch {
-              accumulatedToolCalls.delete(idx);
-            }
-          }
-        }
-
-        if (streamingExec && !signal.aborted) {
-          for (const [, tc] of accumulatedToolCalls) {
-            if (!tc.complete) {
-              tc.complete = true;
-              try {
-                const parsedArgs = JSON.parse(tc.arguments);
-                streamingExec.addTool(
-                  { id: tc.id, type: "function", function: { name: tc.name, arguments: tc.arguments } },
-                  parsedArgs,
-                );
-              } catch {
-                tc.malformedJson = true;
-              }
-            }
-          }
-        }
-
+        // Check abort before processing finish reason — no events after abort
         if (signal.aborted) {
           providerSpan.setStatus(SpanStatusCode.OK);
           providerSpan.end();
           yield { type: "span_end", name: "noumen.provider.chat", spanId: providerSpanId, durationMs: Date.now() - providerStart };
 
-          // Generate synthetic results for any tool_calls accumulated before abort
           const partialToolCalls: ToolCallContent[] = Array.from(accumulatedToolCalls.values()).map((tc) => ({
             id: tc.id, type: "function" as const, function: { name: tc.name, arguments: tc.arguments },
           }));
@@ -869,6 +835,40 @@ export class Thread {
             }
           }
           break;
+        }
+
+        // Handle truncated responses (max output tokens reached)
+        if (finishReason === "length") {
+          yield { type: "text_delta", text: "\n\n[Response truncated due to max output tokens]" };
+          // Drop any incomplete tool calls — their JSON arguments are likely truncated
+          for (const [idx, tc] of accumulatedToolCalls) {
+            try {
+              JSON.parse(tc.arguments);
+            } catch {
+              accumulatedToolCalls.delete(idx);
+            }
+          }
+        }
+
+        if (finishReason === "content_filter") {
+          yield { type: "text_delta", text: "\n\n[Response blocked by content filter]" };
+        }
+
+        if (streamingExec && !signal.aborted) {
+          for (const [, tc] of accumulatedToolCalls) {
+            if (!tc.complete) {
+              tc.complete = true;
+              try {
+                const parsedArgs = JSON.parse(tc.arguments);
+                streamingExec.addTool(
+                  { id: tc.id, type: "function", function: { name: tc.name, arguments: tc.arguments } },
+                  parsedArgs,
+                );
+              } catch {
+                tc.malformedJson = true;
+              }
+            }
+          }
         }
 
         callCount++;
@@ -1599,6 +1599,22 @@ export class Thread {
     } catch (err) {
       if (!signal.aborted) {
         const error = err instanceof Error ? err : new Error(String(err));
+
+        // Synthesize missing tool results so the conversation stays API-valid.
+        // If the last message is an assistant with tool_calls that lack results,
+        // inject error results before yielding the error event.
+        const lastMsg = this.messages[this.messages.length - 1];
+        if (lastMsg?.role === "assistant" && (lastMsg as AssistantMessage).tool_calls?.length) {
+          const syntheticResults = generateMissingToolResults(
+            lastMsg as AssistantMessage,
+            this.messages,
+            `Session error: ${error.message}`,
+          );
+          for (const sr of syntheticResults) {
+            this.messages.push(sr);
+            await this.storage.appendMessage(this.sessionId, sr);
+          }
+        }
 
         interactionSpan.setStatus(SpanStatusCode.ERROR, error.message);
         interactionSpan.end();

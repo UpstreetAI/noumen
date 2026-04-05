@@ -40,9 +40,14 @@ export async function compactConversation(
   const tailCount = opts?.tailMessagesToKeep ?? 0;
   const stripBinary = opts?.stripBinaryContent ?? true;
 
-  const splitIdx = tailCount > 0
+  let splitIdx = tailCount > 0
     ? Math.max(0, messages.length - tailCount)
     : messages.length;
+
+  // Adjust split point to avoid orphaning tool_use/tool_result pairs.
+  // Walk backward to find a safe boundary that doesn't land between an
+  // assistant with tool_calls and the corresponding tool result messages.
+  splitIdx = adjustSplitForToolPairs(messages, splitIdx);
 
   const toSummarize = messages.slice(0, splitIdx);
   const tail = messages.slice(splitIdx);
@@ -204,6 +209,32 @@ function stripBinaryFromMessages(messages: ChatMessage[]): ChatMessage[] {
 }
 
 /**
+ * Adjust splitIdx so it doesn't land between an assistant's tool_calls
+ * and their corresponding tool result messages. If the current split
+ * would orphan tool results, walk backward to just before the assistant.
+ */
+export function adjustSplitForToolPairs(messages: ChatMessage[], splitIdx: number): number {
+  if (splitIdx <= 0 || splitIdx >= messages.length) return splitIdx;
+
+  // If the message at splitIdx is a tool result, the preceding assistant's
+  // tool_calls would be in the summarized portion while results are in the tail.
+  // Walk backward past all consecutive tool results and their parent assistant.
+  let idx = splitIdx;
+  while (idx > 0 && messages[idx]?.role === "tool") {
+    idx--;
+  }
+  // If we walked back to an assistant with tool_calls, include it in the tail
+  if (idx < splitIdx && idx >= 0 && messages[idx]?.role === "assistant") {
+    const asst = messages[idx] as AssistantMessage;
+    if (asst.tool_calls && asst.tool_calls.length > 0) {
+      return idx;
+    }
+  }
+
+  return splitIdx;
+}
+
+/**
  * Merge consecutive same-role messages to restore valid role alternation
  * after compaction inserts a user-role summary before potentially user-role tail.
  */
@@ -230,6 +261,9 @@ function mergeConsecutiveSameRoleForCompact(messages: ChatMessage[]): ChatMessag
         role: "assistant",
         content: mergedContent,
         ...(mergedToolCalls.length > 0 ? { tool_calls: mergedToolCalls } : {}),
+        ...(prevAsst.thinking_content ? { thinking_content: prevAsst.thinking_content } : {}),
+        ...(prevAsst.thinking_signature ? { thinking_signature: prevAsst.thinking_signature } : {}),
+        ...(prevAsst.redacted_thinking_data ? { redacted_thinking_data: prevAsst.redacted_thinking_data } : {}),
       } as AssistantMessage;
     } else {
       result.push(curr);

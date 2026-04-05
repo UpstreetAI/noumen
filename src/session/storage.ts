@@ -187,10 +187,14 @@ export class SessionStorage {
   async reAppendMetadataAfterCompact(sessionId: string): Promise<void> {
     const entries = await this.loadAllEntries(sessionId);
     let customTitle: string | undefined;
+    const metadataByKey = new Map<string, unknown>();
 
     for (const entry of entries) {
       if (entry.type === "custom-title") {
         customTitle = entry.title;
+      }
+      if (entry.type === "metadata") {
+        metadataByKey.set(entry.key, entry.value);
       }
     }
 
@@ -201,6 +205,10 @@ export class SessionStorage {
         title: customTitle,
         timestamp: new Date().toISOString(),
       });
+    }
+
+    for (const [key, value] of metadataByKey) {
+      await this.appendMetadata(sessionId, key, value);
     }
   }
 

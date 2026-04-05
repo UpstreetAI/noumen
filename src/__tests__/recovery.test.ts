@@ -351,3 +351,76 @@ describe("generateMissingToolResults", () => {
     expect(missing).toHaveLength(0);
   });
 });
+
+describe("generateMissingToolResults — isError flag", () => {
+  it("sets isError: true on synthetic error results", () => {
+    const assistant: AssistantMessage = {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        { id: "tc_1", type: "function", function: { name: "Bash", arguments: '{}' } },
+        { id: "tc_2", type: "function", function: { name: "Grep", arguments: '{}' } },
+      ],
+    };
+    const existing: ChatMessage[] = [
+      { role: "tool", tool_call_id: "tc_1", content: "ok" },
+    ];
+
+    const missing = generateMissingToolResults(assistant, existing, "test reason");
+    expect(missing).toHaveLength(1);
+    expect(missing[0].isError).toBe(true);
+    expect(missing[0].content).toContain("test reason");
+  });
+});
+
+describe("sanitizeForResume — fillPartiallyResolvedToolCalls isError", () => {
+  it("sets isError: true on synthetic results for partially resolved tool calls", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "do it" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          { id: "tc_1", type: "function", function: { name: "Bash", arguments: '{}' } },
+          { id: "tc_2", type: "function", function: { name: "Grep", arguments: '{}' } },
+        ],
+      },
+      { role: "tool", tool_call_id: "tc_1", content: "ok" },
+    ];
+
+    const result = sanitizeForResume(messages);
+    const synthetic = result.messages.find(
+      (m) => m.role === "tool" && (m as any).tool_call_id === "tc_2",
+    );
+    expect(synthetic).toBeDefined();
+    expect((synthetic as any).isError).toBe(true);
+  });
+});
+
+describe("sanitizeForResume — preserves thinking fields on assistant merge", () => {
+  it("preserves thinking_content and thinking_signature when merging consecutive assistants", () => {
+    // Create a scenario where filtering produces consecutive assistant messages:
+    // assistant(thinking) -> whitespace assistant (dropped) -> assistant(text)
+    // After whitespace filter, the two assistants become consecutive and get merged.
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hello" },
+      {
+        role: "assistant",
+        content: "first response",
+        thinking_content: "I need to think about this",
+        thinking_signature: "sig_abc123",
+      } as AssistantMessage,
+      { role: "assistant", content: "   " } as AssistantMessage, // whitespace-only, will be dropped
+      { role: "assistant", content: "second response" } as AssistantMessage,
+    ];
+
+    const result = sanitizeForResume(messages);
+    const assistants = result.messages.filter((m) => m.role === "assistant");
+    expect(assistants).toHaveLength(1);
+    const merged = assistants[0] as AssistantMessage;
+    expect(merged.content).toContain("first response");
+    expect(merged.content).toContain("second response");
+    expect(merged.thinking_content).toBe("I need to think about this");
+    expect(merged.thinking_signature).toBe("sig_abc123");
+  });
+});

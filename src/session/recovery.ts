@@ -267,6 +267,7 @@ function fillPartiallyResolvedToolCalls(messages: ChatMessage[]): {
       role: "tool" as const,
       tool_call_id: id,
       content: "Error: Tool result missing due to interrupted session.",
+      isError: true,
     }));
     insertions.set(lastResultIdx, synthetics);
   }
@@ -339,6 +340,9 @@ function mergeConsecutiveSameRole(messages: ChatMessage[]): ChatMessage[] {
         role: "assistant",
         content: mergedContent,
         ...(mergedToolCalls.length > 0 ? { tool_calls: mergedToolCalls } : {}),
+        ...(prevAsst.thinking_content ? { thinking_content: prevAsst.thinking_content } : {}),
+        ...(prevAsst.thinking_signature ? { thinking_signature: prevAsst.thinking_signature } : {}),
+        ...(prevAsst.redacted_thinking_data ? { redacted_thinking_data: prevAsst.redacted_thinking_data } : {}),
       } as AssistantMessage;
     } else {
       result.push(curr);
@@ -375,6 +379,7 @@ export function generateMissingToolResults(
         role: "tool",
         tool_call_id: tc.id,
         content: `Error: ${reason}`,
+        isError: true,
       });
     }
   }

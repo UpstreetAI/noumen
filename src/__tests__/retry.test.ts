@@ -109,7 +109,7 @@ describe("Error classification", () => {
   });
 
   it("classifies non-retryable status as not retryable", () => {
-    const error = { status: 401, message: "Unauthorized" };
+    const error = { status: 403, message: "Forbidden" };
     const classified = classifyError(error);
     expect(isRetryable(classified, DEFAULT_RETRY_CONFIG)).toBe(false);
   });
@@ -173,7 +173,7 @@ describe("withRetry engine", () => {
 
   it("throws CannotRetryError on non-retryable error", async () => {
     async function* mockStream(): AsyncIterable<ChatStreamChunk> {
-      throw Object.assign(new Error("Bad request"), { status: 401 });
+      throw Object.assign(new Error("Forbidden"), { status: 403 });
     }
 
     const gen = withRetry(
@@ -445,5 +445,14 @@ describe("Retry in Thread", () => {
 
     const textEvents = events.filter((e) => e.type === "text_delta");
     expect(textEvents).toHaveLength(1);
+  });
+});
+
+describe("Error classification — 401 retryable", () => {
+  it("classifies 401 as retryable for token refresh", () => {
+    const error = { status: 401, message: "Unauthorized" };
+    const classified = classifyError(error);
+    expect(classified.status).toBe(401);
+    expect(isRetryable(classified, DEFAULT_RETRY_CONFIG)).toBe(true);
   });
 });

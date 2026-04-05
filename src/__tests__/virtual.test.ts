@@ -228,3 +228,37 @@ describe("SpritesComputer", () => {
     expect(result.stderr).toContain("500");
   });
 });
+
+describe("LocalFs.resolve returns real path", () => {
+  it("returns symlink-resolved path instead of lexical path", async () => {
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const fs = await import("node:fs/promises");
+    const { LocalFs } = await import("../virtual/local-fs.js");
+
+    const tmpDir = path.join(os.tmpdir(), `noumen-symlink-test-${Date.now()}`);
+    const realDir = path.join(tmpDir, "real");
+    const linkPath = path.join(tmpDir, "link");
+
+    await fs.mkdir(realDir, { recursive: true });
+    await fs.writeFile(path.join(realDir, "test.txt"), "hello");
+    await fs.symlink(realDir, linkPath);
+
+    try {
+      // basePath points to the symlink
+      const localFs = new LocalFs({ basePath: linkPath });
+
+      // Reading through the symlink should work and return resolved content
+      const content = await localFs.readFile("test.txt");
+      expect(content).toBe("hello");
+
+      // Writing through the symlink should work
+      await localFs.writeFile("output.txt", "world");
+      // Verify the file was written to the real directory
+      const realContent = await fs.readFile(path.join(realDir, "output.txt"), "utf-8");
+      expect(realContent).toBe("world");
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+});

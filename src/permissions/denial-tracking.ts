@@ -35,10 +35,14 @@ export class DenialTracker {
   }
 
   shouldFallback(): boolean {
-    return (
-      this.state.consecutiveDenials >= this.limits.maxConsecutive ||
-      this.state.totalDenials >= this.limits.maxTotal
-    );
+    if (this.state.consecutiveDenials >= this.limits.maxConsecutive) {
+      return true;
+    }
+    if (this.state.totalDenials >= this.limits.maxTotal) {
+      this.state.totalDenials = 0;
+      return true;
+    }
+    return false;
   }
 
   getState(): Readonly<DenialState> {

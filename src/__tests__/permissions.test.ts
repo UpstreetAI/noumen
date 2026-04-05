@@ -18,7 +18,7 @@ import {
   getMatchingRules,
   isPathInWorkingDirectories,
 } from "../permissions/rules.js";
-import { resolvePermission } from "../permissions/pipeline.js";
+import { resolvePermission, isDangerousPath } from "../permissions/pipeline.js";
 import { resolveToolFlag } from "../tools/registry.js";
 import { readFileTool } from "../tools/read.js";
 import { writeFileTool } from "../tools/write.js";
@@ -526,7 +526,6 @@ describe("resolvePermission", () => {
 // isDangerousPath
 // =========================================================================
 
-import { isDangerousPath } from "../permissions/pipeline.js";
 import { stripForRuleMatching } from "../permissions/rules.js";
 
 describe("isDangerousPath", () => {
@@ -904,5 +903,36 @@ describe("Thread permission gating", () => {
 
     const granted = events.filter((e) => e.type === "permission_granted");
     expect(granted).toHaveLength(1);
+  });
+});
+
+describe("isDangerousPath", () => {
+  it("detects .git/hooks paths as dangerous", () => {
+    expect(isDangerousPath(".git/hooks/pre-commit")).toBe(true);
+  });
+
+  it("detects .env as dangerous", () => {
+    expect(isDangerousPath(".env")).toBe(true);
+  });
+
+  it("detects .ssh/ paths as dangerous", () => {
+    expect(isDangerousPath(".ssh/id_rsa")).toBe(true);
+  });
+
+  it("does not flag normal project files", () => {
+    expect(isDangerousPath("src/index.ts")).toBe(false);
+  });
+
+  it("uses custom basePath for path resolution", () => {
+    // With basePath=/project, a relative .git/config should still be flagged
+    expect(isDangerousPath(".git/config", "/project")).toBe(true);
+  });
+
+  it("detects .claude/ paths as dangerous", () => {
+    expect(isDangerousPath(".claude/settings.json")).toBe(true);
+  });
+
+  it("detects .mcp.json as dangerous", () => {
+    expect(isDangerousPath(".mcp.json")).toBe(true);
   });
 });

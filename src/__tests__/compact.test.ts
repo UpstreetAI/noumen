@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { MockFs, MockAIProvider, textResponse } from "./helpers.js";
 import { SessionStorage } from "../session/storage.js";
-import { compactConversation } from "../compact/compact.js";
+import { adjustSplitForToolPairs, compactConversation } from "../compact/compact.js";
 import {
   createAutoCompactConfig,
   shouldAutoCompact,
@@ -162,5 +162,104 @@ describe("shouldAutoCompact", () => {
       { role: "user", content: "x".repeat(1000) },
     ];
     expect(shouldAutoCompact(messages, config)).toBe(false);
+  });
+});
+
+describe("adjustSplitForToolPairs", () => {
+  it("moves split point before assistant when it would land on tool results", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "do it" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          { id: "tc_1", type: "function", function: { name: "Bash", arguments: '{}' } },
+        ],
+      },
+      { role: "tool", tool_call_id: "tc_1", content: "result" },
+      { role: "user", content: "next" },
+    ];
+
+    // splitIdx=2 lands on tool result — should adjust to 1 (before assistant)
+    const adjusted = adjustSplitForToolPairs(messages, 2);
+    expect(adjusted).toBe(1);
+  });
+
+  it("leaves split unchanged when not on a tool result", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "hi" },
+      { role: "user", content: "next" },
+    ];
+
+    const adjusted = adjustSplitForToolPairs(messages, 2);
+    expect(adjusted).toBe(2);
+  });
+
+  it("handles split at start of array", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hello" },
+    ];
+    expect(adjustSplitForToolPairs(messages, 0)).toBe(0);
+  });
+
+  it("handles split at end of array", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "hi" },
+    ];
+    expect(adjustSplitForToolPairs(messages, 2)).toBe(2);
+  });
+
+  it("moves past multiple consecutive tool results", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "do both" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          { id: "tc_1", type: "function", function: { name: "Bash", arguments: '{}' } },
+          { id: "tc_2", type: "function", function: { name: "Grep", arguments: '{}' } },
+        ],
+      },
+      { role: "tool", tool_call_id: "tc_1", content: "r1" },
+      { role: "tool", tool_call_id: "tc_2", content: "r2" },
+      { role: "user", content: "next" },
+    ];
+
+    // splitIdx=3 lands on second tool result
+    const adjusted = adjustSplitForToolPairs(messages, 3);
+    expect(adjusted).toBe(1);
+  });
+});
+
+describe("compactConversation preserves thinking fields on merge", () => {
+  it("preserves thinking_content when summary merges with assistant tail", async () => {
+    provider.addResponse(textResponse("Summary."));
+
+    const messages: ChatMessage[] = [
+      { role: "user", content: "first" },
+      { role: "assistant", content: "reply" },
+      { role: "user", content: "second" },
+      {
+        role: "assistant",
+        content: "thinking reply",
+        thinking_content: "deep thoughts",
+        thinking_signature: "sig_xyz",
+      } as any,
+    ];
+
+    // tailMessagesToKeep: 1 keeps only the last assistant
+    // summary (user) + assistant tail — no merge needed for assistants here
+    // but verify the assistant's thinking fields survive
+    const result = await compactConversation(
+      provider, "mock-model", messages, storage, "s1",
+      { tailMessagesToKeep: 1 },
+    );
+
+    const assistants = result.filter((m) => m.role === "assistant");
+    expect(assistants).toHaveLength(1);
+    expect((assistants[0] as any).thinking_content).toBe("deep thoughts");
+    expect((assistants[0] as any).thinking_signature).toBe("sig_xyz");
   });
 });

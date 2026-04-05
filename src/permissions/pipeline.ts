@@ -140,7 +140,7 @@ export async function resolvePermission(
     typeof input.file_path === "string" ? input.file_path
     : typeof input.path === "string" ? input.path
     : undefined;
-  if (dangerousFilePath && isDangerousPath(dangerousFilePath)) {
+  if (dangerousFilePath && isDangerousPath(dangerousFilePath, ctx.cwd)) {
     return {
       behavior: "ask",
       message: `Path "${dangerousFilePath}" targets a sensitive location.`,
@@ -415,9 +415,10 @@ function extractContentHint(
  * Check whether a file path targets a sensitive location that should always
  * prompt regardless of permission mode (bypass-immune safety check).
  */
-export function isDangerousPath(filePath: string): boolean {
-  const resolved = path.resolve(filePath);
-  const relative = path.relative(process.cwd(), resolved);
+export function isDangerousPath(filePath: string, basePath?: string): boolean {
+  const base = basePath ?? process.cwd();
+  const resolved = path.resolve(base, filePath);
+  const relative = path.relative(base, resolved);
   const candidate = (relative.startsWith("..") ? resolved.replace(/^\/+/, "") : relative).toLowerCase();
   return DANGEROUS_PATH_PATTERNS.some((p) => p.test(candidate));
 }

@@ -295,7 +295,8 @@ export type StreamEvent =
       data: unknown;
       schema: OutputFormat;
     }
-  | { type: "max_turns_reached"; maxTurns: number; turnCount: number };
+  | { type: "max_turns_reached"; maxTurns: number; turnCount: number }
+  | { type: "auto_compact_failed"; error: Error };
 
 export interface RunOptions {
   signal?: AbortSignal;

@@ -413,3 +413,91 @@ describe("contentPartsToAnthropic", () => {
     });
   });
 });
+
+describe("streamAnthropicChat — structured output format", () => {
+  it("sends json_schema format with nested json_schema wrapper and name", async () => {
+    let capturedParams: Record<string, unknown> | undefined;
+
+    const client: AnthropicStreamClient = {
+      messages: {
+        stream(params: Record<string, unknown>) {
+          capturedParams = params;
+          return (async function* () {
+            yield { type: "message_start", message: { usage: { input_tokens: 5, output_tokens: 0 } } };
+            yield { type: "content_block_start", content_block: { type: "text" } };
+            yield { type: "content_block_delta", delta: { type: "text_delta", text: "{}" } };
+            yield { type: "message_stop" };
+          })();
+        },
+      },
+    };
+
+    const chunks: ChatStreamChunk[] = [];
+    for await (const chunk of streamAnthropicChat(
+      client,
+      {
+        model: "claude-test",
+        messages: [{ role: "user", content: "hi" }],
+        outputFormat: {
+          type: "json_schema",
+          schema: { type: "object", properties: { name: { type: "string" } } },
+          name: "my_schema",
+        },
+      },
+      "claude-test",
+    )) {
+      chunks.push(chunk);
+    }
+
+    expect(capturedParams).toBeDefined();
+    const outputConfig = capturedParams!.output_config as any;
+    expect(outputConfig).toBeDefined();
+    expect(outputConfig.format.type).toBe("json_schema");
+    // Must have nested json_schema wrapper with name
+    expect(outputConfig.format.json_schema).toBeDefined();
+    expect(outputConfig.format.json_schema.name).toBe("my_schema");
+    expect(outputConfig.format.json_schema.schema).toEqual({
+      type: "object",
+      properties: { name: { type: "string" } },
+    });
+    // Should NOT have a bare .schema at format level
+    expect(outputConfig.format.schema).toBeUndefined();
+  });
+
+  it("defaults name to 'response' when not provided", async () => {
+    let capturedParams: Record<string, unknown> | undefined;
+
+    const client: AnthropicStreamClient = {
+      messages: {
+        stream(params: Record<string, unknown>) {
+          capturedParams = params;
+          return (async function* () {
+            yield { type: "message_start", message: { usage: { input_tokens: 5, output_tokens: 0 } } };
+            yield { type: "content_block_start", content_block: { type: "text" } };
+            yield { type: "content_block_delta", delta: { type: "text_delta", text: "{}" } };
+            yield { type: "message_stop" };
+          })();
+        },
+      },
+    };
+
+    const chunks: ChatStreamChunk[] = [];
+    for await (const chunk of streamAnthropicChat(
+      client,
+      {
+        model: "claude-test",
+        messages: [{ role: "user", content: "hi" }],
+        outputFormat: {
+          type: "json_schema",
+          schema: { type: "object" },
+        },
+      },
+      "claude-test",
+    )) {
+      chunks.push(chunk);
+    }
+
+    const outputConfig = capturedParams!.output_config as any;
+    expect(outputConfig.format.json_schema.name).toBe("response");
+  });
+});

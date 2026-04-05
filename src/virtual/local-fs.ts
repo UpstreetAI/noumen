@@ -54,7 +54,7 @@ export class LocalFs implements VirtualFs {
     if (realTarget !== realBase && !realTarget.startsWith(realBase + path.sep)) {
       throw new Error(`Path "${p}" resolves outside base directory via symlink`);
     }
-    return resolved;
+    return realTarget;
   }
 
   async readFile(filePath: string, opts?: ReadOptions): Promise<string> {

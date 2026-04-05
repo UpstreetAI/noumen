@@ -306,7 +306,10 @@ export async function* streamAnthropicChat(
     streamParams.output_config = {
       format: {
         type: "json_schema",
-        schema: params.outputFormat.schema,
+        json_schema: {
+          name: params.outputFormat.name ?? "response",
+          schema: params.outputFormat.schema,
+        },
       },
     };
     const betas: string[] = (streamParams.betas as string[] | undefined) ?? [];

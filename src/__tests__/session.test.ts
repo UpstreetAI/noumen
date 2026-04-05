@@ -152,3 +152,59 @@ describe("SessionStorage", () => {
     expect(hasNew).toBe(true);
   });
 });
+
+describe("reAppendMetadataAfterCompact", () => {
+  it("re-appends custom-title and metadata entries after compact boundary", async () => {
+    // Write some initial entries including metadata
+    await storage.appendMessage("s1", { role: "user", content: "hello" });
+    await storage.appendMetadata("s1", "costState", { totalCost: 0.05 });
+    await storage.appendMetadata("s1", "customKey", "customValue");
+    await storage.appendEntry("s1", {
+      type: "custom-title",
+      sessionId: "s1",
+      title: "My Session",
+      timestamp: new Date().toISOString(),
+    } as any);
+
+    // Simulate compact boundary
+    await storage.appendCompactBoundary("s1");
+    await storage.appendSummary("s1", { role: "user", content: "summary" });
+
+    // Re-append metadata
+    await storage.reAppendMetadataAfterCompact("s1");
+
+    // Load all entries and check that metadata was re-appended after boundary
+    const entries = await storage.loadAllEntries("s1");
+    const boundaryIdx = entries.findIndex((e) => e.type === "compact-boundary");
+
+    // custom-title should appear after boundary
+    const titleAfterBoundary = entries.slice(boundaryIdx + 1).find((e) => e.type === "custom-title");
+    expect(titleAfterBoundary).toBeDefined();
+    expect((titleAfterBoundary as any).title).toBe("My Session");
+
+    // metadata entries should appear after boundary
+    const metadataAfterBoundary = entries.slice(boundaryIdx + 1).filter((e) => e.type === "metadata");
+    expect(metadataAfterBoundary.length).toBeGreaterThanOrEqual(2);
+
+    const costEntry = metadataAfterBoundary.find((e) => (e as any).key === "costState");
+    expect(costEntry).toBeDefined();
+    expect((costEntry as any).value).toEqual({ totalCost: 0.05 });
+
+    const customEntry = metadataAfterBoundary.find((e) => (e as any).key === "customKey");
+    expect(customEntry).toBeDefined();
+    expect((customEntry as any).value).toBe("customValue");
+  });
+
+  it("handles sessions with no metadata gracefully", async () => {
+    await storage.appendMessage("s1", { role: "user", content: "hello" });
+    await storage.appendCompactBoundary("s1");
+    await storage.appendSummary("s1", { role: "user", content: "summary" });
+
+    // Should not throw
+    await storage.reAppendMetadataAfterCompact("s1");
+
+    const entries = await storage.loadAllEntries("s1");
+    const metadataEntries = entries.filter((e) => e.type === "metadata" || e.type === "custom-title");
+    expect(metadataEntries).toHaveLength(0);
+  });
+});
