@@ -6,6 +6,7 @@ import { contentToString, hasImageContent, stripImageContent } from "../utils/co
 import { truncateHeadForPTLRetry } from "../utils/tokens.js";
 import { getEffectiveContextWindow } from "../utils/context.js";
 import { classifyError } from "../retry/classify.js";
+import { mergeConsecutiveSameRole } from "../messages/normalize.js";
 
 const COMPACT_SYSTEM_PROMPT = `You are a helpful AI assistant tasked with summarizing conversations. 
 Create a concise but comprehensive summary of the conversation so far. 
@@ -154,7 +155,7 @@ export async function compactConversation(
   await storage.reAppendMetadataAfterCompact(sessionId);
 
   // Ensure role alternation is valid after inserting the summary
-  const merged = mergeConsecutiveSameRoleForCompact([summaryMessage, ...tail]);
+  const merged = mergeConsecutiveSameRole([summaryMessage, ...tail]);
   return merged;
 }
 
@@ -249,60 +250,4 @@ export function adjustSplitForToolPairs(messages: ChatMessage[], splitIdx: numbe
   return splitIdx;
 }
 
-/**
- * Merge consecutive same-role messages to restore valid role alternation
- * after compaction inserts a user-role summary before potentially user-role tail.
- */
-function mergeConsecutiveSameRoleForCompact(messages: ChatMessage[]): ChatMessage[] {
-  if (messages.length <= 1) return messages;
-  const result: ChatMessage[] = [messages[0]];
-
-  for (let i = 1; i < messages.length; i++) {
-    const prev = result[result.length - 1];
-    const curr = messages[i];
-
-    if (prev.role === "user" && curr.role === "user") {
-      const prevParts: ContentPart[] = typeof prev.content === "string"
-        ? [{ type: "text", text: prev.content }]
-        : Array.isArray(prev.content)
-          ? (prev.content as ContentPart[])
-          : [{ type: "text", text: contentToString(prev.content) }];
-      const currParts: ContentPart[] = typeof curr.content === "string"
-        ? [{ type: "text", text: curr.content }]
-        : Array.isArray(curr.content)
-          ? (curr.content as ContentPart[])
-          : [{ type: "text", text: contentToString(curr.content) }];
-      result[result.length - 1] = { role: "user", content: [...prevParts, ...currParts] };
-    } else if (prev.role === "assistant" && curr.role === "assistant") {
-      const prevAsst = prev as AssistantMessage;
-      const currAsst = curr as AssistantMessage;
-      const prevText = typeof prevAsst.content === "string"
-        ? prevAsst.content
-        : Array.isArray(prevAsst.content)
-          ? contentToString(prevAsst.content as ContentPart[])
-          : "";
-      const currText = typeof currAsst.content === "string"
-        ? currAsst.content
-        : Array.isArray(currAsst.content)
-          ? contentToString(currAsst.content as ContentPart[])
-          : "";
-      const mergedContent = (prevText || currText)
-        ? (prevText + (currText ? "\n" + currText : ""))
-        : null;
-      const mergedToolCalls = [...(prevAsst.tool_calls ?? []), ...(currAsst.tool_calls ?? [])];
-      const mergedThinking = [prevAsst.thinking_content, currAsst.thinking_content].filter(Boolean).join("\n") || undefined;
-      result[result.length - 1] = {
-        role: "assistant",
-        content: mergedContent,
-        ...(mergedToolCalls.length > 0 ? { tool_calls: mergedToolCalls } : {}),
-        ...(mergedThinking ? { thinking_content: mergedThinking } : {}),
-        ...(currAsst.thinking_signature ?? prevAsst.thinking_signature ? { thinking_signature: currAsst.thinking_signature ?? prevAsst.thinking_signature } : {}),
-        ...(currAsst.redacted_thinking_data ?? prevAsst.redacted_thinking_data ? { redacted_thinking_data: currAsst.redacted_thinking_data ?? prevAsst.redacted_thinking_data } : {}),
-      } as AssistantMessage;
-    } else {
-      result.push(curr);
-    }
-  }
-
-  return result;
-}
+// mergeConsecutiveSameRole is imported from "../messages/normalize.js" above.

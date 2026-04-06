@@ -144,10 +144,20 @@ describe("Thread", () => {
       });
       await collectEvents(thread.run("new message"));
 
-      // Provider should have been called with messages including the previous one
+      // Provider should have been called with messages including the previous one.
+      // normalizeMessagesForAPI merges consecutive user messages, so both the
+      // resumed message and the new prompt may be in a single merged user entry.
       const sentMessages = provider.calls[0].messages;
-      expect(sentMessages.length).toBeGreaterThanOrEqual(2);
-      expect(sentMessages[0].content).toBe("previous message");
+      expect(sentMessages.length).toBeGreaterThanOrEqual(1);
+      const firstContent = sentMessages[0].content;
+      if (typeof firstContent === "string") {
+        expect(firstContent).toContain("previous message");
+      } else {
+        const texts = (firstContent as { type: string; text: string }[])
+          .filter((p: { type: string }) => p.type === "text")
+          .map((p: { text: string }) => p.text);
+        expect(texts.some((t: string) => t.includes("previous message"))).toBe(true);
+      }
     });
   });
 

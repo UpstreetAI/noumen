@@ -37,7 +37,8 @@ import type { FileCheckpointManager } from "./checkpoint/manager.js";
 import { sortToolDefinitionsForCache } from "./providers/cache.js";
 import { saveCacheSafeParams, createCacheSafeParams } from "./providers/cache-safe-params.js";
 import { restoreSession } from "./session/resume.js";
-import { generateMissingToolResults, ensureToolResultPairing } from "./session/recovery.js";
+import { generateMissingToolResults } from "./session/recovery.js";
+import { normalizeMessagesForAPI } from "./messages/normalize.js";
 import {
   runPreToolUseHooks,
   runPostToolUseHooks,
@@ -462,9 +463,6 @@ export class Thread {
           }
         }
 
-        // Repair orphaned tool_use blocks from interrupted streams
-        this.messages = ensureToolResultPairing(this.messages);
-
         // Apply budget to a snapshot so the canonical this.messages is not mutated
         let messagesForApi: ChatMessage[] = this.messages;
         if (this.config.toolResultBudget?.enabled) {
@@ -485,6 +483,10 @@ export class Thread {
             };
           }
         }
+
+        // Normalize the snapshot for API: dedup tool IDs, fix orphans,
+        // ensure pairing, merge same-role, guarantee valid structure.
+        messagesForApi = normalizeMessagesForAPI(messagesForApi);
 
         // --- Proactive auto-compact (inside loop, before each API call) ---
         const loopAutoCompactConfig =

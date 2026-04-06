@@ -4,6 +4,10 @@
  * Cleans up persisted messages before resuming a session so the API
  * receives a structurally valid conversation. Handles crashes, streaming
  * interruptions, orphaned tool calls, and whitespace-only messages.
+ *
+ * Shared normalization primitives (merge, filter, pairing) live in
+ * `src/messages/normalize.ts` and are re-exported here for backward
+ * compatibility.
  */
 
 import type {
@@ -13,6 +17,19 @@ import type {
   ContentPart,
 } from "./types.js";
 import { contentToString } from "../utils/content.js";
+
+// Re-export shared normalization primitives so existing consumers that
+// import from "session/recovery" continue to work.
+export {
+  ensureToolResultPairing,
+  mergeConsecutiveSameRole,
+} from "../messages/normalize.js";
+
+import {
+  mergeConsecutiveSameRole as _mergeConsecutiveSameRole,
+  filterWhitespaceOnlyAssistants,
+  filterOrphanedThinkingAssistants,
+} from "../messages/normalize.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -98,23 +115,10 @@ export function filterWhitespaceOnlyAssistantMessages(messages: ChatMessage[]): 
   messages: ChatMessage[];
   removed: number;
 } {
-  let removed = 0;
-  const filtered = messages.filter((msg) => {
-    if (msg.role !== "assistant") return true;
-    const asst = msg as AssistantMessage;
-    if (asst.tool_calls && asst.tool_calls.length > 0) return true;
-
-    const text = typeof asst.content === "string" ? asst.content : contentToString(asst.content ?? "");
-    if (text.trim() === "") {
-      removed++;
-      return false;
-    }
-    return true;
-  });
-
+  const filtered = filterWhitespaceOnlyAssistants(messages);
+  const removed = messages.length - filtered.length;
   if (removed === 0) return { messages: filtered, removed };
-
-  return { messages: mergeConsecutiveSameRole(filtered), removed };
+  return { messages: _mergeConsecutiveSameRole(filtered), removed };
 }
 
 /**
@@ -122,27 +126,13 @@ export function filterWhitespaceOnlyAssistantMessages(messages: ChatMessage[]): 
  * real text and no tool_calls). These are artifacts of streaming
  * interruptions where a thinking block was streamed but the model
  * never produced a real response.
- *
- * In noumen's format, thinking content appears as `content: null`
- * with no tool_calls (the thinking deltas were streamed separately).
- * We detect these as assistants with null/empty content and no calls.
  */
 export function filterOrphanedThinkingMessages(messages: ChatMessage[]): {
   messages: ChatMessage[];
   removed: number;
 } {
-  let removed = 0;
-  const filtered = messages.filter((msg) => {
-    if (msg.role !== "assistant") return true;
-    const asst = msg as AssistantMessage;
-    if (asst.tool_calls && asst.tool_calls.length > 0) return true;
-    if (asst.content === null || asst.content === undefined) {
-      removed++;
-      return false;
-    }
-    return true;
-  });
-
+  const filtered = filterOrphanedThinkingAssistants(messages);
+  const removed = messages.length - filtered.length;
   return { messages: filtered, removed };
 }
 
@@ -290,136 +280,9 @@ function fillPartiallyResolvedToolCalls(messages: ChatMessage[]): {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Helpers (mergeConsecutiveSameRole and ensureToolResultPairing are
+// re-exported from ../messages/normalize.ts at the top of this file)
 // ---------------------------------------------------------------------------
-
-/**
- * Merge consecutive messages with the same role to restore valid
- * role alternation after removing messages from the middle.
- */
-export function mergeConsecutiveSameRole(messages: ChatMessage[]): ChatMessage[] {
-  if (messages.length <= 1) return messages;
-
-  const result: ChatMessage[] = [messages[0]];
-
-  for (let i = 1; i < messages.length; i++) {
-    const prev = result[result.length - 1];
-    const curr = messages[i];
-
-    if (prev.role === "user" && curr.role === "user") {
-      const prevParts: ContentPart[] = typeof prev.content === "string"
-        ? [{ type: "text", text: prev.content }]
-        : Array.isArray(prev.content)
-          ? (prev.content as ContentPart[])
-          : [{ type: "text", text: contentToString(prev.content) }];
-      const currParts: ContentPart[] = typeof curr.content === "string"
-        ? [{ type: "text", text: curr.content }]
-        : Array.isArray(curr.content)
-          ? (curr.content as ContentPart[])
-          : [{ type: "text", text: contentToString(curr.content) }];
-      result[result.length - 1] = {
-        role: "user",
-        content: [...prevParts, ...currParts],
-      };
-    } else if (prev.role === "assistant" && curr.role === "assistant") {
-      const prevAsst = prev as AssistantMessage;
-      const currAsst = curr as AssistantMessage;
-      const prevText = typeof prevAsst.content === "string"
-        ? prevAsst.content
-        : Array.isArray(prevAsst.content)
-          ? contentToString(prevAsst.content as ContentPart[])
-          : "";
-      const currText = typeof currAsst.content === "string"
-        ? currAsst.content
-        : Array.isArray(currAsst.content)
-          ? contentToString(currAsst.content as ContentPart[])
-          : "";
-      const mergedContent = (prevText || currText)
-        ? (prevText + (currText ? "\n" + currText : ""))
-        : null;
-      const mergedToolCalls = [
-        ...(prevAsst.tool_calls ?? []),
-        ...(currAsst.tool_calls ?? []),
-      ];
-      const mergedThinking = [prevAsst.thinking_content, currAsst.thinking_content].filter(Boolean).join("\n") || undefined;
-      result[result.length - 1] = {
-        role: "assistant",
-        content: mergedContent,
-        ...(mergedToolCalls.length > 0 ? { tool_calls: mergedToolCalls } : {}),
-        ...(mergedThinking ? { thinking_content: mergedThinking } : {}),
-        ...(currAsst.thinking_signature ?? prevAsst.thinking_signature ? { thinking_signature: currAsst.thinking_signature ?? prevAsst.thinking_signature } : {}),
-        ...(currAsst.redacted_thinking_data ?? prevAsst.redacted_thinking_data ? { redacted_thinking_data: currAsst.redacted_thinking_data ?? prevAsst.redacted_thinking_data } : {}),
-      } as AssistantMessage;
-    } else {
-      result.push(curr);
-    }
-  }
-
-  return result;
-}
-
-/**
- * Ensure every tool_use in the conversation has a matching tool_result.
- * Inserts synthetic error results for any orphaned tool_calls so the
- * conversation is structurally valid before sending to the API.
- *
- * Returns the repaired messages array (may be the same reference if
- * no repairs were needed).
- */
-export function ensureToolResultPairing(messages: ChatMessage[]): ChatMessage[] {
-  const resolvedIds = new Set<string>();
-  for (const msg of messages) {
-    if (msg.role === "tool") {
-      resolvedIds.add((msg as ToolResultMessage).tool_call_id);
-    }
-  }
-
-  // Find assistants with missing results
-  const insertions = new Map<number, ToolResultMessage[]>();
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i];
-    if (msg.role !== "assistant") continue;
-    const asst = msg as AssistantMessage;
-    if (!asst.tool_calls || asst.tool_calls.length === 0) continue;
-
-    const missing = asst.tool_calls.filter((tc) => !resolvedIds.has(tc.id));
-    if (missing.length === 0) continue;
-
-    // Find the insertion point: after the last existing result for this
-    // assistant's calls, or immediately after the assistant itself.
-    const allCallIds = new Set(asst.tool_calls.map((tc) => tc.id));
-    let insertAfter = i;
-    for (let j = i + 1; j < messages.length; j++) {
-      if (messages[j].role === "tool" && allCallIds.has((messages[j] as ToolResultMessage).tool_call_id)) {
-        insertAfter = j;
-      }
-    }
-
-    const synthetics: ToolResultMessage[] = missing.map((tc) => ({
-      role: "tool" as const,
-      tool_call_id: tc.id,
-      content: "Error: Tool result missing — session was interrupted before this tool completed.",
-      isError: true,
-    }));
-
-    const existing = insertions.get(insertAfter);
-    if (existing) {
-      existing.push(...synthetics);
-    } else {
-      insertions.set(insertAfter, synthetics);
-    }
-  }
-
-  if (insertions.size === 0) return messages;
-
-  const result: ChatMessage[] = [];
-  for (let i = 0; i < messages.length; i++) {
-    result.push(messages[i]);
-    const toInsert = insertions.get(i);
-    if (toInsert) result.push(...toInsert);
-  }
-  return result;
-}
 
 /**
  * Generate synthetic tool result messages for tool_calls in an

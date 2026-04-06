@@ -579,6 +579,9 @@ export {
 } from "./session/recovery.js";
 export type { TurnInterruption, SanitizeResult } from "./session/recovery.js";
 
+// Message Normalization
+export { normalizeMessagesForAPI } from "./messages/normalize.js";
+
 // New session types
 export type { FileCheckpointEntry } from "./session/types.js";
 
