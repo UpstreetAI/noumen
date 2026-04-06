@@ -1055,6 +1055,9 @@ export class Thread {
               streamingResults.push(result);
             }
             streamingExec.discard();
+            preventContinuation = true;
+          } else {
+            accumulatedToolCalls.clear();
           }
         }
 
