@@ -1205,6 +1205,104 @@ describe("abort signal propagation to streaming executor", () => {
     );
     expect(hasAbortInterruption || events.length > 0).toBe(true);
   });
+
+  it("preserves completed tool results on abort instead of dropping them", async () => {
+    let fastToolCalled = false;
+    const threadConfig: ThreadConfig = {
+      ...config,
+      streamingToolExecution: true,
+      tools: [
+        {
+          name: "FastTool",
+          description: "completes immediately",
+          parameters: { type: "object", properties: {} },
+          isConcurrencySafe: true,
+          async call() {
+            fastToolCalled = true;
+            return { content: "fast-result" };
+          },
+        },
+        {
+          name: "SlowTool",
+          description: "blocks until abort",
+          parameters: { type: "object", properties: {} },
+          isConcurrencySafe: true,
+          async call(_args, ctx) {
+            await new Promise<void>((resolve) => {
+              const timer = setTimeout(resolve, 10_000);
+              ctx.signal?.addEventListener("abort", () => {
+                clearTimeout(timer);
+                resolve();
+              });
+            });
+            return { content: "slow-result" };
+          },
+        },
+      ],
+    };
+
+    const ac = new AbortController();
+    const abortProvider: AIProvider = {
+      async *chat() {
+        // Two parallel tool calls: FastTool at index 0, SlowTool at index 1.
+        // When index 1 arrives, index 0 is finalized and added to the
+        // streaming executor, which starts executing FastTool immediately.
+        yield {
+          id: "c1", model: "m",
+          choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "tc_fast", type: "function" as const, function: { name: "FastTool", arguments: "" } }] }, finish_reason: null }],
+        };
+        yield {
+          id: "c2", model: "m",
+          choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: "{}" } }] }, finish_reason: null }],
+        };
+        yield {
+          id: "c3", model: "m",
+          choices: [{ index: 0, delta: { tool_calls: [{ index: 1, id: "tc_slow", type: "function" as const, function: { name: "SlowTool", arguments: "" } }] }, finish_reason: null }],
+        };
+        yield {
+          id: "c4", model: "m",
+          choices: [{ index: 0, delta: { tool_calls: [{ index: 1, function: { arguments: "{}" } }] }, finish_reason: null }],
+        };
+        yield { id: "c5", model: "m", choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" as const }] };
+      },
+    };
+
+    const thread = new Thread(
+      { ...threadConfig, provider: abortProvider },
+      { sessionId: "abort-preserves-results" },
+    );
+
+    // Abort shortly after streaming finishes so FastTool has time to complete
+    setTimeout(() => ac.abort(), 200);
+
+    await collectEvents(thread.run("test", { signal: ac.signal }));
+
+    expect(fastToolCalled).toBe(true);
+
+    const msgs = await thread.getMessages();
+    const assistantMsg = msgs.find(
+      (m: any) => m.role === "assistant" && m.tool_calls?.length,
+    ) as any;
+    expect(assistantMsg).toBeDefined();
+    expect(assistantMsg.tool_calls).toHaveLength(2);
+
+    const toolMsgs = msgs.filter((m: any) => m.role === "tool");
+    const fastResult = toolMsgs.find((m: any) => m.tool_call_id === "tc_fast");
+    const slowResult = toolMsgs.find((m: any) => m.tool_call_id === "tc_slow");
+
+    // FastTool completed — its real result must be preserved, not dropped
+    expect(fastResult).toBeDefined();
+    expect(fastResult.content).toBe("fast-result");
+
+    // SlowTool was still running — it should have a synthetic/error result
+    expect(slowResult).toBeDefined();
+
+    // Every tool_call ID on the assistant must have a matching tool result
+    const toolResultIds = new Set(toolMsgs.map((m: any) => m.tool_call_id));
+    for (const tc of assistantMsg.tool_calls) {
+      expect(toolResultIds.has(tc.id)).toBe(true);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -936,13 +936,12 @@ export class Thread {
           providerSpan.end();
           yield { type: "span_end", name: "noumen.provider.chat", spanId: providerSpanId, durationMs: Date.now() - providerStart };
 
-          // Stop scheduling new tools and drain already-completed results
-          streamingExec?.discard();
-          const completedToolIds = new Set(streamingResults.map((r) => r.toolCall.id));
+          // Discard stops scheduling new tools; getRemainingResults() then
+          // yields completed results and synthesizes errors for the rest.
           if (streamingExec) {
-            for (const result of streamingExec.getCompletedResults()) {
+            streamingExec.discard();
+            for await (const result of streamingExec.getRemainingResults()) {
               streamingResults.push(result);
-              completedToolIds.add(result.toolCall.id);
             }
           }
 
@@ -970,17 +969,6 @@ export class Thread {
               this.messages.push(toolResultMsg);
               await this.storage.appendMessage(this.sessionId, toolResultMsg).catch((err) => {
                 console.warn("[noumen/thread] Failed to persist abort tool result:", err);
-              });
-            }
-
-            const existingToolMsgs: ChatMessage[] = [...completedToolIds].map((id) => ({
-              role: "tool" as const, tool_call_id: id, content: "",
-            }));
-            const syntheticResults = generateMissingToolResults(partialAssistant, existingToolMsgs, "Interrupted by abort");
-            for (const sr of syntheticResults) {
-              this.messages.push(sr);
-              await this.storage.appendMessage(this.sessionId, sr).catch((err) => {
-                console.warn("[noumen/thread] Failed to persist abort synthetic result:", err);
               });
             }
           }
