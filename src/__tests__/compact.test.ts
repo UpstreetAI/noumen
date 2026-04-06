@@ -454,3 +454,95 @@ describe("appendEntriesBatch atomicity", () => {
     expect(loaded).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Post-compact file reinjection
+// ---------------------------------------------------------------------------
+
+describe("compactConversation — post-compact file reinjection", () => {
+  it("reinjects recently-read files after compaction", async () => {
+    provider.addResponse(textResponse("Summary of work done."));
+
+    const messages: ChatMessage[] = [
+      { role: "user", content: "read the config" },
+      { role: "assistant", content: "Here is the config file content..." },
+      { role: "user", content: "now edit it" },
+      { role: "assistant", content: "I edited the file." },
+    ];
+
+    const recentlyReadFiles = new Map<string, string>();
+    recentlyReadFiles.set("/config.json", '{"key": "value"}');
+    recentlyReadFiles.set("/readme.md", "# Project README");
+
+    const result = await compactConversation(
+      provider, "mock-model", messages, storage, "reinject-test",
+      { recentlyReadFiles },
+    );
+
+    // Summary + reinjection may be merged into one user message by
+    // mergeConsecutiveSameRole. Check that the file content appears
+    // somewhere in the returned messages (could be merged ContentPart[]).
+    const allText = result.map((m) => {
+      if (typeof m.content === "string") return m.content;
+      if (Array.isArray(m.content)) {
+        return (m.content as { type: string; text?: string }[])
+          .map((p) => p.text ?? "").join(" ");
+      }
+      return "";
+    }).join("\n");
+
+    expect(allText).toContain("/config.json");
+    expect(allText).toContain("/readme.md");
+    expect(allText).toContain("Recently read files");
+  });
+
+  it("limits reinjection to 5 files", async () => {
+    provider.addResponse(textResponse("Summary."));
+
+    const messages: ChatMessage[] = [
+      { role: "user", content: "work" },
+      { role: "assistant", content: "done" },
+    ];
+
+    const recentlyReadFiles = new Map<string, string>();
+    for (let i = 0; i < 10; i++) {
+      recentlyReadFiles.set(`/file${i}.txt`, `content ${i}`);
+    }
+
+    const result = await compactConversation(
+      provider, "mock-model", messages, storage, "limit-test",
+      { recentlyReadFiles },
+    );
+
+    const allText = result.map((m) => {
+      if (typeof m.content === "string") return m.content;
+      if (Array.isArray(m.content)) {
+        return (m.content as { type: string; text?: string }[])
+          .map((p) => p.text ?? "").join(" ");
+      }
+      return "";
+    }).join("\n");
+
+    const fileMatches = allText.match(/### \/file/g);
+    expect(fileMatches).not.toBeNull();
+    expect(fileMatches!.length).toBeLessThanOrEqual(5);
+  });
+
+  it("skips reinjection when no recent files", async () => {
+    provider.addResponse(textResponse("Summary."));
+
+    const messages: ChatMessage[] = [
+      { role: "user", content: "work" },
+      { role: "assistant", content: "done" },
+    ];
+
+    const result = await compactConversation(
+      provider, "mock-model", messages, storage, "no-reinject",
+    );
+
+    const reinjectionMsg = result.find(
+      (m) => typeof m.content === "string" && (m.content as string).includes("Recently read files"),
+    );
+    expect(reinjectionMsg).toBeUndefined();
+  });
+});

@@ -38,6 +38,7 @@ import { saveCacheSafeParams, createCacheSafeParams } from "./providers/cache-sa
 import { restoreSession } from "./session/resume.js";
 import { generateMissingToolResults } from "./session/recovery.js";
 import { normalizeMessagesForAPI } from "./messages/normalize.js";
+import { assertValidMessageSequence } from "./messages/invariants.js";
 import {
   runNotificationHooks,
 } from "./hooks/runner.js";
@@ -161,6 +162,8 @@ export interface ThreadConfig {
   outputFormat?: OutputFormat;
   /** Default structured output mode for all runs on this thread. */
   structuredOutputMode?: "alongside_tools" | "final_response";
+  /** When true, assert normalization invariants after every API message preparation. */
+  debug?: boolean;
 }
 
 export class Thread {
@@ -192,6 +195,8 @@ export class Thread {
   private fileStateCache: FileStateCache | null = null;
   private contentReplacementState: ContentReplacementState;
   private denialTracker: DenialTracker | null = null;
+  /** Tracks file paths read by ReadFile for post-compact reinjection. */
+  private recentlyReadFiles: Map<string, string> = new Map();
 
   constructor(config: ThreadConfig, opts?: ThreadOptions) {
     this.config = config;
@@ -503,6 +508,10 @@ export class Thread {
         // ensure pairing, merge same-role, guarantee valid structure.
         messagesForApi = normalizeMessagesForAPI(messagesForApi);
 
+        if (this.config.debug) {
+          assertValidMessageSequence(messagesForApi);
+        }
+
         // --- Proactive auto-compact (inside loop, before each API call) ---
         const loopAutoCompactConfig =
           this.config.autoCompact ?? createAutoCompactConfig({ model: this.model });
@@ -533,8 +542,10 @@ export class Thread {
                 tailMessagesToKeep: loopAutoCompactConfig.tailMessagesToKeep,
                 stripBinaryContent: true,
                 signal,
+                recentlyReadFiles: this.recentlyReadFiles.size > 0 ? this.recentlyReadFiles : undefined,
               },
             );
+            this.recentlyReadFiles.clear();
             this.lastUsage = undefined;
             this.anchorMessageIndex = undefined;
             this.microcompactTokensFreed = 0;
@@ -650,6 +661,24 @@ export class Thread {
               const sw = event as { type: "model_switch"; from: string; to: string };
               this.model = sw.to;
               stripThinkingSignatures(this.messages);
+              // Clear any partial accumulated state from the failed attempt.
+              // The new model's stream will start fresh — carrying over
+              // thinking signatures or partial content from a different model
+              // would cause API errors or corrupted output.
+              accumulatedContent.length = 0;
+              accumulatedThinking.length = 0;
+              accumulatedThinkingSignature = undefined;
+              accumulatedRedactedThinkingData = undefined;
+              accumulatedToolCalls.clear();
+              if (streamingExec) {
+                streamingExec.discard();
+                streamingExec = new StreamingToolExecutor(
+                  (name) => this.toolRegistry.get(name),
+                  this.buildStreamingExecutorFn(execCtx),
+                  signal,
+                );
+              }
+              streamingResults.length = 0;
               if (hooks.length > 0) {
                 await runNotificationHooks(hooks, "ModelSwitch", {
                   event: "ModelSwitch",
@@ -1171,6 +1200,7 @@ export class Thread {
           ...(thinkingContent ? { thinking_content: thinkingContent } : {}),
           ...(accumulatedThinkingSignature ? { thinking_signature: accumulatedThinkingSignature } : {}),
           ...(accumulatedRedactedThinkingData ? { redacted_thinking_data: accumulatedRedactedThinkingData } : {}),
+          _turnId: `${this.sessionId}:${callCount}`,
         };
 
         this.messages.push(assistantMsg);
@@ -1297,6 +1327,11 @@ export class Thread {
                 typeof execResult.parsedArgs.file_path === "string"
               ) {
                 touchedFilePaths.push(execResult.parsedArgs.file_path);
+                if (execResult.toolCall.function.name === "ReadFile" && !execResult.result.isError) {
+                  const content = typeof execResult.result.content === "string"
+                    ? execResult.result.content : "";
+                  this.recentlyReadFiles.set(execResult.parsedArgs.file_path, content);
+                }
               }
             }
 
@@ -1377,6 +1412,10 @@ export class Thread {
 
             if (FILE_TOOLS.has(tc.function.name) && typeof finalArgs.file_path === "string") {
               touchedFilePaths.push(finalArgs.file_path);
+              if (tc.function.name === "ReadFile" && !result.isError) {
+                const content = typeof result.content === "string" ? result.content : "";
+                this.recentlyReadFiles.set(finalArgs.file_path, content);
+              }
             }
           }
 
@@ -1789,8 +1828,12 @@ export class Thread {
       this.messages,
       this.storage,
       this.sessionId,
-      { customInstructions: opts?.instructions },
+      {
+        customInstructions: opts?.instructions,
+        recentlyReadFiles: this.recentlyReadFiles.size > 0 ? this.recentlyReadFiles : undefined,
+      },
     );
+    this.recentlyReadFiles.clear();
     this.lastUsage = undefined;
     this.anchorMessageIndex = undefined;
   }

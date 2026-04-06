@@ -7,6 +7,8 @@ import type {
   ContentPart,
 } from "../session/types.js";
 import { normalizeMessagesForAPI } from "../messages/normalize.js";
+import { adjustSplitForToolPairs } from "../compact/compact.js";
+import { assertValidMessageSequence } from "../messages/invariants.js";
 import { sanitizeForResume } from "../session/recovery.js";
 import { SeededRng } from "./helpers.js";
 
@@ -37,12 +39,12 @@ function makeTc(id: string, name?: string): ToolCallContent {
  * realistic corruption patterns. Uses a SeededRng so every call with the
  * same RNG state produces the same output.
  */
+let _turnCounter = 0;
+
 function generateRandomMessages(rng: SeededRng): ChatMessage[] {
   const len = rng.int(1, 20);
   const messages: ChatMessage[] = [];
 
-  // Pool of tool_call IDs that have been "used" by assistants — allows
-  // the generator to create orphans, duplicates, and missing results.
   const emittedToolUseIds: string[] = [];
   const emittedToolResultIds: string[] = [];
 
@@ -50,12 +52,9 @@ function generateRandomMessages(rng: SeededRng): ChatMessage[] {
     const roll = rng.next();
 
     if (roll < 0.05) {
-      // ~5%: system message
       messages.push({ role: "system", content: `System prompt ${i}` });
     } else if (roll < 0.25) {
-      // ~20%: user message
       if (rng.bool(0.2)) {
-        // ContentPart[] variant
         const parts: ContentPart[] = [{ type: "text", text: `user part ${i}` }];
         if (rng.bool(0.3)) {
           parts.push({ type: "text", text: `extra part ${i}` });
@@ -65,40 +64,30 @@ function generateRandomMessages(rng: SeededRng): ChatMessage[] {
         messages.push({ role: "user", content: `user msg ${i}` });
       }
     } else if (roll < 0.55) {
-      // ~30%: assistant message (various flavors)
       const flavor = rng.next();
 
-      if (flavor < 0.15) {
-        // Whitespace-only assistant (no tool_calls)
+      if (flavor < 0.12) {
         const ws = rng.pick(["", "  ", " \n ", "\t"]);
         messages.push({ role: "assistant", content: ws } as AssistantMessage);
-      } else if (flavor < 0.25) {
-        // Null-content assistant (thinking artifact)
+      } else if (flavor < 0.22) {
         messages.push({
           role: "assistant",
           content: null,
-          ...(rng.bool(0.5)
-            ? { thinking_content: `thinking ${i}` }
-            : {}),
-          ...(rng.bool(0.3)
-            ? { thinking_signature: `sig_${i}` }
-            : {}),
+          ...(rng.bool(0.5) ? { thinking_content: `thinking ${i}` } : {}),
+          ...(rng.bool(0.3) ? { thinking_signature: `sig_${i}` } : {}),
         } as AssistantMessage);
-      } else if (flavor < 0.35) {
-        // Assistant with empty tool_calls array
+      } else if (flavor < 0.30) {
         messages.push({
           role: "assistant",
           content: `empty tc ${i}`,
           tool_calls: [],
         } as unknown as AssistantMessage);
-      } else if (flavor < 0.55) {
-        // Assistant with tool_calls (some may be duplicates)
+      } else if (flavor < 0.52) {
         const numCalls = rng.int(1, 3);
         const calls: ToolCallContent[] = [];
         for (let j = 0; j < numCalls; j++) {
           let id: string;
           if (emittedToolUseIds.length > 0 && rng.bool(0.2)) {
-            // Reuse an existing ID (duplicate)
             id = rng.pick(emittedToolUseIds);
           } else {
             id = freshId();
@@ -113,9 +102,24 @@ function generateRandomMessages(rng: SeededRng): ChatMessage[] {
           ...(rng.bool(0.2) ? { thinking_content: `think ${i}` } : {}),
           ...(rng.bool(0.1) ? { thinking_signature: `sig_${i}` } : {}),
           ...(rng.bool(0.1) ? { redacted_thinking_data: `redacted_${i}` } : {}),
+          ...(rng.bool(0.15) ? { _turnId: `turn_${_turnCounter++}` } : {}),
+        } as AssistantMessage);
+      } else if (flavor < 0.60) {
+        // Assistant with _turnId matching a previous assistant (non-adjacent merge)
+        const prevTurnAsst = messages.filter(
+          (m) => m.role === "assistant" && (m as AssistantMessage)._turnId,
+        );
+        const matchTurnId = prevTurnAsst.length > 0 && rng.bool(0.5)
+          ? (rng.pick(prevTurnAsst) as AssistantMessage)._turnId
+          : `turn_${_turnCounter++}`;
+        messages.push({
+          role: "assistant",
+          content: rng.bool(0.5) ? `split ${i}` : null,
+          ...(rng.bool(0.3) ? { tool_calls: [makeTc(freshId(), rng.pick(TOOL_NAMES))] } : {}),
+          ...(rng.bool(0.2) ? { thinking_content: `split_think ${i}` } : {}),
+          _turnId: matchTurnId,
         } as AssistantMessage);
       } else {
-        // Normal text assistant
         messages.push({
           role: "assistant",
           content: `reply ${i}`,
@@ -124,16 +128,13 @@ function generateRandomMessages(rng: SeededRng): ChatMessage[] {
         } as AssistantMessage);
       }
     } else if (roll < 0.80) {
-      // ~25%: tool result message
       let callId: string;
       if (emittedToolUseIds.length > 0 && rng.bool(0.6)) {
         callId = rng.pick(emittedToolUseIds);
-        // Possibly create a duplicate result
         if (emittedToolResultIds.includes(callId) && rng.bool(0.5)) {
           // duplicate — keep going
         }
       } else {
-        // Orphan: reference an ID that may not exist
         callId = rng.bool(0.3) ? `orphan_${i}` : freshId();
       }
       emittedToolResultIds.push(callId);
@@ -144,7 +145,6 @@ function generateRandomMessages(rng: SeededRng): ChatMessage[] {
         ...(rng.bool(0.15) ? { isError: true } : {}),
       } as ToolResultMessage);
     } else if (roll < 0.90) {
-      // ~10%: consecutive same-role (force a duplicate of the previous role)
       const prev = messages[messages.length - 1];
       if (prev) {
         if (prev.role === "user") {
@@ -161,7 +161,6 @@ function generateRandomMessages(rng: SeededRng): ChatMessage[] {
         messages.push({ role: "user", content: `first ${i}` });
       }
     } else {
-      // ~10%: thinking-only trailing assistant candidate
       messages.push({
         role: "assistant",
         content: rng.pick([null, "", "  "]),
@@ -179,119 +178,22 @@ function generateRandomMessages(rng: SeededRng): ChatMessage[] {
 // Invariant assertions
 // ---------------------------------------------------------------------------
 
+/**
+ * Wraps the shared `assertValidMessageSequence` with vitest assertions
+ * and adds the idempotency check specific to fuzz testing.
+ */
 function assertNormalizationInvariants(
   result: ChatMessage[],
   label: string,
 ): void {
-  // 1. Non-empty
-  expect(result.length, `${label}: should be non-empty`).toBeGreaterThanOrEqual(1);
-
-  // 2. Starts with user
-  expect(result[0].role, `${label}: should start with user`).toBe("user");
-
-  // 3. No system messages
-  for (let i = 0; i < result.length; i++) {
-    expect(
-      result[i].role,
-      `${label}: message[${i}] should not be system`,
-    ).not.toBe("system");
+  try {
+    assertValidMessageSequence(result);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    expect.fail(`${label}: ${msg}`);
   }
 
-  // 4. No consecutive same non-tool role
-  for (let i = 1; i < result.length; i++) {
-    const prev = result[i - 1].role;
-    const curr = result[i].role;
-    if (curr !== "tool" && prev !== "tool") {
-      expect(
-        curr,
-        `${label}: messages[${i - 1}](${prev}) and [${i}](${curr}) are consecutive same role`,
-      ).not.toBe(prev);
-    }
-  }
-
-  // Collect tool_use and tool_result IDs for pairing checks
-  const toolUseIds: string[] = [];
-  const toolUseIdSet = new Set<string>();
-  const toolResultIds: string[] = [];
-  const toolResultIdSet = new Set<string>();
-
-  for (const msg of result) {
-    if (msg.role === "assistant") {
-      const asst = msg as AssistantMessage;
-      if (asst.tool_calls) {
-        for (const tc of asst.tool_calls) {
-          toolUseIds.push(tc.id);
-          toolUseIdSet.add(tc.id);
-        }
-      }
-    } else if (msg.role === "tool") {
-      const tr = msg as ToolResultMessage;
-      toolResultIds.push(tr.tool_call_id);
-      toolResultIdSet.add(tr.tool_call_id);
-    }
-  }
-
-  // 5. No duplicate tool_use IDs
-  expect(
-    toolUseIds.length,
-    `${label}: duplicate tool_use IDs found`,
-  ).toBe(toolUseIdSet.size);
-
-  // 6. No duplicate tool_result IDs
-  expect(
-    toolResultIds.length,
-    `${label}: duplicate tool_result IDs found`,
-  ).toBe(toolResultIdSet.size);
-
-  // 7. Every tool_use has a matching tool_result
-  for (const id of toolUseIdSet) {
-    expect(
-      toolResultIdSet.has(id),
-      `${label}: tool_use "${id}" has no matching tool_result`,
-    ).toBe(true);
-  }
-
-  // 8. Every tool_result has a matching tool_use
-  for (const id of toolResultIdSet) {
-    expect(
-      toolUseIdSet.has(id),
-      `${label}: tool_result "${id}" has no matching tool_use`,
-    ).toBe(true);
-  }
-
-  // 9. No whitespace-only assistants without tool_calls
-  for (let i = 0; i < result.length; i++) {
-    const msg = result[i];
-    if (msg.role !== "assistant") continue;
-    const asst = msg as AssistantMessage;
-    if (asst.tool_calls && asst.tool_calls.length > 0) continue;
-    const text =
-      typeof asst.content === "string" ? asst.content : "";
-    if (text.trim() === "" && !asst.thinking_content) {
-      // Allowed only if content is explicitly "" (ensureNonEmptyAssistantContent
-      // sets this). But there must be tool_calls or real content to survive
-      // all filters — so if we get here it means filters didn't remove it.
-      // The only exception: thinking-only assistants are allowed mid-conversation
-      // (only trailing ones are stripped).
-      expect(
-        asst.content !== null && asst.content !== undefined,
-        `${label}: message[${i}] is whitespace-only assistant with null content and no tool_calls`,
-      ).toBe(true);
-    }
-  }
-
-  // 10. No null/undefined assistant content (ensureNonEmptyAssistantContent)
-  for (let i = 0; i < result.length; i++) {
-    const msg = result[i];
-    if (msg.role !== "assistant") continue;
-    const asst = msg as AssistantMessage;
-    expect(
-      asst.content !== null && asst.content !== undefined,
-      `${label}: message[${i}] assistant has null/undefined content`,
-    ).toBe(true);
-  }
-
-  // 11. Idempotent
+  // Idempotency: normalizing again should produce identical output
   const second = normalizeMessagesForAPI(result);
   expect(second, `${label}: not idempotent`).toEqual(result);
 }
@@ -453,4 +355,103 @@ describe("normalizeMessagesForAPI — fuzz edge cases", () => {
     ]);
     assertNormalizationInvariants(result, "trailing-redacted-thinking");
   });
+
+  it("handles messages with _turnId fields", () => {
+    const tcId = freshId();
+    const result = normalizeMessagesForAPI([
+      { role: "user", content: "go" },
+      { role: "assistant", content: "part 1", tool_calls: [makeTc(tcId)], _turnId: "t1" } as AssistantMessage,
+      { role: "tool", tool_call_id: tcId, content: "ok" } as ToolResultMessage,
+    ]);
+    assertNormalizationInvariants(result, "turnid-messages");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Compaction split fuzz — adjustSplitForToolPairs never orphans pairs
+// ---------------------------------------------------------------------------
+
+describe("adjustSplitForToolPairs — fuzz", () => {
+  const SPLIT_SEEDS = [42, 137, 2025, 9999, 31337];
+
+  for (const seed of SPLIT_SEEDS) {
+    it(`split never orphans tool pairs for seed ${seed}`, () => {
+      _idCounter = 0;
+      _turnCounter = 0;
+      const rng = new SeededRng(seed);
+
+      for (let iter = 0; iter < 100; iter++) {
+        const raw = generateRandomMessages(rng);
+        const messages = normalizeMessagesForAPI(raw);
+        if (messages.length < 3) continue;
+
+        const splitIdx = rng.int(1, messages.length - 1);
+        const adjusted = adjustSplitForToolPairs(messages, splitIdx);
+
+        expect(adjusted).toBeGreaterThanOrEqual(0);
+        expect(adjusted).toBeLessThanOrEqual(messages.length);
+
+        // If the adjusted split lands on a tool result, the preceding
+        // assistant must be in the same partition (tail).
+        if (adjusted < messages.length && messages[adjusted]?.role === "tool") {
+          // Walk back — the assistant owning this tool call should also be in the tail
+          let foundAsst = false;
+          for (let k = adjusted - 1; k >= 0; k--) {
+            if (messages[k].role === "assistant") {
+              const asst = messages[k] as AssistantMessage;
+              if (asst.tool_calls && asst.tool_calls.length > 0) {
+                foundAsst = true;
+              }
+              break;
+            }
+          }
+          // If there's an assistant before the split with tool_calls,
+          // the split should have been pushed back before it
+          if (foundAsst) {
+            expect(adjusted).toBeLessThanOrEqual(splitIdx);
+          }
+        }
+      }
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Composition fuzz — normalize, grow, normalize again
+// ---------------------------------------------------------------------------
+
+describe("normalizeMessagesForAPI — composition fuzz", () => {
+  const COMP_SEEDS = [42, 137, 2025, 9999, 31337];
+
+  for (const seed of COMP_SEEDS) {
+    it(`invariants hold after incremental growth for seed ${seed}`, () => {
+      _idCounter = 0;
+      _turnCounter = 0;
+      const rng = new SeededRng(seed);
+
+      for (let iter = 0; iter < 100; iter++) {
+        // Start with a normalized base
+        const raw = generateRandomMessages(rng);
+        let messages = normalizeMessagesForAPI(raw);
+
+        // Append a new valid turn (user -> assistant -> tool -> assistant)
+        const newTcId = freshId();
+        messages = [
+          ...messages,
+          { role: "user", content: `grow ${iter}` },
+          {
+            role: "assistant",
+            content: null,
+            tool_calls: [makeTc(newTcId, rng.pick(TOOL_NAMES))],
+          } as AssistantMessage,
+          { role: "tool", tool_call_id: newTcId, content: `result ${iter}` } as ToolResultMessage,
+          { role: "assistant", content: `done ${iter}` } as AssistantMessage,
+        ];
+
+        // Re-normalize and check
+        const result = normalizeMessagesForAPI(messages);
+        assertNormalizationInvariants(result, `seed=${seed} comp=${iter}`);
+      }
+    });
+  }
 });

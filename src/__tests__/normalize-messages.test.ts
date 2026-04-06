@@ -7,6 +7,7 @@ import {
   filterWhitespaceOnlyAssistants,
   filterOrphanedThinkingAssistants,
 } from "../messages/normalize.js";
+import { normalizeToolInputForAPI } from "../messages/tool-input-normalize.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -723,5 +724,188 @@ describe("normalizeMessagesForAPI — thinking/whitespace ordering", () => {
     expect(assistants).toHaveLength(1);
     expect((assistants[0] as AssistantMessage).content).toBe("real answer");
     expect(result[result.length - 1].role).toBe("user");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mergeAssistantsByTurnId — non-adjacent assistant merge
+// ---------------------------------------------------------------------------
+
+describe("normalizeMessagesForAPI — _turnId merge", () => {
+  it("merges non-adjacent assistants with the same _turnId across tool results", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "go" },
+      { role: "assistant", content: "part 1", tool_calls: [tc("t1")], _turnId: "s:1" } as AssistantMessage,
+      toolResult("t1", "result 1"),
+      { role: "assistant", content: "part 2", _turnId: "s:1" } as AssistantMessage,
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    const assistants = result.filter((m) => m.role === "assistant") as AssistantMessage[];
+    expect(assistants).toHaveLength(1);
+    expect(assistants[0].content).toContain("part 1");
+    expect(assistants[0].content).toContain("part 2");
+    expect(assistants[0].tool_calls).toHaveLength(1);
+  });
+
+  it("does not merge assistants with different _turnIds", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "go" },
+      { role: "assistant", content: "turn A", tool_calls: [tc("t1")], _turnId: "s:1" } as AssistantMessage,
+      toolResult("t1", "result"),
+      { role: "assistant", content: "turn B", tool_calls: [tc("t2")], _turnId: "s:2" } as AssistantMessage,
+      toolResult("t2", "result"),
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    const assistants = result.filter((m) => m.role === "assistant") as AssistantMessage[];
+    expect(assistants).toHaveLength(2);
+  });
+
+  it("passes through messages without _turnId unchanged", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "go" },
+      { role: "assistant", content: "no turn id", tool_calls: [tc("t1")] } as AssistantMessage,
+      toolResult("t1", "result"),
+      { role: "assistant", content: "also no turn id" } as AssistantMessage,
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    const assistants = result.filter((m) => m.role === "assistant") as AssistantMessage[];
+    expect(assistants).toHaveLength(2);
+  });
+
+  it("strips _turnId from the final output", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "go" },
+      { role: "assistant", content: "reply", _turnId: "s:1" } as AssistantMessage,
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    const asst = result.find((m) => m.role === "assistant") as AssistantMessage;
+    expect(asst._turnId).toBeUndefined();
+  });
+
+  it("merges tool_calls from both assistant halves", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "go" },
+      { role: "assistant", content: null, tool_calls: [tc("t1")], _turnId: "s:1" } as AssistantMessage,
+      toolResult("t1", "ok"),
+      { role: "assistant", content: null, tool_calls: [tc("t2")], _turnId: "s:1" } as AssistantMessage,
+      toolResult("t2", "ok"),
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    const assistants = result.filter((m) => m.role === "assistant") as AssistantMessage[];
+    expect(assistants).toHaveLength(1);
+    expect(assistants[0].tool_calls).toHaveLength(2);
+  });
+
+  it("merges thinking content from both halves", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "go" },
+      { role: "assistant", content: "a", thinking_content: "think1", _turnId: "s:1" } as AssistantMessage,
+      { role: "tool", tool_call_id: "t1", content: "ok" } as ChatMessage,
+      { role: "assistant", content: "b", thinking_content: "think2", _turnId: "s:1" } as AssistantMessage,
+    ];
+    // We need a tool_call for t1 to avoid it being orphaned; let's restructure:
+    const messages2: ChatMessage[] = [
+      { role: "user", content: "go" },
+      { role: "assistant", content: "a", tool_calls: [tc("t1")], thinking_content: "think1", _turnId: "s:1" } as AssistantMessage,
+      toolResult("t1", "ok"),
+      { role: "assistant", content: "b", thinking_content: "think2", _turnId: "s:1" } as AssistantMessage,
+    ];
+    const result = normalizeMessagesForAPI(messages2);
+    const asst = result.find((m) => m.role === "assistant") as AssistantMessage;
+    expect(asst.thinking_content).toContain("think1");
+    expect(asst.thinking_content).toContain("think2");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normalizeToolInputForAPI — tool input stripping
+// ---------------------------------------------------------------------------
+
+describe("normalizeToolInputForAPI", () => {
+  it("strips _meta field from any tool", () => {
+    const input = JSON.stringify({ command: "ls", _meta: { source: "test" } });
+    const result = normalizeToolInputForAPI("Bash", input);
+    const parsed = JSON.parse(result);
+    expect(parsed._meta).toBeUndefined();
+    expect(parsed.command).toBe("ls");
+  });
+
+  it("strips _source and _injected from any tool", () => {
+    const input = JSON.stringify({ x: 1, _source: "hook", _injected: true });
+    const result = normalizeToolInputForAPI("ReadFile", input);
+    const parsed = JSON.parse(result);
+    expect(parsed._source).toBeUndefined();
+    expect(parsed._injected).toBeUndefined();
+    expect(parsed.x).toBe(1);
+  });
+
+  it("strips planFilePath from ExitPlanMode", () => {
+    const input = JSON.stringify({ plan: "do stuff", planFilePath: "/tmp/plan.md" });
+    const result = normalizeToolInputForAPI("ExitPlanMode", input);
+    const parsed = JSON.parse(result);
+    expect(parsed.planFilePath).toBeUndefined();
+    expect(parsed.plan).toBe("do stuff");
+  });
+
+  it("strips legacy fields from EditFile when edits array is present", () => {
+    const input = JSON.stringify({
+      edits: [{ old: "a", new: "b" }],
+      old_string: "a",
+      new_string: "b",
+      replace_all: false,
+    });
+    const result = normalizeToolInputForAPI("EditFile", input);
+    const parsed = JSON.parse(result);
+    expect(parsed.old_string).toBeUndefined();
+    expect(parsed.new_string).toBeUndefined();
+    expect(parsed.replace_all).toBeUndefined();
+    expect(parsed.edits).toBeDefined();
+  });
+
+  it("preserves old_string/new_string on EditFile when edits is absent (current format)", () => {
+    const input = JSON.stringify({
+      file_path: "/foo.ts",
+      old_string: "before",
+      new_string: "after",
+    });
+    const result = normalizeToolInputForAPI("EditFile", input);
+    const parsed = JSON.parse(result);
+    expect(parsed.old_string).toBe("before");
+    expect(parsed.new_string).toBe("after");
+  });
+
+  it("returns original string when no fields to strip", () => {
+    const input = JSON.stringify({ file_path: "/foo.txt" });
+    const result = normalizeToolInputForAPI("ReadFile", input);
+    expect(result).toBe(input);
+  });
+
+  it("handles malformed JSON gracefully", () => {
+    const input = "not json";
+    const result = normalizeToolInputForAPI("Bash", input);
+    expect(result).toBe(input);
+  });
+});
+
+describe("normalizeMessagesForAPI — tool input stripping integration", () => {
+  it("strips _meta from tool call args in the full pipeline", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [{
+          id: "t1",
+          type: "function",
+          function: { name: "Bash", arguments: JSON.stringify({ command: "ls", _meta: { x: 1 } }) },
+        }],
+      } as AssistantMessage,
+      toolResult("t1", "ok"),
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    const asst = result.find((m) => m.role === "assistant") as AssistantMessage;
+    const args = JSON.parse(asst.tool_calls![0].function.arguments);
+    expect(args._meta).toBeUndefined();
+    expect(args.command).toBe("ls");
   });
 });

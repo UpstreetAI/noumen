@@ -16,6 +16,7 @@ import type {
   ContentPart,
 } from "../session/types.js";
 import { contentToString } from "../utils/content.js";
+import { normalizeToolInputsInMessages } from "./tool-input-normalize.js";
 
 // ---------------------------------------------------------------------------
 // Main entry point
@@ -48,10 +49,13 @@ export function normalizeMessagesForAPI(messages: ChatMessage[]): ChatMessage[] 
   result = ensureToolResultPairing(result);
   result = filterOrphanedThinkingAssistants(result);
   result = filterWhitespaceOnlyAssistants(result);
+  result = mergeAssistantsByTurnId(result);
   result = mergeConsecutiveSameRole(result);
   result = ensureNonEmptyAssistantContent(result);
   result = stripTrailingThinkingOnlyAssistant(result);
   result = ensureStartsWithUser(result);
+  result = stripInternalFields(result);
+  result = normalizeToolInputsInMessages(result);
 
   return result;
 }
@@ -278,7 +282,60 @@ export function filterOrphanedThinkingAssistants(
 }
 
 // ---------------------------------------------------------------------------
-// Step 8: Merge consecutive same-role messages
+// Step 8a: Merge non-adjacent assistants with the same _turnId
+// ---------------------------------------------------------------------------
+
+/**
+ * When streaming produces split assistant chunks separated by tool result
+ * rows (all belonging to the same provider response), merge them back
+ * together. This mirrors claude-code's merge-by-message.id logic.
+ *
+ * The merge walks backward from each assistant, across intervening tool
+ * result rows, looking for an earlier assistant with the same `_turnId`.
+ */
+function mergeAssistantsByTurnId(messages: ChatMessage[]): ChatMessage[] {
+  const hasTurnIds = messages.some(
+    (m) => m.role === "assistant" && (m as AssistantMessage)._turnId != null,
+  );
+  if (!hasTurnIds) return messages;
+
+  const result: ChatMessage[] = [];
+  for (const msg of messages) {
+    if (msg.role !== "assistant") {
+      result.push(msg);
+      continue;
+    }
+    const asst = msg as AssistantMessage;
+    if (!asst._turnId) {
+      result.push(msg);
+      continue;
+    }
+
+    // Walk backward through result, skipping tool results and
+    // assistants with different _turnIds, to find a match.
+    let merged = false;
+    for (let i = result.length - 1; i >= 0; i--) {
+      const prev = result[i];
+      if (prev.role === "tool") continue;
+      if (prev.role !== "assistant") break;
+      const prevAsst = prev as AssistantMessage;
+      if (prevAsst._turnId === asst._turnId) {
+        result[i] = mergeAssistantPair(prevAsst, asst);
+        merged = true;
+        break;
+      }
+      // Different assistant — keep looking only if it also has a _turnId
+      if (!prevAsst._turnId) break;
+    }
+    if (!merged) {
+      result.push(msg);
+    }
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Step 8b: Merge consecutive same-role messages
 // ---------------------------------------------------------------------------
 
 /**
@@ -449,4 +506,26 @@ function assistantTextContent(asst: AssistantMessage): string {
     return contentToString(asst.content as ContentPart[]);
   }
   return "";
+}
+
+// ---------------------------------------------------------------------------
+// Final: Strip internal metadata fields before sending to providers
+// ---------------------------------------------------------------------------
+
+/**
+ * Remove internal-only fields (like `_turnId`) that providers don't
+ * understand. These are bookkeeping metadata used by the normalization
+ * and thread layers.
+ */
+function stripInternalFields(messages: ChatMessage[]): ChatMessage[] {
+  let changed = false;
+  const result = messages.map((msg) => {
+    if (msg.role !== "assistant") return msg;
+    const asst = msg as AssistantMessage;
+    if (asst._turnId === undefined) return msg;
+    changed = true;
+    const { _turnId, ...rest } = asst;
+    return rest as AssistantMessage;
+  });
+  return changed ? result : messages;
 }

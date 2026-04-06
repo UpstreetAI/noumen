@@ -581,6 +581,7 @@ export type { TurnInterruption, SanitizeResult } from "./session/recovery.js";
 
 // Message Normalization
 export { normalizeMessagesForAPI } from "./messages/normalize.js";
+export { assertValidMessageSequence, InvariantViolation } from "./messages/invariants.js";
 
 // New session types
 export type { FileCheckpointEntry } from "./session/types.js";

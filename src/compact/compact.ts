@@ -28,6 +28,13 @@ export interface CompactOptions {
   stripBinaryContent?: boolean;
   /** Abort signal — if fired, the partial summary is discarded instead of persisted. */
   signal?: AbortSignal;
+  /**
+   * Recently-read file contents to reinject after compaction so the model
+   * doesn't lose awareness of files that were only in the compacted portion.
+   * Map of file path -> file content. At most 5 files are reinjected, capped
+   * at 50 KB total.
+   */
+  recentlyReadFiles?: Map<string, string>;
 }
 
 export async function compactConversation(
@@ -154,8 +161,42 @@ export async function compactConversation(
 
   await storage.reAppendMetadataAfterCompact(sessionId);
 
-  // Ensure role alternation is valid after inserting the summary
-  const merged = mergeConsecutiveSameRole([summaryMessage, ...tail]);
+  // Build the post-compact message sequence, starting with the summary + tail.
+  const postCompactMessages: ChatMessage[] = [summaryMessage, ...tail];
+
+  // Reinject recently-read file contents so the model retains awareness of
+  // files that may have been lost during compaction.
+  if (opts?.recentlyReadFiles && opts.recentlyReadFiles.size > 0) {
+    const MAX_FILES = 5;
+    const MAX_TOTAL_CHARS = 50_000;
+    const entries = [...opts.recentlyReadFiles.entries()].slice(-MAX_FILES);
+    let totalChars = 0;
+    const fileSections: string[] = [];
+    for (const [filePath, content] of entries) {
+      if (totalChars + content.length > MAX_TOTAL_CHARS) break;
+      fileSections.push(`### ${filePath}\n\`\`\`\n${content}\n\`\`\``);
+      totalChars += content.length;
+    }
+    if (fileSections.length > 0) {
+      const reinjectionMsg: ChatMessage = {
+        role: "user",
+        content: `[Recently read files — restored after compaction]\n\n${fileSections.join("\n\n")}`,
+      };
+      postCompactMessages.push(reinjectionMsg);
+
+      const { generateUUID } = await import("../utils/uuid.js");
+      await storage.appendEntriesBatch(sessionId, [{
+        type: "message",
+        uuid: generateUUID(),
+        parentUuid: null,
+        sessionId,
+        timestamp: new Date().toISOString(),
+        message: reinjectionMsg,
+      } as import("../session/types.js").MessageEntry]);
+    }
+  }
+
+  const merged = mergeConsecutiveSameRole(postCompactMessages);
   return merged;
 }
 

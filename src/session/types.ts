@@ -51,6 +51,13 @@ export interface AssistantMessage {
   thinking_signature?: string;
   /** Opaque data for Anthropic redacted_thinking blocks — must be echoed back verbatim. */
   redacted_thinking_data?: string;
+  /**
+   * Internal turn identifier linking assistant chunks from the same provider
+   * response. Used by normalization to merge non-adjacent assistant messages
+   * that belong to the same logical turn (separated by tool result rows).
+   * Stripped before sending to providers.
+   */
+  _turnId?: string;
 }
 
 export interface ToolResultMessage {

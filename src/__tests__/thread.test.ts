@@ -1499,3 +1499,82 @@ describe("output token recovery", () => {
     expect(continueMsg).toBeDefined();
   });
 });
+
+describe("model switch clears accumulated state", () => {
+  it("does not carry over thinking signatures from failed model to fallback model", async () => {
+    let callCount = 0;
+    const switchProvider: AIProvider = {
+      async *chat(params: ChatParams) {
+        callCount++;
+        if (callCount <= 3) {
+          const err = new Error("Overloaded") as Error & { status?: number };
+          err.status = 529;
+          throw err;
+        }
+        for (const c of textResponse("Fallback reply.")) yield c;
+      },
+    };
+
+    const cfg: ThreadConfig = {
+      ...config,
+      provider: switchProvider,
+      retry: {
+        maxRetries: 10,
+        initialDelayMs: 10,
+        maxDelayMs: 50,
+        backoffMultiplier: 1,
+        fallbackModel: "fallback-model",
+        maxConsecutiveOverloaded: 3,
+      },
+    };
+
+    const thread = new Thread(cfg, { sessionId: "switch-clean" });
+    const events = await collectEvents(thread.run("test model switch"));
+
+    const messages = await thread.getMessages();
+    const assistants = messages.filter((m) => m.role === "assistant");
+    for (const asst of assistants) {
+      const a = asst as import("../session/types.js").AssistantMessage;
+      expect(a.thinking_signature).toBeUndefined();
+      expect(a.redacted_thinking_data).toBeUndefined();
+    }
+
+    const switchEvent = events.find((e) => e.type === "model_switch");
+    expect(switchEvent).toBeDefined();
+  });
+
+  it("retries and succeeds after transient errors", async () => {
+    let callCount = 0;
+    const retryProvider: AIProvider = {
+      async *chat() {
+        callCount++;
+        if (callCount === 1) {
+          const err = new Error("Server Error") as Error & { status?: number };
+          err.status = 500;
+          throw err;
+        }
+        for (const c of textResponse("Success after retry.")) yield c;
+      },
+    };
+
+    const cfg: ThreadConfig = {
+      ...config,
+      provider: retryProvider,
+      retry: {
+        maxRetries: 3,
+        initialDelayMs: 10,
+        maxDelayMs: 50,
+        backoffMultiplier: 1,
+      },
+    };
+
+    const thread = new Thread(cfg, { sessionId: "retry-success" });
+    const events = await collectEvents(thread.run("retry test"));
+
+    const retryEvents = events.filter((e) => e.type === "retry_attempt");
+    expect(retryEvents.length).toBeGreaterThanOrEqual(1);
+
+    const messages = await thread.getMessages();
+    expect(messages.find((m) => m.role === "assistant")).toBeDefined();
+  });
+});
