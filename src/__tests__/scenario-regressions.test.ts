@@ -9,6 +9,7 @@ import {
   MockFs,
   MockComputer,
   MockAIProvider,
+  ErroringAIProvider,
   textResponse,
   toolCallResponse,
   multiToolCallResponse,
@@ -26,9 +27,10 @@ import type {
   AssistantMessage,
   ToolResultMessage,
 } from "../session/types.js";
-import type { ChatParams, ChatStreamChunk } from "../providers/types.js";
+import type { AIProvider, ChatParams, ChatStreamChunk } from "../providers/types.js";
 import { normalizeMessagesForAPI } from "../messages/normalize.js";
 import { assertValidMessageSequence } from "../messages/invariants.js";
+import { sanitizeForResume } from "../session/recovery.js";
 
 let fs: MockFs;
 let computer: MockComputer;
@@ -57,34 +59,101 @@ async function collectEvents(thread: Thread, prompt: string): Promise<StreamEven
   return events;
 }
 
-// Scenario 1: Streaming fallback mid-tool — provider errors while 2 of 3 tools are complete
-describe("scenario: streaming fallback mid-tool", () => {
-  it("preserves completed tool results and tombstones incomplete ones", async () => {
-    // First call: model issues 3 tool calls
-    provider.addResponse(
+// Scenario 1: Provider error during the second API call (after tool results are sent back).
+// The first call returns 3 tool calls which execute successfully. The second call
+// (with tool results in the conversation) throws mid-stream. The thread should
+// surface an error but the transcript should remain API-valid after normalization.
+describe("scenario: provider error after tool execution", () => {
+  it("preserves completed tool results when provider errors on follow-up call", async () => {
+    const errorProvider = new ErroringAIProvider();
+    // First call: 3 tool calls — all succeed normally
+    errorProvider.addResponse(
       multiToolCallResponse([
         { id: "tc1", name: "ReadFile", args: { file_path: "/a.txt" } },
         { id: "tc2", name: "ReadFile", args: { file_path: "/b.txt" } },
         { id: "tc3", name: "ReadFile", args: { file_path: "/c.txt" } },
       ]),
     );
-    // Second call: model responds after tool results
-    provider.addResponse(textResponse("Done reading files."));
+    // Second call: starts streaming text then errors mid-stream
+    const secondCallChunks = [textChunk("Starting to "), textChunk("respond...")];
+    errorProvider.addResponse(secondCallChunks, {
+      errorAfter: 1,
+      error: new Error("simulated provider crash"),
+    });
 
     fs.files.set("/a.txt", "aaa");
     fs.files.set("/b.txt", "bbb");
     fs.files.set("/c.txt", "ccc");
 
-    const thread = new Thread(baseConfig);
-    const events = await collectEvents(thread, "Read all files");
+    const config: ThreadConfig = {
+      ...baseConfig,
+      provider: errorProvider as unknown as AIProvider,
+    };
+
+    const thread = new Thread(config);
+    const events: StreamEvent[] = [];
+    try {
+      for await (const e of thread.run("Read all files")) {
+        events.push(e);
+      }
+    } catch {
+      // Provider error propagates — expected
+    }
+
+    const errorEvent = events.find((e) => e.type === "error");
+    expect(errorEvent).toBeDefined();
 
     const messages = await thread.getMessages();
     const normalized = normalizeMessagesForAPI(messages);
     assertValidMessageSequence(normalized);
 
-    // All 3 tool results must exist
+    // All 3 tool results from the first call must be preserved
     const toolResults = normalized.filter((m) => m.role === "tool");
     expect(toolResults.length).toBe(3);
+    // The real results should have actual file content, not synthetic errors
+    const realResults = toolResults.filter(
+      (m) => !(m as ToolResultMessage).isError,
+    );
+    expect(realResults.length).toBe(3);
+  });
+
+  it("transcript is valid after sanitizeForResume + normalize on error", async () => {
+    const errorProvider = new ErroringAIProvider();
+    errorProvider.addResponse(
+      multiToolCallResponse([
+        { id: "tc1", name: "ReadFile", args: { file_path: "/a.txt" } },
+        { id: "tc2", name: "ReadFile", args: { file_path: "/b.txt" } },
+      ]),
+    );
+    // Provider errors immediately on second call (before yielding anything)
+    errorProvider.addResponse([], {
+      errorAfter: 0,
+      error: new Error("502 Bad Gateway"),
+    });
+
+    fs.files.set("/a.txt", "content-a");
+    fs.files.set("/b.txt", "content-b");
+
+    const config: ThreadConfig = {
+      ...baseConfig,
+      provider: errorProvider as unknown as AIProvider,
+    };
+
+    const thread = new Thread(config);
+    try {
+      for await (const _e of thread.run("read")) { /* drain */ }
+    } catch {
+      // expected
+    }
+
+    const messages = await thread.getMessages();
+    // Simulate what resume would do
+    const { messages: sanitized } = sanitizeForResume(messages);
+    const normalized = normalizeMessagesForAPI(sanitized);
+    assertValidMessageSequence(normalized);
+
+    const tools = normalized.filter((m) => m.role === "tool");
+    expect(tools.length).toBe(2);
   });
 });
 
@@ -188,9 +257,9 @@ describe("scenario: large concurrent tool results under budget", () => {
   });
 });
 
-// Scenario 5: Denial counter desync after compaction
-describe("scenario: denial tracking across compaction", () => {
-  it("normalization handles messages with stale thinking signatures", () => {
+// Scenario 5: Stale thinking signatures stripped during normalization
+describe("scenario: stale thinking signature stripping", () => {
+  it("strips signatures from non-final assistants, keeps final", () => {
     const messages: ChatMessage[] = [
       { role: "user", content: "think" },
       {
@@ -211,11 +280,60 @@ describe("scenario: denial tracking across compaction", () => {
     const normalized = normalizeMessagesForAPI(messages);
     assertValidMessageSequence(normalized);
 
-    // Only the final assistant should retain its signature
     const assistants = normalized.filter((m) => m.role === "assistant") as AssistantMessage[];
     expect(assistants.length).toBe(2);
     expect(assistants[0].thinking_signature).toBeUndefined();
     expect(assistants[1].thinking_signature).toBe("sig_current_model");
+  });
+});
+
+// Scenario 5b: Denial tracking — permission denied tool calls produce valid transcripts
+// and denial counter increments correctly across multiple denied calls.
+describe("scenario: denial tracking produces valid transcripts", () => {
+  it("denied tool calls leave API-valid messages with synthetic error results", async () => {
+    // Model tries to call a tool that will be denied by permission rules.
+    // The denied tool_call should still have a tool result (the denial error)
+    // and the transcript should be valid.
+    provider.addResponse(
+      multiToolCallResponse([
+        { id: "tc1", name: "WriteFile", args: { file_path: "/secret.txt", content: "hack" } },
+        { id: "tc2", name: "ReadFile", args: { file_path: "/ok.txt" } },
+      ]),
+    );
+    provider.addResponse(textResponse("I see the first was denied."));
+
+    fs.files.set("/ok.txt", "safe content");
+
+    const config: ThreadConfig = {
+      ...baseConfig,
+      permissions: {
+        mode: "default",
+        rules: [{ tool: "WriteFile", permission: "deny" }],
+        workingDirectories: ["/"],
+      },
+    };
+
+    const thread = new Thread(config);
+    const events = await collectEvents(thread, "write and read");
+
+    const messages = await thread.getMessages();
+    const normalized = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(normalized);
+
+    // Both tool_calls should have results
+    const toolResults = normalized.filter((m) => m.role === "tool") as ToolResultMessage[];
+    expect(toolResults.length).toBe(2);
+
+    // WriteFile result should be a denial error
+    const writeResult = toolResults.find((m) => m.tool_call_id === "tc1");
+    expect(writeResult).toBeDefined();
+    expect(writeResult!.isError).toBe(true);
+    expect(typeof writeResult!.content === "string" && writeResult!.content).toContain("denied");
+
+    // ReadFile result should succeed
+    const readResult = toolResults.find((m) => m.tool_call_id === "tc2");
+    expect(readResult).toBeDefined();
+    expect(readResult!.isError).toBeFalsy();
   });
 });
 

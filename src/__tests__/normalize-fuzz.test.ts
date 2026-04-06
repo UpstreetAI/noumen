@@ -555,3 +555,70 @@ describe("normalizeMessagesForAPI — composition fuzz", () => {
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// sanitizeForResume + normalizeMessagesForAPI composition fuzz
+// ---------------------------------------------------------------------------
+
+describe("sanitizeForResume + normalizeMessagesForAPI — composition fuzz", () => {
+  const COMP_SEEDS = [42, 137, 2025, 9999, 31337, 65536, 777, 12345];
+
+  for (const seed of COMP_SEEDS) {
+    it(`sanitize→normalize composition is idempotent for seed ${seed}`, () => {
+      _idCounter = 0;
+      _turnCounter = 0;
+      const rng = new SeededRng(seed);
+
+      for (let iter = 0; iter < 200; iter++) {
+        const messages = generateRandomMessages(rng);
+
+        // First pass: sanitize then normalize
+        const { messages: sanitized1 } = sanitizeForResume(messages);
+        const normalized1 = normalizeMessagesForAPI(sanitized1);
+        assertNormalizationInvariants(
+          normalized1,
+          `seed=${seed} iter=${iter} (sanitize→normalize)`,
+        );
+
+        // Second pass: running the pipeline again should be a no-op
+        const { messages: sanitized2 } = sanitizeForResume(normalized1);
+        const normalized2 = normalizeMessagesForAPI(sanitized2);
+        expect(
+          normalized2,
+          `seed=${seed} iter=${iter}: sanitize→normalize not idempotent`,
+        ).toEqual(normalized1);
+      }
+    });
+  }
+
+  for (const seed of COMP_SEEDS) {
+    it(`normalize→sanitize→normalize produces same result as sanitize→normalize for seed ${seed}`, () => {
+      _idCounter = 0;
+      _turnCounter = 0;
+      const rng = new SeededRng(seed);
+
+      for (let iter = 0; iter < 200; iter++) {
+        const messages = generateRandomMessages(rng);
+
+        // Path A: sanitize first, then normalize
+        const { messages: sanitizedA } = sanitizeForResume(messages);
+        const resultA = normalizeMessagesForAPI(sanitizedA);
+
+        // Path B: normalize first, then sanitize, then normalize again
+        const preNormalized = normalizeMessagesForAPI(messages);
+        const { messages: sanitizedB } = sanitizeForResume(preNormalized);
+        const resultB = normalizeMessagesForAPI(sanitizedB);
+
+        // Both paths should produce valid sequences
+        assertNormalizationInvariants(
+          resultA,
+          `seed=${seed} iter=${iter} pathA`,
+        );
+        assertNormalizationInvariants(
+          resultB,
+          `seed=${seed} iter=${iter} pathB`,
+        );
+      }
+    });
+  }
+});

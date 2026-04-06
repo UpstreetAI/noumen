@@ -654,3 +654,128 @@ describe("generateMissingToolResults edge cases", () => {
     expect(result[0].content).toContain("502 Bad Gateway");
   });
 });
+
+// ---------------------------------------------------------------------------
+// generateMissingToolResults / ensureToolResultPairing / sanitizeForResume
+// consistency — all three entry points should produce structurally equivalent
+// synthetic results for the same broken transcript.
+// ---------------------------------------------------------------------------
+
+describe("generateMissingToolResults — entry-point consistency", () => {
+  const brokenTranscript: ChatMessage[] = [
+    { role: "user", content: "do things" },
+    {
+      role: "assistant",
+      content: "calling three tools",
+      tool_calls: [
+        { id: "tc1", type: "function", function: { name: "Bash", arguments: '{"command":"ls"}' } },
+        { id: "tc2", type: "function", function: { name: "Grep", arguments: '{"pattern":"x"}' } },
+        { id: "tc3", type: "function", function: { name: "ReadFile", arguments: '{"file_path":"a.txt"}' } },
+      ],
+    } as AssistantMessage,
+    { role: "tool", tool_call_id: "tc1", content: "real result for tc1" } as any,
+  ];
+
+  it("all three paths generate synthetic results for the same missing tool_call_ids", () => {
+    // Path 1: generateMissingToolResults directly
+    const assistant = brokenTranscript[1] as AssistantMessage;
+    const existingToolMsgs = brokenTranscript.filter((m) => m.role === "tool");
+    const directResults = generateMissingToolResults(assistant, existingToolMsgs, "test");
+
+    // Path 2: ensureToolResultPairing (from normalize.ts)
+    const normalizeRepaired = ensureToolResultPairing([...brokenTranscript]);
+
+    // Path 3: sanitizeForResume (includes fillPartiallyResolvedToolCalls)
+    const { messages: sanitized } = sanitizeForResume([...brokenTranscript]);
+
+    // Direct: should produce synthetic for tc2 and tc3
+    const directIds = new Set(directResults.map((r) => r.tool_call_id));
+    expect(directIds).toEqual(new Set(["tc2", "tc3"]));
+    for (const r of directResults) {
+      expect(r.isError).toBe(true);
+    }
+
+    // ensureToolResultPairing: should also have results for tc2 and tc3
+    const normalizeToolMsgs = normalizeRepaired.filter((m) => m.role === "tool") as any[];
+    const normalizeIds = new Set(normalizeToolMsgs.map((m) => m.tool_call_id));
+    expect(normalizeIds).toEqual(new Set(["tc1", "tc2", "tc3"]));
+    const normalizeSynthetic = normalizeToolMsgs.filter(
+      (m) => m.tool_call_id === "tc2" || m.tool_call_id === "tc3",
+    );
+    for (const m of normalizeSynthetic) {
+      expect(m.isError).toBe(true);
+    }
+
+    // sanitizeForResume: should also have results for tc2 and tc3
+    const sanitizedToolMsgs = sanitized.filter((m) => m.role === "tool") as any[];
+    const sanitizedIds = new Set(sanitizedToolMsgs.map((m) => m.tool_call_id));
+    expect(sanitizedIds).toEqual(new Set(["tc1", "tc2", "tc3"]));
+    const sanitizedSynthetic = sanitizedToolMsgs.filter(
+      (m) => m.tool_call_id === "tc2" || m.tool_call_id === "tc3",
+    );
+    for (const m of sanitizedSynthetic) {
+      expect(m.isError).toBe(true);
+    }
+  });
+
+  it("all paths produce API-valid transcripts after normalization", () => {
+    // Path 2: ensureToolResultPairing
+    const normalizeRepaired = ensureToolResultPairing([...brokenTranscript]);
+    const normalized2 = normalizeMessagesForAPI(normalizeRepaired);
+    assertValidMessageSequence(normalized2);
+
+    // Path 3: sanitizeForResume then normalize
+    const { messages: sanitized } = sanitizeForResume([...brokenTranscript]);
+    const normalized3 = normalizeMessagesForAPI(sanitized);
+    assertValidMessageSequence(normalized3);
+  });
+
+  it("real results are never overwritten by synthetic ones", () => {
+    // Path 2
+    const normalizeRepaired = ensureToolResultPairing([...brokenTranscript]);
+    const tc1FromNormalize = normalizeRepaired.find(
+      (m) => m.role === "tool" && (m as any).tool_call_id === "tc1",
+    ) as any;
+    expect(tc1FromNormalize.content).toBe("real result for tc1");
+    expect(tc1FromNormalize.isError).toBeFalsy();
+
+    // Path 3
+    const { messages: sanitized } = sanitizeForResume([...brokenTranscript]);
+    const tc1FromSanitize = sanitized.find(
+      (m) => m.role === "tool" && (m as any).tool_call_id === "tc1",
+    ) as any;
+    expect(tc1FromSanitize.content).toBe("real result for tc1");
+    expect(tc1FromSanitize.isError).toBeFalsy();
+  });
+
+  it("handles the all-missing case (null content + no results)", () => {
+    const allMissing: ChatMessage[] = [
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          { id: "tc1", type: "function", function: { name: "A", arguments: "{}" } },
+          { id: "tc2", type: "function", function: { name: "B", arguments: "{}" } },
+        ],
+      } as AssistantMessage,
+    ];
+
+    // Path 1
+    const assistant = allMissing[1] as AssistantMessage;
+    const directResults = generateMissingToolResults(assistant, [], "crash");
+    expect(directResults).toHaveLength(2);
+
+    // Path 2: ensureToolResultPairing strict fallback drops null-content all-missing
+    const normalizeRepaired = ensureToolResultPairing([...allMissing]);
+    const assistants = normalizeRepaired.filter((m) => m.role === "assistant");
+    // Should either drop the assistant or inject synthetics
+    const normalized = normalizeMessagesForAPI(normalizeRepaired);
+    assertValidMessageSequence(normalized);
+
+    // Path 3
+    const { messages: sanitized } = sanitizeForResume([...allMissing]);
+    const normalized3 = normalizeMessagesForAPI(sanitized);
+    assertValidMessageSequence(normalized3);
+  });
+});

@@ -228,6 +228,43 @@ export class MockAIProvider implements AIProvider {
 }
 
 // ---------------------------------------------------------------------------
+// ErroringAIProvider — yields chunks then throws at a configurable point
+// ---------------------------------------------------------------------------
+
+export class ErroringAIProvider implements AIProvider {
+  private responses: Array<{ chunks: ChatStreamChunk[]; errorAfter?: number; error?: Error }> = [];
+  calls: ChatParams[] = [];
+
+  /**
+   * Queue a response that yields `chunks[0..errorAfter-1]` then throws.
+   * If `errorAfter` is omitted or >= chunks.length, all chunks yield normally.
+   */
+  addResponse(
+    chunks: ChatStreamChunk[],
+    opts?: { errorAfter?: number; error?: Error },
+  ): void {
+    this.responses.push({
+      chunks,
+      errorAfter: opts?.errorAfter,
+      error: opts?.error,
+    });
+  }
+
+  async *chat(params: ChatParams): AsyncIterable<ChatStreamChunk> {
+    this.calls.push(params);
+    const entry = this.responses.shift();
+    if (!entry) throw new Error("ErroringAIProvider: no more responses queued");
+    const { chunks, errorAfter, error } = entry;
+    for (let i = 0; i < chunks.length; i++) {
+      if (errorAfter !== undefined && i >= errorAfter) {
+        throw error ?? new Error("ErroringAIProvider: simulated stream error");
+      }
+      yield chunks[i];
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Chunk builder helpers
 // ---------------------------------------------------------------------------
 

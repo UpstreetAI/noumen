@@ -933,3 +933,208 @@ describe("Integration: Thread.run scenarios", () => {
     assertValidMessageSequence(normalized);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Thread abort / error / resume integration tests
+// ---------------------------------------------------------------------------
+
+describe("Integration: abort, error, and resume lifecycle", () => {
+  it("abort mid-tool-execution produces valid transcript after sanitize+normalize", async () => {
+    const ac = new AbortController();
+    let slowToolStarted!: () => void;
+    const slowToolStartedPromise = new Promise<void>((r) => { slowToolStarted = r; });
+
+    const slowTool = makeTool({
+      name: "SlowTool",
+      isConcurrencySafe: true,
+      isReadOnly: true,
+      call: async (_args, ctx) => {
+        slowToolStarted();
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, 5000);
+          ctx?.signal?.addEventListener("abort", () => {
+            clearTimeout(timer);
+            resolve();
+          });
+        });
+        return { content: "slow result" };
+      },
+    });
+
+    provider.addResponse(
+      multiToolCallResponse([
+        { id: "tc1", name: "ReadFile", args: { file_path: "/a.txt" } },
+        { id: "tc2", name: "SlowTool", args: {} },
+      ]),
+    );
+
+    fs.files.set("/a.txt", "content-a");
+
+    const config: ThreadConfig = {
+      ...baseConfig,
+      tools: [slowTool],
+      streamingToolExecution: true,
+    };
+
+    const thread = new Thread(config, { sessionId: "abort-mid-tool" });
+
+    // Abort once the slow tool starts executing
+    slowToolStartedPromise.then(() => {
+      setTimeout(() => ac.abort(), 10);
+    });
+
+    const events: StreamEvent[] = [];
+    for await (const e of thread.run("run tools", { signal: ac.signal })) {
+      events.push(e);
+    }
+
+    const messages = await thread.getMessages();
+    const { messages: sanitized } = (await import("../session/recovery.js")).sanitizeForResume(messages);
+    const normalized = normalizeMessagesForAPI(sanitized);
+    assertValidMessageSequence(normalized);
+
+    // After abort+sanitize, all tool_calls should have matching results (real or synthetic)
+    const assistants = normalized.filter((m) => m.role === "assistant") as AssistantMessage[];
+    const totalToolCalls = assistants.reduce(
+      (n, a) => n + (a.tool_calls?.length ?? 0), 0,
+    );
+    const toolResults = normalized.filter((m) => m.role === "tool");
+    expect(toolResults.length).toBe(totalToolCalls);
+  });
+
+  it("provider error mid-stream preserves completed streaming tool results", async () => {
+    let callCount = 0;
+    const errorProvider: AIProvider = {
+      async *chat() {
+        callCount++;
+        if (callCount === 1) {
+          // Stream 2 tool calls normally
+          for (const chunk of multiToolCallResponse([
+            { id: "tc1", name: "ReadFile", args: { file_path: "/a.txt" } },
+            { id: "tc2", name: "ReadFile", args: { file_path: "/b.txt" } },
+          ])) {
+            yield chunk;
+          }
+          return;
+        }
+        if (callCount === 2) {
+          // Error mid-stream on the second API call
+          yield textChunk("Starting to ");
+          throw new Error("simulated network failure");
+        }
+        for (const chunk of textResponse("Recovered.")) yield chunk;
+      },
+    };
+
+    fs.files.set("/a.txt", "AAA");
+    fs.files.set("/b.txt", "BBB");
+
+    const config: ThreadConfig = {
+      ...baseConfig,
+      provider: errorProvider,
+      streamingToolExecution: true,
+    };
+
+    const thread = new Thread(config, { sessionId: "err-mid-stream" });
+    const events: StreamEvent[] = [];
+    try {
+      for await (const e of thread.run("read files")) {
+        events.push(e);
+      }
+    } catch {
+      // expected
+    }
+
+    const messages = await thread.getMessages();
+    const normalized = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(normalized);
+
+    // The first-call tool results should be real (not error)
+    const toolResults = normalized.filter((m) => m.role === "tool") as import("../session/types.js").ToolResultMessage[];
+    expect(toolResults.length).toBe(2);
+    const realResults = toolResults.filter((m) => !m.isError);
+    expect(realResults.length).toBe(2);
+    expect(String(realResults[0].content)).toContain("AAA");
+  });
+
+  it("abort with orphaned tool_calls recovers via sanitizeForResume", async () => {
+    // Simulate the edge case: provider streams 2 tool calls but abort fires
+    // before the last tool_call is finalized in the streaming executor.
+    // The thread persists a partial assistant with both tool_calls but only
+    // has results for tool_calls that were added to the executor.
+    const brokenTranscript: ChatMessage[] = [
+      { role: "user", content: "do things" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          { id: "tc1", type: "function", function: { name: "ReadFile", arguments: '{"file_path":"/a.txt"}' } },
+          { id: "tc2", type: "function", function: { name: "ReadFile", arguments: '{"file_path":"/b.txt"}' } },
+        ],
+      } as AssistantMessage,
+      // Only tc1 completed before abort
+      { role: "tool", tool_call_id: "tc1", content: "content-a" } as import("../session/types.js").ToolResultMessage,
+      // tc2 is orphaned — no result
+      { role: "user", content: "[Session interrupted by user. Continue from where you left off if resumed.]" },
+    ];
+
+    const { messages: sanitized, interruption } = (await import("../session/recovery.js")).sanitizeForResume(brokenTranscript);
+
+    // sanitizeForResume should generate a synthetic result for tc2
+    const normalized = normalizeMessagesForAPI(sanitized);
+    assertValidMessageSequence(normalized);
+
+    const toolResults = normalized.filter((m) => m.role === "tool") as import("../session/types.js").ToolResultMessage[];
+    expect(toolResults.length).toBe(2);
+
+    const tc2 = toolResults.find((m) => m.tool_call_id === "tc2");
+    expect(tc2).toBeDefined();
+    expect(tc2!.isError).toBe(true);
+  });
+
+  it("model switch during retry clears accumulated state", async () => {
+    let callCount = 0;
+    const switchingProvider: AIProvider = {
+      async *chat() {
+        callCount++;
+        // Throw overloaded immediately (before first chunk) so the retry
+        // engine catches it. Need 3 consecutive to trigger fallback.
+        if (callCount <= 3) {
+          throw new ChatStreamError("Overloaded", { status: 529 });
+        }
+        // After fallback to new model: clean response
+        for (const chunk of textResponse("Clean response from fallback.")) {
+          yield chunk;
+        }
+      },
+    };
+
+    const config: ThreadConfig = {
+      ...baseConfig,
+      provider: switchingProvider,
+      model: "model-1",
+      retry: {
+        maxRetries: 5,
+        baseDelayMs: 1,
+        maxDelayMs: 5,
+        maxConsecutiveOverloaded: 3,
+        fallbackModel: "fallback-model",
+      },
+    };
+
+    const thread = new Thread(config, { sessionId: "model-switch" });
+    const events = await collectEvents(thread.run("say hello"));
+
+    const modelSwitch = events.find((e) => e.type === "model_switch");
+    expect(modelSwitch).toBeDefined();
+
+    const messages = await thread.getMessages();
+    const normalized = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(normalized);
+
+    const assistants = normalized.filter((m) => m.role === "assistant") as AssistantMessage[];
+    expect(assistants.length).toBeGreaterThanOrEqual(1);
+    const lastAssistant = assistants[assistants.length - 1];
+    expect(typeof lastAssistant.content === "string" && lastAssistant.content).toContain("Clean response");
+  });
+});

@@ -670,6 +670,53 @@ describe("StreamingToolExecutor re-entrance guard", () => {
     expect(fastResult.result.isError).toBeFalsy();
   });
 
+  it("discard after first concurrent tool completes: getRemainingResults yields real + synthetic", async () => {
+    const { StreamingToolExecutor } = await import("../tools/streaming-executor.js");
+
+    let resolveSecond!: () => void;
+    const secondStarted = new Promise<void>((r) => { resolveSecond = r; });
+
+    const executor = new StreamingToolExecutor(
+      () => ({ name: "T", description: "", parameters: { type: "object", properties: {} }, isConcurrencySafe: true, call: async () => ({ content: "" }) } as any),
+      async (toolCall) => {
+        if (toolCall.id === "first") {
+          return { result: { content: "first-real" }, events: [] };
+        }
+        resolveSecond();
+        await new Promise<void>(() => {}); // block forever
+        return { result: { content: "never" }, events: [] };
+      },
+    );
+
+    executor.addTool(
+      { id: "first", type: "function" as const, function: { name: "T", arguments: '{}' } },
+      {},
+    );
+    executor.addTool(
+      { id: "second", type: "function" as const, function: { name: "T", arguments: '{}' } },
+      {},
+    );
+
+    await secondStarted;
+    await new Promise((r) => setTimeout(r, 20));
+
+    executor.discard();
+    const results: any[] = [];
+    for await (const r of executor.getRemainingResults()) {
+      results.push(r);
+    }
+
+    expect(results).toHaveLength(2);
+    const firstResult = results.find((r: any) => r.toolCall.id === "first");
+    const secondResult = results.find((r: any) => r.toolCall.id === "second");
+    expect(firstResult).toBeDefined();
+    expect(firstResult.result.content).toBe("first-real");
+    expect(firstResult.result.isError).toBeFalsy();
+    expect(secondResult).toBeDefined();
+    expect(secondResult.result.isError).toBe(true);
+    expect(secondResult.result.content).toContain("discarded");
+  });
+
   it("getCompletedResults returns finished tools before discard", async () => {
     let resolveSecond!: () => void;
     const secondStarted = new Promise<void>((r) => { resolveSecond = r; });
