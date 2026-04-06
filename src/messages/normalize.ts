@@ -30,11 +30,12 @@ import { contentToString } from "../utils/content.js";
  *  3. Strip orphaned tool_results with no matching tool_use
  *  4. Deduplicate tool_results with the same tool_call_id
  *  5. Insert synthetic error results for unpaired tool_uses
- *  6. Filter whitespace-only assistant messages
- *  7. Filter orphaned thinking-only assistants
+ *  6. Filter orphaned thinking-only assistants (null/undefined content)
+ *  7. Filter whitespace-only assistant messages
  *  8. Merge consecutive same-role messages
  *  9. Ensure every assistant has non-null content
- * 10. Strip thinking-only content from trailing assistant
+ * 10. Strip thinking-only trailing assistant (after merge — merge can
+ *     create new trailing messages with only thinking content)
  * 11. Ensure array starts with a user message
  */
 export function normalizeMessagesForAPI(messages: ChatMessage[]): ChatMessage[] {
@@ -45,8 +46,8 @@ export function normalizeMessagesForAPI(messages: ChatMessage[]): ChatMessage[] 
   result = stripOrphanedToolResults(result);
   result = deduplicateToolResults(result);
   result = ensureToolResultPairing(result);
-  result = filterWhitespaceOnlyAssistants(result);
   result = filterOrphanedThinkingAssistants(result);
+  result = filterWhitespaceOnlyAssistants(result);
   result = mergeConsecutiveSameRole(result);
   result = ensureNonEmptyAssistantContent(result);
   result = stripTrailingThinkingOnlyAssistant(result);
@@ -232,7 +233,7 @@ export function ensureToolResultPairing(messages: ChatMessage[]): ChatMessage[] 
 }
 
 // ---------------------------------------------------------------------------
-// Step 5: Filter whitespace-only assistants
+// Step 7: Filter whitespace-only assistants
 // ---------------------------------------------------------------------------
 
 /**
@@ -257,6 +258,7 @@ export function filterWhitespaceOnlyAssistants(
 
 // ---------------------------------------------------------------------------
 // Step 6: Filter orphaned thinking-only assistants
+// (runs before whitespace filter so null-content artifacts are removed first)
 // ---------------------------------------------------------------------------
 
 /**
@@ -276,7 +278,7 @@ export function filterOrphanedThinkingAssistants(
 }
 
 // ---------------------------------------------------------------------------
-// Step 7: Merge consecutive same-role messages
+// Step 8: Merge consecutive same-role messages
 // ---------------------------------------------------------------------------
 
 /**
@@ -359,7 +361,7 @@ function mergeAssistantPair(
 }
 
 // ---------------------------------------------------------------------------
-// Step 8: Ensure non-empty assistant content
+// Step 9: Ensure non-empty assistant content
 // ---------------------------------------------------------------------------
 
 /**
@@ -381,6 +383,8 @@ function ensureNonEmptyAssistantContent(
 
 // ---------------------------------------------------------------------------
 // Step 10: Strip thinking-only trailing assistant
+// (runs after merge — mergeConsecutiveSameRole can create new trailing
+// assistants with only thinking content that need to be removed)
 // ---------------------------------------------------------------------------
 
 /**

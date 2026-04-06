@@ -670,3 +670,58 @@ describe("normalizeMessagesForAPI — trailing thinking-only assistant", () => {
     expect(result[0].role).toBe("user");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Ordering interaction: thinking removal before whitespace filtering
+// ---------------------------------------------------------------------------
+
+describe("normalizeMessagesForAPI — thinking/whitespace ordering", () => {
+  it("removes trailing assistant with whitespace text + thinking_content", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "think about this" },
+      {
+        role: "assistant",
+        content: "  \n  ",
+        thinking_content: "deep analysis",
+        thinking_signature: "sig_abc",
+      } as AssistantMessage,
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    expect(result).toHaveLength(1);
+    expect(result[0].role).toBe("user");
+    expect(result[0].content).toBe("think about this");
+  });
+
+  it("cleans up mid-conversation thinking-only + whitespace assistants and merges users", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "step 1" },
+      { role: "assistant", content: null, thinking_content: "thought" } as AssistantMessage,
+      { role: "assistant", content: "   " } as AssistantMessage,
+      { role: "user", content: "step 2" },
+      { role: "assistant", content: "real reply" } as AssistantMessage,
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    expect(result[0].role).toBe("user");
+    const lastAsst = result.find((m) => m.role === "assistant") as AssistantMessage;
+    expect(lastAsst.content).toBe("real reply");
+    expect(result.filter((m) => m.role === "assistant")).toHaveLength(1);
+    const users = result.filter((m) => m.role === "user");
+    expect(users).toHaveLength(1);
+    expect(Array.isArray(users[0].content)).toBe(true);
+  });
+
+  it("handles cascading removal when stripped tail exposes another thinking-only assistant", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "start" },
+      { role: "assistant", content: "real answer" } as AssistantMessage,
+      { role: "user", content: "followup" },
+      { role: "assistant", content: null, thinking_content: "thought A" } as AssistantMessage,
+      { role: "assistant", content: "", thinking_content: "thought B" } as AssistantMessage,
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    const assistants = result.filter((m) => m.role === "assistant");
+    expect(assistants).toHaveLength(1);
+    expect((assistants[0] as AssistantMessage).content).toBe("real answer");
+    expect(result[result.length - 1].role).toBe("user");
+  });
+});
