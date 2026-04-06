@@ -198,9 +198,21 @@ export function convertAnthropicMessages(
       result.push({ role: "assistant", content });
     } else if (msg.role === "tool") {
       const isMultipart = Array.isArray(msg.content);
-      const toolContent = isMultipart
-        ? contentPartsToAnthropic(msg.content as ContentPart[])
-        : (msg.content as string);
+      let toolContent: string | Record<string, unknown>[];
+
+      if (msg.isError && isMultipart) {
+        const textOnly = (msg.content as ContentPart[]).filter(
+          (p) => p.type === "text",
+        );
+        toolContent =
+          textOnly.length > 0
+            ? contentPartsToAnthropic(textOnly)
+            : String(msg.content);
+      } else {
+        toolContent = isMultipart
+          ? contentPartsToAnthropic(msg.content as ContentPart[])
+          : (msg.content as string);
+      }
 
       const toolResultBlock: Record<string, unknown> = {
         type: "tool_result",

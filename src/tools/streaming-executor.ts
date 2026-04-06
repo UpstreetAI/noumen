@@ -114,7 +114,12 @@ export class StreamingToolExecutor {
       return;
     }
 
-    const isConcurrencySafe = resolveToolFlag(toolDef.isConcurrencySafe, parsedArgs);
+    let isConcurrencySafe = false;
+    try {
+      isConcurrencySafe = resolveToolFlag(toolDef.isConcurrencySafe, parsedArgs);
+    } catch {
+      isConcurrencySafe = false;
+    }
 
     this.tools.push({
       id: toolCall.id,

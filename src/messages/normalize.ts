@@ -414,6 +414,9 @@ function mergeAssistantPair(
             curr.redacted_thinking_data ?? prev.redacted_thinking_data,
         }
       : {}),
+    ...(prev._turnId ?? curr._turnId
+      ? { _turnId: prev._turnId ?? curr._turnId }
+      : {}),
   } as AssistantMessage;
 }
 
@@ -423,7 +426,12 @@ function mergeAssistantPair(
 
 /**
  * Providers may reject assistants with `content: null`. If the assistant
- * has tool_calls (or survived all prior filters), set content to `""`.
+ * survived all prior filters, set content to `""`.
+ *
+ * Note: The reference (claude-code) leaves the final assistant empty for
+ * prefill, but its message model uses `content: []` (empty array) not
+ * `null`. Our model uses `null` which providers universally reject, so
+ * we fill all assistants unconditionally.
  */
 function ensureNonEmptyAssistantContent(
   messages: ChatMessage[],

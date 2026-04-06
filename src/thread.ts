@@ -469,19 +469,11 @@ export class Thread {
 
       while (!signal.aborted) {
         // --- Pre-call compaction pipeline ---
-        // Microcompact runs first because it permanently mutates this.messages
-        // (replacing old tool results with placeholders). Budget then operates
-        // on a snapshot of the post-microcompact history, so its truncation
-        // decisions reflect already-replaced content. (claude-code runs budget
-        // first, but there neither operation mutates the canonical history.)
-        if (this.config.microcompact?.enabled) {
-          const mcResult = microcompactMessages(this.messages, this.config.microcompact);
-          if (mcResult.tokensFreed > 0) {
-            this.messages = mcResult.messages;
-            this.microcompactTokensFreed += mcResult.tokensFreed;
-            yield { type: "microcompact_complete", tokensFreed: mcResult.tokensFreed };
-          }
-        }
+        // Budget runs first on a snapshot (matching the reference), so its
+        // truncation decisions see the full canonical history. Microcompact
+        // then permanently mutates this.messages (replacing old tool results
+        // with placeholders) — but that does not affect the already-budgeted
+        // messagesForApi snapshot used for this API call.
 
         // Apply budget to a snapshot so the canonical this.messages is not mutated
         let messagesForApi: ChatMessage[] = this.messages;
@@ -501,6 +493,15 @@ export class Thread {
               originalChars: entry.originalChars,
               truncatedChars: entry.truncatedChars,
             };
+          }
+        }
+
+        if (this.config.microcompact?.enabled) {
+          const mcResult = microcompactMessages(this.messages, this.config.microcompact);
+          if (mcResult.tokensFreed > 0) {
+            this.messages = mcResult.messages;
+            this.microcompactTokensFreed += mcResult.tokensFreed;
+            yield { type: "microcompact_complete", tokensFreed: mcResult.tokensFreed };
           }
         }
 
@@ -1714,8 +1715,11 @@ export class Thread {
   private buildStreamingExecutorFn(
     execCtx: ToolExecutionContext,
   ): import("./tools/streaming-executor.js").StreamingToolExecutorFn {
-    return async (tc, parsedArgs, _signal) => {
-      const pipelineResult = await executeToolCall(tc, parsedArgs, execCtx);
+    return async (tc, parsedArgs, signal) => {
+      const ctx = signal
+        ? { ...execCtx, toolCtx: { ...execCtx.toolCtx, signal } }
+        : execCtx;
+      const pipelineResult = await executeToolCall(tc, parsedArgs, ctx);
       return {
         result: pipelineResult.result,
         permissionDenied: pipelineResult.permissionDenied,

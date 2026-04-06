@@ -102,7 +102,59 @@ export async function executeToolCall(
       currentArgs = parsed.data as Record<string, unknown>;
     }
 
-    // --- 2. Permission gate ---
+    // --- 2. PreToolUse hooks (run before permissions so hooks can modify input / supply decisions) ---
+    if (hooks.length > 0) {
+      const hookOutput = await runPreToolUseHooks(hooks, {
+        event: "PreToolUse",
+        toolName: tc.function.name,
+        toolInput: currentArgs,
+        toolUseId: tc.id,
+        sessionId,
+      });
+
+      if (hookOutput.decision === "deny") {
+        const msg = hookOutput.message ?? "Blocked by hook.";
+        return {
+          toolCall: tc,
+          parsedArgs: currentArgs,
+          result: { content: `Hook denied: ${msg}`, isError: true },
+          permissionDenied: true,
+          events,
+        };
+      }
+      if (hookOutput.updatedInput) {
+        currentArgs = hookOutput.updatedInput;
+
+        if (permCtx && permCtx.workingDirectories.length > 0) {
+          const hookFilePath =
+            typeof currentArgs.file_path === "string"
+              ? currentArgs.file_path
+              : typeof currentArgs.path === "string"
+                ? currentArgs.path
+                : undefined;
+          if (
+            hookFilePath &&
+            !isPathInWorkingDirectories(hookFilePath, permCtx.workingDirectories)
+          ) {
+            return {
+              toolCall: tc,
+              parsedArgs: currentArgs,
+              result: {
+                content: `Permission denied: Hook-modified path "${hookFilePath}" is outside working directories.`,
+                isError: true,
+              },
+              permissionDenied: true,
+              events,
+            };
+          }
+        }
+      }
+      if (hookOutput.preventContinuation) {
+        preventContinuation = true;
+      }
+    }
+
+    // --- 3. Permission gate ---
     if (permCtx) {
       const tool = registry.get(tc.function.name);
       if (tool) {
@@ -275,58 +327,6 @@ export async function executeToolCall(
       }
     }
 
-    // --- 3. PreToolUse hooks ---
-    if (hooks.length > 0) {
-      const hookOutput = await runPreToolUseHooks(hooks, {
-        event: "PreToolUse",
-        toolName: tc.function.name,
-        toolInput: currentArgs,
-        toolUseId: tc.id,
-        sessionId,
-      });
-
-      if (hookOutput.decision === "deny") {
-        const msg = hookOutput.message ?? "Blocked by hook.";
-        return {
-          toolCall: tc,
-          parsedArgs: currentArgs,
-          result: { content: `Hook denied: ${msg}`, isError: true },
-          permissionDenied: true,
-          events,
-        };
-      }
-      if (hookOutput.updatedInput) {
-        currentArgs = hookOutput.updatedInput;
-
-        if (permCtx && permCtx.workingDirectories.length > 0) {
-          const hookFilePath =
-            typeof currentArgs.file_path === "string"
-              ? currentArgs.file_path
-              : typeof currentArgs.path === "string"
-                ? currentArgs.path
-                : undefined;
-          if (
-            hookFilePath &&
-            !isPathInWorkingDirectories(hookFilePath, permCtx.workingDirectories)
-          ) {
-            return {
-              toolCall: tc,
-              parsedArgs: currentArgs,
-              result: {
-                content: `Permission denied: Hook-modified path "${hookFilePath}" is outside working directories.`,
-                isError: true,
-              },
-              permissionDenied: true,
-              events,
-            };
-          }
-        }
-      }
-      if (hookOutput.preventContinuation) {
-        preventContinuation = true;
-      }
-    }
-
     // --- 4. Execute ---
     const toolSpan = tracer.startSpan("noumen.tool.execute", {
       parent: parentSpan,
@@ -388,10 +388,35 @@ export async function executeToolCall(
     };
   } catch (execErr) {
     const msg = execErr instanceof Error ? execErr.message : String(execErr);
+    const errorResult: ToolResult = { content: `Error executing tool: ${msg}`, isError: true };
+
+    if (hooks.length > 0) {
+      try {
+        const failOutput = await runPostToolUseFailureHooks(hooks, {
+          event: "PostToolUseFailure",
+          toolName: tc.function.name,
+          toolInput: currentArgs,
+          toolUseId: tc.id,
+          toolOutput: errorResult.content as string,
+          errorMessage: msg,
+          sessionId,
+        });
+        if (failOutput.updatedOutput !== undefined) {
+          errorResult.content = failOutput.updatedOutput;
+        }
+        if (failOutput.preventContinuation) {
+          preventContinuation = true;
+        }
+      } catch {
+        // Don't let hook failures mask the original error
+      }
+    }
+
     return {
       toolCall: tc,
       parsedArgs: currentArgs,
-      result: { content: `Error executing tool: ${msg}`, isError: true },
+      result: errorResult,
+      preventContinuation: preventContinuation || undefined,
       events,
     };
   }

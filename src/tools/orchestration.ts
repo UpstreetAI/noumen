@@ -45,11 +45,14 @@ export function partitionToolCalls(
     }
 
     const tool = getTool(tc.function.name);
-    const isConcurrencySafe = jsonMalformed
-      ? false
-      : tool
-        ? resolveToolFlag(tool.isConcurrencySafe, parsedArgs)
-        : false;
+    let isConcurrencySafe = false;
+    if (!jsonMalformed && tool) {
+      try {
+        isConcurrencySafe = resolveToolFlag(tool.isConcurrencySafe, parsedArgs);
+      } catch {
+        isConcurrencySafe = false;
+      }
+    }
 
     const item = { toolCall: tc, parsedArgs };
 
