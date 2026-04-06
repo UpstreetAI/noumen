@@ -119,12 +119,7 @@ export async function persistToolResult(
 
   await fs.mkdir(dir, { recursive: true });
 
-  // Atomic exclusive write — prevents TOCTOU race on concurrent persists
-  try {
-    await fs.writeFile(filePath, content, { flag: "wx" } as any);
-  } catch (err: any) {
-    if (err?.code !== "EEXIST") throw err;
-  }
+  await fs.writeFile(filePath, content);
 
   const preview = generatePreview(content, previewChars);
   return buildReplacementStub(filePath, content.length, preview);

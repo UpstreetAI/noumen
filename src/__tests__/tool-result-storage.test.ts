@@ -63,7 +63,6 @@ describe("persistToolResult", () => {
     expect(fs.writeFile).toHaveBeenCalledWith(
       expect.stringContaining("tc1.txt"),
       bigContent,
-      { flag: "wx" },
     );
   });
 

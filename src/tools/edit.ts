@@ -215,8 +215,10 @@ export const editFileTool: Tool = {
       });
 
       if ("error" in updated) {
-        return { content: updated.error, isError: true };
+        return { content: String(updated.error), isError: true };
       }
+
+      const editedContent = updated.content as string;
 
       ctx.notifyHook?.("FileWrite", {
         event: "FileWrite",
@@ -235,7 +237,7 @@ export const editFileTool: Tool = {
           // best-effort
         }
         ctx.fileStateCache.set(filePath, {
-          content: updated.content,
+          content: editedContent,
           timestamp: mtime,
         });
       }

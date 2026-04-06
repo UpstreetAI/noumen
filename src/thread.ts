@@ -683,8 +683,8 @@ export class Thread {
                 await runNotificationHooks(hooks, "ModelSwitch", {
                   event: "ModelSwitch",
                   sessionId: this.sessionId,
-                  from: sw.from,
-                  to: sw.to,
+                  previousModel: sw.from,
+                  newModel: sw.to,
                 } as import("./hooks/types.js").ModelSwitchHookInput);
               }
             }

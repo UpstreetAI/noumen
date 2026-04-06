@@ -95,19 +95,19 @@
     "uuid": "^11.1.0"
   },
   "peerDependencies": {
+    "@anthropic-ai/bedrock-sdk": ">=0.10.0",
     "@anthropic-ai/sdk": "^0.39.0",
+    "@anthropic-ai/vertex-sdk": ">=0.4.0",
     "@google/genai": "^1.48.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "openai": "^4.85.0",
-    "vscode-jsonrpc": "^8.2.1",
     "@opentelemetry/api": "^1.0.0",
-    "@anthropic-ai/bedrock-sdk": ">=0.10.0",
-    "@anthropic-ai/vertex-sdk": ">=0.4.0",
-    "google-auth-library": ">=9.0.0",
     "dockerode": ">=4.0.0",
     "e2b": ">=2.0.0",
-    "ws": ">=8.0.0",
-    "sharp": ">=0.33.0"
+    "google-auth-library": ">=9.0.0",
+    "openai": "^4.85.0",
+    "sharp": ">=0.33.0",
+    "vscode-jsonrpc": "^8.2.1",
+    "ws": ">=8.0.0"
   },
   "peerDependenciesMeta": {
     "@anthropic-ai/sdk": {
@@ -154,18 +154,19 @@
     "@anthropic-ai/sdk": "^0.39.0",
     "@google/genai": "^1.48.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "openai": "^4.85.0",
-    "vscode-jsonrpc": "^8.2.1",
     "@opentelemetry/api": "^1.9.1",
+    "@types/dockerode": "^4.0.1",
     "@types/node": "^22.0.0",
     "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.5.0",
     "@vitest/coverage-v8": "^3.2.4",
     "concurrently": "^9.2.1",
+    "openai": "^4.85.0",
     "tsup": "^8.4.0",
     "tsx": "^4.21.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0",
-    "ws": "^8.18.0",
-    "@types/ws": "^8.5.0"
+    "vscode-jsonrpc": "^8.2.1",
+    "ws": "^8.18.0"
   }
 }
