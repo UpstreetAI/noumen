@@ -1332,7 +1332,9 @@ export class Thread {
                 );
 
                 if (decision.behavior === "deny") {
-                  this.denialTracker?.recordDenial();
+                  if (decision.reason !== "classifier") {
+                    this.denialTracker?.recordDenial();
+                  }
                   eventQueue.push({
                     type: "permission_denied",
                     toolName: tc.function.name,
@@ -1627,7 +1629,15 @@ export class Thread {
             }
           }
 
-          if (signal.aborted) break;
+          if (signal.aborted) {
+            const interruptionMsg: ChatMessage = {
+              role: "user",
+              content: "[Session interrupted by user. Continue from where you left off if resumed.]",
+            };
+            this.messages.push(interruptionMsg);
+            await this.storage.appendMessage(this.sessionId, interruptionMsg).catch(() => {});
+            break;
+          }
 
           if (touchedFilePaths.length > 0) {
             let needsRebuild = false;
@@ -1940,7 +1950,9 @@ export class Thread {
           const decision = await resolvePermission(tool, currentArgs, toolCtx, permCtx, this.buildPermissionOpts());
 
           if (decision.behavior === "deny") {
-            this.denialTracker?.recordDenial();
+            if (decision.reason !== "classifier") {
+              this.denialTracker?.recordDenial();
+            }
             events.push({ type: "permission_denied", toolName: tc.function.name, input: currentArgs, message: decision.message });
             await runNotificationHooks(hooks, "PermissionDenied", {
               event: "PermissionDenied", sessionId, toolName: tc.function.name,
@@ -2081,6 +2093,7 @@ export class Thread {
       model: this.model,
       recentMessages: tail,
       autoModeConfig: autoMode,
+      denialTracker: this.denialTracker ?? undefined,
     };
   }
 

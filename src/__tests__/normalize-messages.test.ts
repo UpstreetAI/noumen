@@ -531,3 +531,142 @@ describe("mergeConsecutiveSameRole", () => {
     expect(parts[1].text).toBe("b");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Bug fix: thinking-only assistants preserved by whitespace filter
+// ---------------------------------------------------------------------------
+
+describe("filterWhitespaceOnlyAssistants — thinking preservation", () => {
+  it("preserves assistant with empty content but valid thinking_content", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "", thinking_content: "deep analysis" } as AssistantMessage,
+    ];
+    const result = filterWhitespaceOnlyAssistants(messages);
+    expect(result).toHaveLength(2);
+    expect((result[1] as AssistantMessage).thinking_content).toBe("deep analysis");
+  });
+
+  it("preserves assistant with null content but valid thinking_content", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: null, thinking_content: "reasoning" } as AssistantMessage,
+    ];
+    const result = filterWhitespaceOnlyAssistants(messages);
+    expect(result).toHaveLength(2);
+  });
+
+  it("still drops whitespace-only assistants with no thinking", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "   " } as AssistantMessage,
+    ];
+    const result = filterWhitespaceOnlyAssistants(messages);
+    expect(result).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bug fix: duplicate tool_result deduplication
+// ---------------------------------------------------------------------------
+
+describe("normalizeMessagesForAPI — duplicate tool_result dedup", () => {
+  it("keeps only the first tool_result for a given tool_call_id", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "go" },
+      asstWithCalls(["t1"]),
+      toolResult("t1", "first result"),
+      toolResult("t1", "duplicate result"),
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    const toolResults = result.filter((m) => m.role === "tool");
+    expect(toolResults).toHaveLength(1);
+    expect((toolResults[0] as import("../session/types.js").ToolResultMessage).content).toBe("first result");
+  });
+
+  it("preserves distinct tool_results for different IDs", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "go" },
+      asstWithCalls(["t1", "t2"]),
+      toolResult("t1", "result1"),
+      toolResult("t2", "result2"),
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    const toolResults = result.filter((m) => m.role === "tool");
+    expect(toolResults).toHaveLength(2);
+  });
+
+  it("handles multiple duplicates across different IDs", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "go" },
+      asstWithCalls(["t1", "t2"]),
+      toolResult("t1", "first-1"),
+      toolResult("t2", "first-2"),
+      toolResult("t1", "dup-1"),
+      toolResult("t2", "dup-2"),
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    const toolResults = result.filter((m) => m.role === "tool");
+    expect(toolResults).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bug fix: trailing thinking-only assistant stripped
+// ---------------------------------------------------------------------------
+
+describe("normalizeMessagesForAPI — trailing thinking-only assistant", () => {
+  it("removes trailing assistant with empty content and thinking only", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "think about this" },
+      { role: "assistant", content: "", thinking_content: "deep thought", thinking_signature: "sig123" } as AssistantMessage,
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    expect(result).toHaveLength(1);
+    expect(result[0].role).toBe("user");
+  });
+
+  it("preserves thinking on trailing assistant with substantive text", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "think about this" },
+      { role: "assistant", content: "Here is my answer", thinking_content: "deep thought" } as AssistantMessage,
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    const last = result[result.length - 1] as AssistantMessage;
+    expect(last.thinking_content).toBe("deep thought");
+  });
+
+  it("preserves thinking on trailing assistant with tool_calls", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "do something" },
+      { role: "assistant", content: null, thinking_content: "planning", tool_calls: [tc("t1")] } as AssistantMessage,
+      toolResult("t1", "done"),
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    const assistants = result.filter((m) => m.role === "assistant");
+    expect((assistants[0] as AssistantMessage).thinking_content).toBe("planning");
+  });
+
+  it("does not strip thinking from non-trailing assistant", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "step 1" },
+      { role: "assistant", content: "", thinking_content: "thought" } as AssistantMessage,
+      { role: "user", content: "step 2" },
+      { role: "assistant", content: "response" } as AssistantMessage,
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    const assistants = result.filter((m) => m.role === "assistant");
+    expect(assistants).toHaveLength(2);
+    expect((assistants[0] as AssistantMessage).thinking_content).toBe("thought");
+  });
+
+  it("removes trailing assistant with redacted_thinking_data and no text", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "think" },
+      { role: "assistant", content: null, thinking_content: "secret", redacted_thinking_data: "redacted" } as AssistantMessage,
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    expect(result).toHaveLength(1);
+    expect(result[0].role).toBe("user");
+  });
+});

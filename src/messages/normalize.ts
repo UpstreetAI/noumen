@@ -28,12 +28,14 @@ import { contentToString } from "../utils/content.js";
  *  1. Drop system messages (system prompt is a separate param)
  *  2. Deduplicate tool_use IDs across assistants
  *  3. Strip orphaned tool_results with no matching tool_use
- *  4. Insert synthetic error results for unpaired tool_uses
- *  5. Filter whitespace-only assistant messages
- *  6. Filter orphaned thinking-only assistants
- *  7. Merge consecutive same-role messages
- *  8. Ensure every assistant has non-null content
- *  9. Ensure array starts with a user message
+ *  4. Deduplicate tool_results with the same tool_call_id
+ *  5. Insert synthetic error results for unpaired tool_uses
+ *  6. Filter whitespace-only assistant messages
+ *  7. Filter orphaned thinking-only assistants
+ *  8. Merge consecutive same-role messages
+ *  9. Ensure every assistant has non-null content
+ * 10. Strip thinking-only content from trailing assistant
+ * 11. Ensure array starts with a user message
  */
 export function normalizeMessagesForAPI(messages: ChatMessage[]): ChatMessage[] {
   let result = messages.slice();
@@ -41,11 +43,13 @@ export function normalizeMessagesForAPI(messages: ChatMessage[]): ChatMessage[] 
   result = dropSystemMessages(result);
   result = deduplicateToolUseIds(result);
   result = stripOrphanedToolResults(result);
+  result = deduplicateToolResults(result);
   result = ensureToolResultPairing(result);
   result = filterWhitespaceOnlyAssistants(result);
   result = filterOrphanedThinkingAssistants(result);
   result = mergeConsecutiveSameRole(result);
   result = ensureNonEmptyAssistantContent(result);
+  result = stripTrailingThinkingOnlyAssistant(result);
   result = ensureStartsWithUser(result);
 
   return result;
@@ -142,7 +146,26 @@ function stripOrphanedToolResults(messages: ChatMessage[]): ChatMessage[] {
 }
 
 // ---------------------------------------------------------------------------
-// Step 4: Ensure tool result pairing
+// Step 4: Deduplicate tool_results
+// ---------------------------------------------------------------------------
+
+/**
+ * Keep only the first tool result for each tool_call_id. Duplicates can
+ * appear after crash recovery or corrupted session transcripts.
+ */
+function deduplicateToolResults(messages: ChatMessage[]): ChatMessage[] {
+  const seen = new Set<string>();
+  return messages.filter((msg) => {
+    if (msg.role !== "tool") return true;
+    const id = (msg as ToolResultMessage).tool_call_id;
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Step 5: Ensure tool result pairing
 // ---------------------------------------------------------------------------
 
 /**
@@ -223,6 +246,7 @@ export function filterWhitespaceOnlyAssistants(
     if (msg.role !== "assistant") return true;
     const asst = msg as AssistantMessage;
     if (asst.tool_calls && asst.tool_calls.length > 0) return true;
+    if (asst.thinking_content) return true;
     const text =
       typeof asst.content === "string"
         ? asst.content
@@ -356,7 +380,34 @@ function ensureNonEmptyAssistantContent(
 }
 
 // ---------------------------------------------------------------------------
-// Step 9: Ensure starts with user
+// Step 10: Strip thinking-only trailing assistant
+// ---------------------------------------------------------------------------
+
+/**
+ * If the last message is an assistant with only thinking content (no
+ * substantive text and no tool_calls), strip the thinking fields. The
+ * Anthropic API rejects messages where thinking blocks are the sole
+ * content in the final assistant turn.
+ */
+function stripTrailingThinkingOnlyAssistant(
+  messages: ChatMessage[],
+): ChatMessage[] {
+  if (messages.length === 0) return messages;
+  const last = messages[messages.length - 1];
+  if (last.role !== "assistant") return messages;
+  const asst = last as AssistantMessage;
+  if (asst.tool_calls && asst.tool_calls.length > 0) return messages;
+  if (!asst.thinking_content) return messages;
+  const text =
+    typeof asst.content === "string"
+      ? asst.content
+      : contentToString(asst.content ?? "");
+  if (text.trim() !== "") return messages;
+  return messages.slice(0, -1);
+}
+
+// ---------------------------------------------------------------------------
+// Step 11: Ensure starts with user
 // ---------------------------------------------------------------------------
 
 /**
