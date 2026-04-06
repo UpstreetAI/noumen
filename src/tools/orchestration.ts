@@ -1,5 +1,5 @@
 import type { Tool, ToolResult, ToolContext } from "./types.js";
-import type { ToolCallContent } from "../session/types.js";
+import type { ToolCallContent, StreamEvent } from "../session/types.js";
 import { resolveToolFlag } from "./registry.js";
 import { all } from "../utils/generators.js";
 
@@ -13,6 +13,8 @@ export interface ToolCallExecResult {
   permissionDenied?: boolean;
   /** When true, the turn loop should stop after processing this batch */
   preventContinuation?: boolean;
+  /** Permission and lifecycle events emitted during execution */
+  events?: StreamEvent[];
 }
 
 export type ToolCallExecutor = (

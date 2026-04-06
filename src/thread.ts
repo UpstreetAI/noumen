@@ -21,7 +21,6 @@ import type {
   PermissionConfig,
   PermissionContext,
   PermissionHandler,
-  PermissionRequest,
 } from "./permissions/types.js";
 import type { HookDefinition } from "./hooks/types.js";
 import type { ThinkingConfig } from "./thinking/types.js";
@@ -40,17 +39,18 @@ import { restoreSession } from "./session/resume.js";
 import { generateMissingToolResults } from "./session/recovery.js";
 import { normalizeMessagesForAPI } from "./messages/normalize.js";
 import {
-  runPreToolUseHooks,
-  runPostToolUseHooks,
-  runPostToolUseFailureHooks,
   runNotificationHooks,
 } from "./hooks/runner.js";
-import { ToolRegistry, resolveToolFlag } from "./tools/registry.js";
+import { ToolRegistry } from "./tools/registry.js";
 import { runToolsBatched, type ToolCallExecResult } from "./tools/orchestration.js";
 import {
   StreamingToolExecutor,
   type StreamingExecResult,
 } from "./tools/streaming-executor.js";
+import {
+  executeToolCall,
+  type ToolExecutionContext,
+} from "./tools/execution-pipeline.js";
 import { SessionStorage } from "./session/storage.js";
 import { buildSystemPrompt } from "./prompt/system.js";
 import { compactConversation } from "./compact/compact.js";
@@ -88,14 +88,12 @@ import {
   type ReactiveCompactConfig,
 } from "./compact/reactive-compact.js";
 import type { SnipConfig } from "./compact/history-snip.js";
-import { contentToString } from "./utils/content.js";
 import { FileStateCache } from "./file-state/cache.js";
 import type { FileStateCacheConfig } from "./file-state/types.js";
 import { generateUUID } from "./utils/uuid.js";
 import { activateSkillsForPaths, getActiveSkills } from "./skills/activation.js";
 import { createSkillTool } from "./tools/skill.js";
-import { resolvePermission, type ResolvePermissionOptions } from "./permissions/pipeline.js";
-import { isPathInWorkingDirectories } from "./permissions/rules.js";
+import type { ResolvePermissionOptions } from "./permissions/pipeline.js";
 import { DenialTracker } from "./permissions/denial-tracking.js";
 import { withRetry, CannotRetryError } from "./retry/engine.js";
 import { classifyError } from "./retry/classify.js";
@@ -448,6 +446,19 @@ export class Thread {
       const retryConfig = this.config.retry;
       let currentMaxTokens = this.config.maxTokens;
 
+      const execCtx: ToolExecutionContext = {
+        registry: this.toolRegistry,
+        toolCtx,
+        permCtx: this.permissionContext,
+        permHandler: this.permissionHandler,
+        denialTracker: this.denialTracker,
+        hooks,
+        sessionId: this.sessionId,
+        tracer: this.tracer,
+        parentSpan: interactionSpan,
+        buildPermissionOpts: () => this.buildPermissionOpts(),
+      };
+
       this.microcompactTokensFreed = 0;
       this.hasAttemptedReactiveCompact = false;
 
@@ -569,7 +580,7 @@ export class Thread {
         if (useStreamingExec) {
           streamingExec = new StreamingToolExecutor(
             (name) => this.toolRegistry.get(name),
-            this.buildStreamingExecutorFn(toolCtx, hooks),
+            this.buildStreamingExecutorFn(execCtx),
             signal,
           );
         }
@@ -1291,264 +1302,14 @@ export class Thread {
             }
           } else {
             // Batched execution (original path)
-            const permCtx = this.permissionContext;
-            const permHandler = this.permissionHandler;
-            const eventQueue: StreamEvent[] = [];
-
             const executor = async (
-            tc: ToolCallContent,
-            parsedArgs: Record<string, unknown>,
-          ): Promise<ToolCallExecResult> => {
-            try {
-            let currentArgs = parsedArgs;
-
-            // --- Early Zod validation (before permission checks) ---
-            {
-              const toolDef = registry.get(tc.function.name);
-              if (toolDef?.inputSchema) {
-                const parsed = toolDef.inputSchema.safeParse(currentArgs);
-                if (!parsed.success) {
-                  const { formatZodValidationError } = await import("./utils/zod.js");
-                  return {
-                    toolCall: tc,
-                    parsedArgs: currentArgs,
-                    result: { content: formatZodValidationError(tc.function.name, parsed.error), isError: true },
-                  };
-                }
-                currentArgs = parsed.data as Record<string, unknown>;
-              }
-            }
-
-            // --- Permission gate ---
-            if (permCtx) {
-              const tool = registry.get(tc.function.name);
-              if (tool) {
-                const decision = await resolvePermission(
-                  tool,
-                  currentArgs,
-                  toolCtx,
-                  permCtx,
-                  this.buildPermissionOpts(),
-                );
-
-                if (decision.behavior === "deny") {
-                  if (decision.reason !== "classifier") {
-                    this.denialTracker?.recordDenial();
-                  }
-                  eventQueue.push({
-                    type: "permission_denied",
-                    toolName: tc.function.name,
-                    input: currentArgs,
-                    message: decision.message,
-                  });
-                  await runNotificationHooks(hooks, "PermissionDenied", {
-                    event: "PermissionDenied", sessionId, toolName: tc.function.name,
-                    input: currentArgs, reason: decision.message,
-                  } as import("./hooks/types.js").PermissionDeniedHookInput);
-                  if (this.denialTracker?.shouldFallback().triggered) {
-                    const state = this.denialTracker.getState();
-                    eventQueue.push({
-                      type: "denial_limit_exceeded",
-                      consecutiveDenials: state.consecutiveDenials,
-                      totalDenials: state.totalDenials,
-                    });
-                    preventContinuation = true;
-                  }
-                  const content = `Permission denied: ${decision.message}`;
-                  return { toolCall: tc, parsedArgs: currentArgs, result: { content, isError: true }, permissionDenied: true };
-                }
-
-                if (decision.behavior === "ask") {
-                  await runNotificationHooks(hooks, "PermissionRequest", {
-                    event: "PermissionRequest", sessionId, toolName: tc.function.name,
-                    input: currentArgs, mode: permCtx?.mode ?? "default",
-                  } as import("./hooks/types.js").PermissionRequestHookInput);
-                  eventQueue.push({
-                    type: "permission_request",
-                    toolName: tc.function.name,
-                    input: currentArgs,
-                    message: decision.message,
-                  });
-
-                  if (permHandler) {
-                    const isReadOnly = resolveToolFlag(tool.isReadOnly, currentArgs);
-                    const isDestructive = resolveToolFlag(tool.isDestructive, currentArgs);
-                    const request: PermissionRequest = {
-                      toolName: tc.function.name,
-                      input: currentArgs,
-                      message: decision.message,
-                      suggestions: decision.suggestions,
-                      isReadOnly,
-                      isDestructive,
-                    };
-                    const response = await permHandler(request);
-
-                    if (!response.allow) {
-                      this.denialTracker?.recordDenial();
-                      const feedback = response.feedback ?? "User denied permission.";
-                      eventQueue.push({
-                        type: "permission_denied",
-                        toolName: tc.function.name,
-                        input: currentArgs,
-                        message: feedback,
-                      });
-                      await runNotificationHooks(hooks, "PermissionDenied", {
-                        event: "PermissionDenied", sessionId, toolName: tc.function.name,
-                        input: currentArgs, reason: feedback,
-                      } as import("./hooks/types.js").PermissionDeniedHookInput);
-                      if (this.denialTracker?.shouldFallback().triggered) {
-                        const state = this.denialTracker.getState();
-                        eventQueue.push({
-                          type: "denial_limit_exceeded",
-                          consecutiveDenials: state.consecutiveDenials,
-                          totalDenials: state.totalDenials,
-                        });
-                        preventContinuation = true;
-                      }
-                      const content = `Permission denied: ${feedback}`;
-                      return { toolCall: tc, parsedArgs: currentArgs, result: { content, isError: true }, permissionDenied: true };
-                    }
-
-                    if (response.updatedInput) {
-                      currentArgs = response.updatedInput;
-                    }
-                    if (response.addRules) {
-                      permCtx.rules.push(...response.addRules);
-                    }
-                  } else {
-                    this.denialTracker?.recordDenial();
-                    eventQueue.push({
-                      type: "permission_denied",
-                      toolName: tc.function.name,
-                      input: currentArgs,
-                      message: "No permission handler configured.",
-                    });
-                    await runNotificationHooks(hooks, "PermissionDenied", {
-                      event: "PermissionDenied", sessionId, toolName: tc.function.name,
-                      input: currentArgs, reason: "No permission handler configured.",
-                    } as import("./hooks/types.js").PermissionDeniedHookInput);
-                    if (this.denialTracker?.shouldFallback().triggered) {
-                      const state = this.denialTracker.getState();
-                      eventQueue.push({
-                        type: "denial_limit_exceeded",
-                        consecutiveDenials: state.consecutiveDenials,
-                        totalDenials: state.totalDenials,
-                      });
-                      preventContinuation = true;
-                    }
-                    const content = "Permission denied: No permission handler configured.";
-                    return { toolCall: tc, parsedArgs: currentArgs, result: { content, isError: true }, permissionDenied: true };
-                  }
-                }
-
-                this.denialTracker?.recordSuccess();
-                if (decision.behavior === "allow" && decision.updatedInput) {
-                  currentArgs = decision.updatedInput as Record<string, unknown>;
-                }
-                eventQueue.push({
-                  type: "permission_granted",
-                  toolName: tc.function.name,
-                  input: currentArgs,
-                });
-              }
-            }
-
-            // --- PreToolUse hooks ---
-            if (hooks.length > 0) {
-              const hookOutput = await runPreToolUseHooks(hooks, {
-                event: "PreToolUse",
-                toolName: tc.function.name,
-                toolInput: currentArgs,
-                toolUseId: tc.id,
-                sessionId,
-              });
-
-              if (hookOutput.decision === "deny") {
-                const msg = hookOutput.message ?? "Blocked by hook.";
-                return { toolCall: tc, parsedArgs: currentArgs, result: { content: `Hook denied: ${msg}`, isError: true }, permissionDenied: true };
-              }
-              if (hookOutput.updatedInput) {
-                currentArgs = hookOutput.updatedInput;
-
-                // Re-validate working directory enforcement on modified input
-                if (permCtx && permCtx.workingDirectories.length > 0) {
-                  const hookFilePath =
-                    typeof currentArgs.file_path === "string" ? currentArgs.file_path
-                    : typeof currentArgs.path === "string" ? currentArgs.path
-                    : undefined;
-                  if (hookFilePath && !isPathInWorkingDirectories(hookFilePath, permCtx.workingDirectories)) {
-                    return {
-                      toolCall: tc,
-                      parsedArgs: currentArgs,
-                      result: { content: `Permission denied: Hook-modified path "${hookFilePath}" is outside working directories.`, isError: true },
-                      permissionDenied: true,
-                    };
-                  }
-                }
-              }
-              if (hookOutput.preventContinuation) {
-                preventContinuation = true;
-              }
-            }
-
-            const toolSpan = this.tracer.startSpan("noumen.tool.execute", {
-              parent: interactionSpan,
-              attributes: { "tool.name": tc.function.name, "tool.id": tc.id },
-            });
-            let result = await registry.execute(
-              tc.function.name,
-              currentArgs,
-              toolCtx,
-            );
-            const resultText = contentToString(result.content);
-            toolSpan.setStatus(result.isError ? SpanStatusCode.ERROR : SpanStatusCode.OK, result.isError ? resultText : undefined);
-            toolSpan.end();
-
-            // --- PostToolUse hooks ---
-            if (hooks.length > 0) {
-              const postOutput = await runPostToolUseHooks(hooks, {
-                event: "PostToolUse",
-                toolName: tc.function.name,
-                toolInput: currentArgs,
-                toolUseId: tc.id,
-                toolOutput: resultText,
-                isError: result.isError ?? false,
-                sessionId,
-              });
-
-              if (postOutput.updatedOutput !== undefined) {
-                result = { ...result, content: postOutput.updatedOutput };
-              }
-              if (postOutput.preventContinuation) {
-                preventContinuation = true;
-              }
-
-              // --- PostToolUseFailure hooks ---
-              if (result.isError) {
-                const failOutput = await runPostToolUseFailureHooks(hooks, {
-                  event: "PostToolUseFailure",
-                  toolName: tc.function.name,
-                  toolInput: currentArgs,
-                  toolUseId: tc.id,
-                  toolOutput: contentToString(result.content),
-                  errorMessage: contentToString(result.content),
-                  sessionId,
-                });
-                if (failOutput.updatedOutput !== undefined) {
-                  result = { ...result, content: failOutput.updatedOutput };
-                }
-                if (failOutput.preventContinuation) {
-                  preventContinuation = true;
-                }
-              }
-            }
-
-            return { toolCall: tc, parsedArgs: currentArgs, result, preventContinuation };
-            } catch (execErr) {
-              const msg = execErr instanceof Error ? execErr.message : String(execErr);
-              return { toolCall: tc, parsedArgs, result: { content: `Error executing tool: ${msg}`, isError: true } };
-            }
-          };
+              tc: ToolCallContent,
+              parsedArgs: Record<string, unknown>,
+            ): Promise<ToolCallExecResult> => {
+              const pipelineResult = await executeToolCall(tc, parsedArgs, execCtx);
+              if (pipelineResult.preventContinuation) preventContinuation = true;
+              return pipelineResult;
+            };
 
           const batchSpilledRecords: import("./compact/tool-result-storage.js").ContentReplacementRecord[] = [];
 
@@ -1557,11 +1318,9 @@ export class Thread {
             (name) => registry.get(name),
             executor,
           )) {
-            // Flush queued permission events
-            for (const evt of eventQueue) {
+            for (const evt of execResult.events ?? []) {
               yield evt;
             }
-            eventQueue.length = 0;
 
             const { toolCall: tc, parsedArgs: finalArgs, result, permissionDenied } = execResult;
 
@@ -1616,12 +1375,6 @@ export class Thread {
               touchedFilePaths.push(finalArgs.file_path);
             }
           }
-
-            // Flush any remaining permission events
-            for (const evt of eventQueue) {
-              yield evt;
-            }
-            eventQueue.length = 0;
 
             // Persist content replacement records for resume
             if (batchSpilledRecords.length > 0) {
@@ -1916,171 +1669,16 @@ export class Thread {
   }
 
   private buildStreamingExecutorFn(
-    toolCtx: ToolContext,
-    hooks: HookDefinition[],
+    execCtx: ToolExecutionContext,
   ): import("./tools/streaming-executor.js").StreamingToolExecutorFn {
-    const permCtx = this.permissionContext;
-    const permHandler = this.permissionHandler;
-    const registry = this.toolRegistry;
-    const sessionId = this.sessionId;
-
-    return async (tc, parsedArgs, signal) => {
-      let currentArgs = parsedArgs;
-      const events: StreamEvent[] = [];
-
-      // --- Early Zod validation (before permission checks) ---
-      {
-        const toolDef = registry.get(tc.function.name);
-        if (toolDef?.inputSchema) {
-          const parsed = toolDef.inputSchema.safeParse(currentArgs);
-          if (!parsed.success) {
-            const { formatZodValidationError } = await import("./utils/zod.js");
-            return {
-              result: { content: formatZodValidationError(tc.function.name, parsed.error), isError: true },
-              events,
-            };
-          }
-          currentArgs = parsed.data as Record<string, unknown>;
-        }
-      }
-
-      if (permCtx) {
-        const tool = registry.get(tc.function.name);
-        if (tool) {
-          const decision = await resolvePermission(tool, currentArgs, toolCtx, permCtx, this.buildPermissionOpts());
-
-          if (decision.behavior === "deny") {
-            if (decision.reason !== "classifier") {
-              this.denialTracker?.recordDenial();
-            }
-            events.push({ type: "permission_denied", toolName: tc.function.name, input: currentArgs, message: decision.message });
-            await runNotificationHooks(hooks, "PermissionDenied", {
-              event: "PermissionDenied", sessionId, toolName: tc.function.name,
-              input: currentArgs, reason: decision.message,
-            } as import("./hooks/types.js").PermissionDeniedHookInput);
-            if (this.denialTracker?.shouldFallback().triggered) {
-              const state = this.denialTracker.getState();
-              events.push({ type: "denial_limit_exceeded", consecutiveDenials: state.consecutiveDenials, totalDenials: state.totalDenials });
-            }
-            return { result: { content: `Permission denied: ${decision.message}`, isError: true }, permissionDenied: true, preventContinuation: this.denialTracker?.shouldFallback().triggered || undefined, events };
-          }
-
-          if (decision.behavior === "ask") {
-            await runNotificationHooks(hooks, "PermissionRequest", {
-              event: "PermissionRequest", sessionId, toolName: tc.function.name,
-              input: currentArgs, mode: permCtx?.mode ?? "default",
-            } as import("./hooks/types.js").PermissionRequestHookInput);
-            events.push({ type: "permission_request", toolName: tc.function.name, input: currentArgs, message: decision.message });
-            if (permHandler) {
-              const isReadOnly = resolveToolFlag(tool.isReadOnly, currentArgs);
-              const isDestructive = resolveToolFlag(tool.isDestructive, currentArgs);
-              const response = await permHandler({
-                toolName: tc.function.name,
-                input: currentArgs,
-                message: decision.message,
-                suggestions: decision.suggestions,
-                isReadOnly,
-                isDestructive,
-              });
-              if (!response.allow) {
-                this.denialTracker?.recordDenial();
-                const feedback = response.feedback ?? "User denied permission.";
-                events.push({ type: "permission_denied", toolName: tc.function.name, input: currentArgs, message: feedback });
-                await runNotificationHooks(hooks, "PermissionDenied", {
-                  event: "PermissionDenied", sessionId, toolName: tc.function.name,
-                  input: currentArgs, reason: feedback,
-                } as import("./hooks/types.js").PermissionDeniedHookInput);
-                if (this.denialTracker?.shouldFallback().triggered) {
-                  const state = this.denialTracker.getState();
-                  events.push({ type: "denial_limit_exceeded", consecutiveDenials: state.consecutiveDenials, totalDenials: state.totalDenials });
-                }
-                return { result: { content: `Permission denied: ${feedback}`, isError: true }, permissionDenied: true, preventContinuation: this.denialTracker?.shouldFallback().triggered || undefined, events };
-              }
-              if (response.updatedInput) currentArgs = response.updatedInput;
-              if (response.addRules) permCtx.rules.push(...response.addRules);
-            } else {
-              this.denialTracker?.recordDenial();
-              events.push({ type: "permission_denied", toolName: tc.function.name, input: currentArgs, message: "No permission handler configured." });
-              await runNotificationHooks(hooks, "PermissionDenied", {
-                event: "PermissionDenied", sessionId, toolName: tc.function.name,
-                input: currentArgs, reason: "No permission handler configured.",
-              } as import("./hooks/types.js").PermissionDeniedHookInput);
-              if (this.denialTracker?.shouldFallback().triggered) {
-                const state = this.denialTracker.getState();
-                events.push({ type: "denial_limit_exceeded", consecutiveDenials: state.consecutiveDenials, totalDenials: state.totalDenials });
-              }
-              return { result: { content: "Permission denied: No permission handler configured.", isError: true }, permissionDenied: true, preventContinuation: this.denialTracker?.shouldFallback().triggered || undefined, events };
-            }
-          }
-
-          this.denialTracker?.recordSuccess();
-          if (decision.behavior === "allow" && decision.updatedInput) {
-            currentArgs = decision.updatedInput as Record<string, unknown>;
-          }
-          events.push({ type: "permission_granted", toolName: tc.function.name, input: currentArgs });
-        }
-      }
-
-      let hookPreventContinuation = false;
-
-      if (hooks.length > 0) {
-        const hookOutput = await runPreToolUseHooks(hooks, {
-          event: "PreToolUse", toolName: tc.function.name, toolInput: currentArgs, toolUseId: tc.id, sessionId,
-        });
-        if (hookOutput.decision === "deny") {
-          return { result: { content: `Hook denied: ${hookOutput.message ?? "Blocked by hook."}`, isError: true }, permissionDenied: true, events };
-        }
-        if (hookOutput.updatedInput) {
-          currentArgs = hookOutput.updatedInput;
-
-          // Re-validate working directory enforcement on modified input
-          if (permCtx && permCtx.workingDirectories.length > 0) {
-            const hookFilePath =
-              typeof currentArgs.file_path === "string" ? currentArgs.file_path
-              : typeof currentArgs.path === "string" ? currentArgs.path
-              : undefined;
-            if (hookFilePath && !isPathInWorkingDirectories(hookFilePath, permCtx.workingDirectories)) {
-              return {
-                result: { content: `Permission denied: Hook-modified path "${hookFilePath}" is outside working directories.`, isError: true },
-                permissionDenied: true,
-                events,
-              };
-            }
-          }
-        }
-        if (hookOutput.preventContinuation) hookPreventContinuation = true;
-      }
-
-      const toolSpan = this.tracer.startSpan("noumen.tool.execute", {
-        attributes: { "tool.name": tc.function.name, "tool.id": tc.id },
-      });
-      let result = await registry.execute(tc.function.name, currentArgs, toolCtx);
-      const streamResultText = contentToString(result.content);
-      toolSpan.setStatus(result.isError ? SpanStatusCode.ERROR : SpanStatusCode.OK, result.isError ? streamResultText : undefined);
-      toolSpan.end();
-
-      if (hooks.length > 0) {
-        const postOutput = await runPostToolUseHooks(hooks, {
-          event: "PostToolUse", toolName: tc.function.name, toolInput: currentArgs, toolUseId: tc.id, toolOutput: streamResultText, isError: result.isError ?? false, sessionId,
-        });
-        if (postOutput.updatedOutput !== undefined) {
-          result = { ...result, content: postOutput.updatedOutput };
-        }
-        if (postOutput.preventContinuation) hookPreventContinuation = true;
-
-        if (result.isError) {
-          const failOutput = await runPostToolUseFailureHooks(hooks, {
-            event: "PostToolUseFailure", toolName: tc.function.name, toolInput: currentArgs, toolUseId: tc.id,
-            toolOutput: contentToString(result.content), errorMessage: contentToString(result.content), sessionId,
-          });
-          if (failOutput.updatedOutput !== undefined) {
-            result = { ...result, content: failOutput.updatedOutput };
-          }
-          if (failOutput.preventContinuation) hookPreventContinuation = true;
-        }
-      }
-
-      return { result, preventContinuation: hookPreventContinuation || undefined, events };
+    return async (tc, parsedArgs, _signal) => {
+      const pipelineResult = await executeToolCall(tc, parsedArgs, execCtx);
+      return {
+        result: pipelineResult.result,
+        permissionDenied: pipelineResult.permissionDenied,
+        preventContinuation: pipelineResult.preventContinuation,
+        events: pipelineResult.events,
+      };
     };
   }
 
