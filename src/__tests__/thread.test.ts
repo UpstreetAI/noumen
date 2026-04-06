@@ -1304,3 +1304,36 @@ describe("thinking signatures stripped on model fallback", () => {
     expect(hasSwitchEvent).toBe(true);
   });
 });
+
+describe("output token recovery", () => {
+  it("persists continue messages to storage on finish_reason length", async () => {
+    // First response: partial text truncated by max_tokens (finish_reason: "length")
+    const lengthChunks: import("../providers/types.js").ChatStreamChunk[] = [
+      textChunk("partial content here"),
+      {
+        id: "mock-len",
+        model: "mock-model",
+        choices: [{ index: 0, delta: {}, finish_reason: "length" }],
+      },
+    ];
+    // Second response: continuation after escalated max_tokens
+    provider.addResponse(lengthChunks);
+    provider.addResponse(textResponse("...continued"));
+
+    const thread = new Thread(config, { sessionId: "s-len" });
+    await collectEvents(thread.run("write something long"));
+
+    const content = fs.files.get("/sessions/s-len.jsonl")!;
+    const lines = content.trim().split("\n").map((l: string) => JSON.parse(l));
+    const messages = lines
+      .filter((e: any) => e.type === "message")
+      .map((e: any) => e.message);
+
+    // Should have: user, partial assistant, continue user, final assistant
+    const userMsgs = messages.filter((m: any) => m.role === "user");
+    const continueMsg = userMsgs.find((m: any) =>
+      typeof m.content === "string" && m.content.includes("Continue from where you left off"),
+    );
+    expect(continueMsg).toBeDefined();
+  });
+});

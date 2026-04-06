@@ -166,3 +166,69 @@ describe("stripTrailingWhitespace", () => {
     expect(stripTrailingWhitespace("hello\nworld")).toBe("hello\nworld");
   });
 });
+
+// ---------------------------------------------------------------------------
+// withFileLock — per-file async lock
+// ---------------------------------------------------------------------------
+
+import { withFileLock } from "../tools/file-lock.js";
+
+describe("withFileLock", () => {
+  it("serializes concurrent operations on the same file", async () => {
+    const order: string[] = [];
+    const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    const p1 = withFileLock("/same/file.ts", async () => {
+      order.push("a-start");
+      await delay(30);
+      order.push("a-end");
+      return "a";
+    });
+
+    const p2 = withFileLock("/same/file.ts", async () => {
+      order.push("b-start");
+      await delay(10);
+      order.push("b-end");
+      return "b";
+    });
+
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r1).toBe("a");
+    expect(r2).toBe("b");
+    expect(order).toEqual(["a-start", "a-end", "b-start", "b-end"]);
+  });
+
+  it("allows parallel operations on different files", async () => {
+    const order: string[] = [];
+    const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    const p1 = withFileLock("/file-a.ts", async () => {
+      order.push("a-start");
+      await delay(30);
+      order.push("a-end");
+      return "a";
+    });
+
+    const p2 = withFileLock("/file-b.ts", async () => {
+      order.push("b-start");
+      await delay(10);
+      order.push("b-end");
+      return "b";
+    });
+
+    await Promise.all([p1, p2]);
+    // b should finish before a since they run in parallel and b is faster
+    expect(order.indexOf("b-end")).toBeLessThan(order.indexOf("a-end"));
+  });
+
+  it("releases lock when fn throws", async () => {
+    const error = new Error("boom");
+    await expect(
+      withFileLock("/crash.ts", async () => { throw error; }),
+    ).rejects.toThrow("boom");
+
+    // Lock should be released — next call proceeds immediately
+    const result = await withFileLock("/crash.ts", async () => "ok");
+    expect(result).toBe("ok");
+  });
+});

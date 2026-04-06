@@ -145,8 +145,8 @@ const GIT_READ_ONLY_SUBCOMMANDS = new Set([
   "count-objects",
   "fsck",
   "verify-pack",
-  "reflog",
   "stash",    // "stash list" / "stash show" — stash apply/pop are not here
+  "reflog",   // bare / "reflog show" / "reflog list" — expire/delete caught below
   "tag",      // "tag -l" is safe; "tag <name>" creates — caught below
   "branch",   // "branch --list" is safe; "branch <name>" creates — caught below
   "remote",   // "remote -v" safe; "remote add/remove" — caught below
@@ -155,6 +155,12 @@ const GIT_READ_ONLY_SUBCOMMANDS = new Set([
   "version",
   "--version",
   "--help",
+]);
+
+// Flags on "read-only" git subcommands that write to the filesystem.
+// Checked for ALL read-only subcommands before allowing the classification.
+const GIT_READ_ONLY_WRITE_FLAGS = new Set([
+  "--output",
 ]);
 
 // Subcommands of git that are always mutating when used
@@ -497,6 +503,17 @@ function classifyGitCommand(command: string): CommandClassification {
       return { isReadOnly: false, isDestructive: false, reason: "git stash mutating operation" };
     }
 
+    if (subcommand === "reflog") {
+      const reflogSubcmd = positional[0];
+      if (!reflogSubcmd || reflogSubcmd === "show" || reflogSubcmd === "list") {
+        return { isReadOnly: true, isDestructive: false, reason: `git reflog${reflogSubcmd ? " " + reflogSubcmd : ""} is read-only` };
+      }
+      if (reflogSubcmd === "expire" || reflogSubcmd === "delete") {
+        return { isReadOnly: false, isDestructive: true, reason: `git reflog ${reflogSubcmd} is destructive` };
+      }
+      return { isReadOnly: false, isDestructive: false, reason: `git reflog ${reflogSubcmd} is mutating` };
+    }
+
     if (subcommand === "config") {
       if (hasTokenFlag(flags, "--set", "--add", "--unset", "--unset-all", "--replace-all", "--rename-section", "--remove-section")) {
         return { isReadOnly: false, isDestructive: false, reason: "git config write operation" };
@@ -510,6 +527,15 @@ function classifyGitCommand(command: string): CommandClassification {
       const remoteSubcmd = positional[0];
       if (remoteSubcmd && ["add", "remove", "rename", "set-url", "set-branches", "prune"].includes(remoteSubcmd)) {
         return { isReadOnly: false, isDestructive: false, reason: "git remote mutating operation" };
+      }
+    }
+
+    // Flag-level safety: reject flags known to cause file writes on
+    // otherwise-read-only subcommands (e.g. `git diff --output=FILE`).
+    for (const flag of flags) {
+      const flagName = flag.split("=")[0];
+      if (GIT_READ_ONLY_WRITE_FLAGS.has(flagName)) {
+        return { isReadOnly: false, isDestructive: false, reason: `git ${subcommand} with ${flagName} may write files` };
       }
     }
 

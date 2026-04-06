@@ -468,4 +468,63 @@ describe("StreamingToolExecutor re-entrance guard", () => {
     expect(executionCounts.get("u2")).toBe(1);
     expect(executionCounts.get("u3")).toBe(1);
   });
+
+  it("getCompletedResults returns finished tools before discard", async () => {
+    let resolveSecond!: () => void;
+    const secondStarted = new Promise<void>((r) => { resolveSecond = r; });
+    let secondBlocked = new Promise<void>(() => {});
+
+    const executor = new StreamingToolExecutor(
+      (name) => ({
+        name,
+        description: "",
+        parameters: { type: "object", properties: {} },
+        isConcurrencySafe: true,
+        call: async () => ({ content: "" }),
+      } as any),
+      async (toolCall) => {
+        if (toolCall.id === "fast") {
+          return { result: { content: "fast-done" }, events: [] };
+        }
+        resolveSecond();
+        await secondBlocked;
+        return { result: { content: "slow-done" }, events: [] };
+      },
+    );
+
+    executor.addTool(
+      { id: "fast", type: "function" as const, function: { name: "Safe", arguments: '{}' } },
+      {},
+    );
+    executor.addTool(
+      { id: "slow", type: "function" as const, function: { name: "Safe", arguments: '{}' } },
+      {},
+    );
+
+    // Wait for the slow tool to at least start
+    await secondStarted;
+    // Give the fast tool time to complete
+    await new Promise((r) => setTimeout(r, 20));
+
+    // Collect completed results BEFORE discarding
+    const completed: any[] = [];
+    for (const result of executor.getCompletedResults()) {
+      completed.push(result);
+    }
+
+    expect(completed).toHaveLength(1);
+    expect(completed[0].toolCall.id).toBe("fast");
+    expect(completed[0].result.content).toBe("fast-done");
+
+    // Now discard and collect remaining — slow tool should get error
+    executor.discard();
+    const remaining: any[] = [];
+    for await (const result of executor.getRemainingResults()) {
+      remaining.push(result);
+    }
+
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].toolCall.id).toBe("slow");
+    expect(remaining[0].result.isError).toBe(true);
+  });
 });

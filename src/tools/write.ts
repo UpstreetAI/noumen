@@ -2,6 +2,7 @@ import * as nodePath from "node:path";
 import type { Tool, ToolResult, ToolContext } from "./types.js";
 import { WRITE_PROMPT } from "./prompts/write.js";
 import { isDangerousPath } from "../permissions/pipeline.js";
+import { withFileLock } from "./file-lock.js";
 
 export const writeFileTool: Tool = {
   name: "WriteFile",
@@ -89,7 +90,11 @@ export const writeFileTool: Tool = {
         await ctx.fs.mkdir(dir, { recursive: true }).catch(() => {});
       }
 
-      await ctx.fs.writeFile(filePath, content);
+      // Hold a per-file lock for the write to prevent TOCTOU races when
+      // concurrent writes target the same path.
+      await withFileLock(filePath, async () => {
+        await ctx.fs.writeFile(filePath, content);
+      });
 
       ctx.notifyHook?.("FileWrite", {
         event: "FileWrite",
@@ -99,7 +104,6 @@ export const writeFileTool: Tool = {
         isNew: !existed,
       }).catch(() => {});
 
-      // Update file state cache with the written content
       if (ctx.fileStateCache) {
         let mtime = 0;
         try {

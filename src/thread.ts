@@ -661,7 +661,16 @@ export class Thread {
           stream = this.config.provider.chat(chatParams);
         }
         } catch (providerErr) {
-          streamingExec?.discard();
+          // Collect any already-completed streaming results before discarding.
+          // These tools ran successfully with real side effects so their results
+          // must be preserved rather than replaced with fabricated errors.
+          const completedBeforeError: import("./tools/streaming-executor.js").StreamingExecResult[] = [];
+          if (streamingExec) {
+            for (const result of streamingExec.getCompletedResults()) {
+              completedBeforeError.push(result);
+            }
+            streamingExec.discard();
+          }
 
           // Reactive compact: recover from context overflow by compacting
           const isOverflow =
@@ -712,7 +721,9 @@ export class Thread {
             });
           }
 
-          // Save any partially-streamed tool calls accumulated before the error
+          // Save any partially-streamed tool calls accumulated before the error.
+          // Use real results from completed streaming tools; only generate
+          // synthetic error results for tools that did not complete.
           const errorReason = `Provider error: ${providerErr instanceof Error ? providerErr.message : String(providerErr)}`;
           if (accumulatedToolCalls.size > 0) {
             const partialCalls: ToolCallContent[] = Array.from(accumulatedToolCalls.values()).map((tc) => ({
@@ -726,7 +737,22 @@ export class Thread {
             this.messages.push(partialAssistant);
             await this.storage.appendMessage(this.sessionId, partialAssistant);
 
-            const syntheticResults = generateMissingToolResults(partialAssistant, [], errorReason);
+            // First, persist real results from tools that completed before the error
+            const realToolMsgs: ChatMessage[] = [];
+            for (const completed of completedBeforeError) {
+              const toolResultMsg: ChatMessage = {
+                role: "tool",
+                tool_call_id: completed.toolCall.id,
+                content: completed.result.content,
+                ...(completed.result.isError ? { isError: true } : {}),
+              };
+              this.messages.push(toolResultMsg);
+              await this.storage.appendMessage(this.sessionId, toolResultMsg);
+              realToolMsgs.push(toolResultMsg);
+            }
+
+            // Then generate synthetic error results only for incomplete tools
+            const syntheticResults = generateMissingToolResults(partialAssistant, realToolMsgs, errorReason);
             for (const sr of syntheticResults) {
               this.messages.push(sr);
               await this.storage.appendMessage(this.sessionId, sr);
@@ -858,7 +884,13 @@ export class Thread {
           }
         }
         } catch (streamErr) {
-          streamingExec?.discard();
+          const streamCompletedResults: import("./tools/streaming-executor.js").StreamingExecResult[] = [];
+          if (streamingExec) {
+            for (const result of streamingExec.getCompletedResults()) {
+              streamCompletedResults.push(result);
+            }
+            streamingExec.discard();
+          }
           if (accumulatedToolCalls.size > 0 || accumulatedContent.length > 0) {
             const partialCalls: ToolCallContent[] = Array.from(accumulatedToolCalls.values()).map((tc) => ({
               id: tc.id, type: "function" as const, function: { name: tc.name, arguments: tc.arguments },
@@ -871,8 +903,20 @@ export class Thread {
             this.messages.push(partialAssistant);
             await this.storage.appendMessage(this.sessionId, partialAssistant);
             if (partialCalls.length > 0) {
+              const realToolMsgs: ChatMessage[] = [];
+              for (const completed of streamCompletedResults) {
+                const toolResultMsg: ChatMessage = {
+                  role: "tool",
+                  tool_call_id: completed.toolCall.id,
+                  content: completed.result.content,
+                  ...(completed.result.isError ? { isError: true } : {}),
+                };
+                this.messages.push(toolResultMsg);
+                await this.storage.appendMessage(this.sessionId, toolResultMsg);
+                realToolMsgs.push(toolResultMsg);
+              }
               const reason = `Stream error: ${streamErr instanceof Error ? streamErr.message : String(streamErr)}`;
-              const syntheticResults = generateMissingToolResults(partialAssistant, [], reason);
+              const syntheticResults = generateMissingToolResults(partialAssistant, realToolMsgs, reason);
               for (const sr of syntheticResults) {
                 this.messages.push(sr);
                 await this.storage.appendMessage(this.sessionId, sr);
@@ -964,7 +1008,6 @@ export class Thread {
           ) {
             currentMaxTokens = ESCALATED_MAX_TOKENS;
             outputTokenRecoveryAttempts++;
-            // Persist accumulated content so far, then retry transparently
             const partialContent = accumulatedContent.join("");
             if (partialContent) {
               const partialAssistant: AssistantMessage = {
@@ -973,10 +1016,12 @@ export class Thread {
               };
               this.messages.push(partialAssistant);
               await this.storage.appendMessage(this.sessionId, partialAssistant).catch(() => {});
-              this.messages.push({
+              const continueMsg: ChatMessage = {
                 role: "user",
                 content: "Continue from where you left off — no apology, no recap.",
-              });
+              };
+              this.messages.push(continueMsg);
+              await this.storage.appendMessage(this.sessionId, continueMsg).catch(() => {});
             }
             streamingExec?.discard();
             accumulatedToolCalls.clear();
@@ -991,10 +1036,12 @@ export class Thread {
               };
               this.messages.push(partialAssistant);
               await this.storage.appendMessage(this.sessionId, partialAssistant).catch(() => {});
-              this.messages.push({
+              const continueMsg: ChatMessage = {
                 role: "user",
                 content: "Continue from where you left off — no apology, no recap.",
-              });
+              };
+              this.messages.push(continueMsg);
+              await this.storage.appendMessage(this.sessionId, continueMsg).catch(() => {});
             }
             streamingExec?.discard();
             accumulatedToolCalls.clear();

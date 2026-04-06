@@ -91,6 +91,91 @@ describe("fine-grained git flag validation", () => {
   });
 });
 
+describe("git --output flag bypass prevention", () => {
+  it("classifies git diff --output as NOT read-only", () => {
+    const result = classifyCommand("git diff --output=/tmp/evil");
+    expect(result.isReadOnly).toBe(false);
+    expect(result.reason).toContain("--output");
+  });
+
+  it("classifies git diff --output=file as NOT read-only", () => {
+    const result = classifyCommand("git diff --output=out.patch");
+    expect(result.isReadOnly).toBe(false);
+  });
+
+  it("classifies git log --output as NOT read-only", () => {
+    const result = classifyCommand("git log --output=out.txt");
+    expect(result.isReadOnly).toBe(false);
+    expect(result.reason).toContain("--output");
+  });
+
+  it("classifies git show --output as NOT read-only", () => {
+    const result = classifyCommand("git show --output=/etc/crontab");
+    expect(result.isReadOnly).toBe(false);
+  });
+
+  it("classifies git blame --output as NOT read-only", () => {
+    const result = classifyCommand("git blame --output=/tmp/pwned file.ts");
+    expect(result.isReadOnly).toBe(false);
+  });
+
+  it("still allows git diff --stat (safe flag)", () => {
+    const result = classifyCommand("git diff --stat");
+    expect(result.isReadOnly).toBe(true);
+  });
+
+  it("still allows git diff --cached (safe flag)", () => {
+    const result = classifyCommand("git diff --cached");
+    expect(result.isReadOnly).toBe(true);
+  });
+
+  it("still allows git log --oneline -n 10 (safe flags)", () => {
+    const result = classifyCommand("git log --oneline -n 10");
+    expect(result.isReadOnly).toBe(true);
+  });
+
+  it("still allows git show HEAD (safe positional)", () => {
+    const result = classifyCommand("git show HEAD");
+    expect(result.isReadOnly).toBe(true);
+  });
+
+  it("still allows git diff HEAD~1 (safe positional)", () => {
+    const result = classifyCommand("git diff HEAD~1");
+    expect(result.isReadOnly).toBe(true);
+  });
+});
+
+describe("git reflog sub-command validation", () => {
+  it("classifies bare git reflog as read-only", () => {
+    const result = classifyCommand("git reflog");
+    expect(result.isReadOnly).toBe(true);
+  });
+
+  it("classifies git reflog show as read-only", () => {
+    const result = classifyCommand("git reflog show");
+    expect(result.isReadOnly).toBe(true);
+  });
+
+  it("classifies git reflog list as read-only", () => {
+    const result = classifyCommand("git reflog list");
+    expect(result.isReadOnly).toBe(true);
+  });
+
+  it("classifies git reflog expire as destructive", () => {
+    const result = classifyCommand("git reflog expire --expire=now --all");
+    expect(result.isReadOnly).toBe(false);
+    expect(result.isDestructive).toBe(true);
+    expect(result.reason).toContain("expire");
+  });
+
+  it("classifies git reflog delete as destructive", () => {
+    const result = classifyCommand("git reflog delete HEAD@{0}");
+    expect(result.isReadOnly).toBe(false);
+    expect(result.isDestructive).toBe(true);
+    expect(result.reason).toContain("delete");
+  });
+});
+
 describe("cd + git compound guard", () => {
   it("flags cd && git as non-read-only", () => {
     const result = classifyCommand("cd /tmp/repo && git status");

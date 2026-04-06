@@ -449,6 +449,68 @@ describe("resolvePermission", () => {
     expect(result.behavior).toBe("allow");
   });
 
+  it("dontAsk mode denies tools whose checkPermissions returns passthrough", async () => {
+    const passthroughTool: Tool = {
+      name: "WriteTool",
+      description: "test",
+      parameters: { type: "object", properties: {} },
+      checkPermissions: () => ({
+        behavior: "passthrough" as const,
+        message: "Write to /project/file.ts",
+      }),
+      async call() { return { content: "ok" }; },
+    };
+
+    const result = await resolvePermission(
+      passthroughTool,
+      { file_path: "/project/file.ts" },
+      ctx,
+      makeContext({ mode: "dontAsk" }),
+    );
+    expect(result.behavior).toBe("deny");
+    expect(result.reason).toBe("mode");
+  });
+
+  it("dontAsk mode denies tools whose checkPermissions returns ask", async () => {
+    const askTool: Tool = {
+      name: "DangerTool",
+      description: "test",
+      parameters: { type: "object", properties: {} },
+      checkPermissions: () => ({
+        behavior: "ask" as const,
+        message: "Confirm this action",
+      }),
+      async call() { return { content: "ok" }; },
+    };
+
+    const result = await resolvePermission(
+      askTool,
+      {},
+      ctx,
+      makeContext({ mode: "dontAsk" }),
+    );
+    expect(result.behavior).toBe("deny");
+    expect(result.reason).toBe("mode");
+  });
+
+  it("dontAsk mode denies tools with no checkPermissions (default fallback)", async () => {
+    const genericTool: Tool = {
+      name: "GenericTool",
+      description: "test",
+      parameters: { type: "object", properties: {} },
+      async call() { return { content: "ok" }; },
+    };
+
+    const result = await resolvePermission(
+      genericTool,
+      {},
+      ctx,
+      makeContext({ mode: "dontAsk" }),
+    );
+    expect(result.behavior).toBe("deny");
+    expect(result.reason).toBe("mode");
+  });
+
   it("deny rules take precedence over allow rules", async () => {
     const result = await resolvePermission(
       bashTool,

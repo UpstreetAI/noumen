@@ -447,18 +447,12 @@ export async function resolvePermission(
     };
   }
 
-  // dontAsk mode: deny anything that would prompt (reads already allowed above)
-  if (permCtx.mode === "dontAsk") {
-    return {
-      behavior: "deny",
-      message: `Tool "${toolName}" requires approval, but mode is "dontAsk".`,
-      reason: "mode",
-    };
-  }
-
   // If tool raised ask and no mode overrode it, surface the tool's ask
+  // (dontAsk is handled as a post-processing step below to also catch
+  // passthrough→ask conversions)
+  let finalAsk: PermissionDecision | undefined;
   if (toolResult?.behavior === "ask") {
-    return {
+    finalAsk = {
       behavior: "ask",
       message: toolResult.message,
       reason: toolResult.reason ?? "tool",
@@ -467,21 +461,35 @@ export async function resolvePermission(
   }
 
   // 6. Fallback: passthrough → ask
-  const message =
-    toolResult?.behavior === "passthrough"
-      ? toolResult.message
-      : `Tool "${toolName}" requires approval.`;
-  const suggestions =
-    toolResult?.behavior === "passthrough"
-      ? toolResult.suggestions
-      : undefined;
+  if (!finalAsk) {
+    const message =
+      toolResult?.behavior === "passthrough"
+        ? toolResult.message
+        : `Tool "${toolName}" requires approval.`;
+    const suggestions =
+      toolResult?.behavior === "passthrough"
+        ? toolResult.suggestions
+        : undefined;
 
-  return {
-    behavior: "ask",
-    message,
-    reason: "default",
-    suggestions,
-  };
+    finalAsk = {
+      behavior: "ask",
+      message,
+      reason: "default",
+      suggestions,
+    };
+  }
+
+  // dontAsk mode: deny anything that would prompt. Applied after all
+  // ask/passthrough→ask paths so no ask result can leak through.
+  if (permCtx.mode === "dontAsk") {
+    return {
+      behavior: "deny",
+      message: `Tool "${toolName}" requires approval, but mode is "dontAsk".`,
+      reason: "mode",
+    };
+  }
+
+  return finalAsk;
 }
 
 /**

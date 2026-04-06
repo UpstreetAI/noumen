@@ -3,6 +3,7 @@ import type { Tool, ToolResult, ToolContext } from "./types.js";
 import { findActualString, preserveQuoteStyle } from "./edit-utils.js";
 import { EDIT_PROMPT } from "./prompts/edit.js";
 import { isDangerousPath } from "../permissions/pipeline.js";
+import { withFileLock } from "./file-lock.js";
 
 export const editFileTool: Tool = {
   name: "EditFile",
@@ -159,56 +160,63 @@ export const editFileTool: Tool = {
         await ctx.checkpointManager.trackEdit(filePath, ctx.currentMessageId, ctx.sessionId ?? "");
       }
 
-      const rawContent = await ctx.fs.readFile(filePath);
-      const hasCRLF = rawContent.includes("\r\n");
-      const content = hasCRLF ? rawContent.replaceAll("\r\n", "\n") : rawContent;
-
-      // Fuzzy matching: try exact match first, then quote-normalized match
-      const actualOldString = findActualString(content, oldString);
-      if (!actualOldString) {
-        return {
-          content: `Error: old_string not found in ${filePath}. Make sure the string matches exactly, including whitespace and indentation.`,
-          isError: true,
-        };
-      }
-
-      if (!replaceAll) {
-        const count = content.split(actualOldString).length - 1;
-        if (count > 1) {
-          return {
-            content: `Error: old_string appears ${count} times in ${filePath}. Provide more context to make it unique, or set replace_all to true.`,
-            isError: true,
-          };
-        }
-      }
-
-      // Preserve the file's quote style in the replacement text
-      const actualNewString = preserveQuoteStyle(oldString, actualOldString, newString);
-
-      let updated: string;
-      if (replaceAll) {
-        updated = content.split(actualOldString).join(actualNewString);
-      } else if (actualNewString === "") {
-        const hasTrailingNewline =
-          !actualOldString.endsWith("\n") &&
-          content.includes(actualOldString + "\n");
-        const deleteTarget = hasTrailingNewline
-          ? actualOldString + "\n"
-          : actualOldString;
-        updated = content.replace(deleteTarget, () => actualNewString);
-      } else {
-        updated = content.replace(actualOldString, () => actualNewString);
-      }
-
-      if (hasCRLF) {
-        updated = updated.replaceAll("\n", "\r\n");
-      }
-
+      // Ensure parent directory exists before entering the locked section
       const dir = nodePath.dirname(filePath);
       if (dir && dir !== "." && dir !== "/") {
         await ctx.fs.mkdir(dir, { recursive: true }).catch(() => {});
       }
-      await ctx.fs.writeFile(filePath, updated);
+
+      // Hold a per-file lock for the read-modify-write to prevent TOCTOU
+      // races when concurrent edits target the same path.
+      const updated = await withFileLock(filePath, async () => {
+        const rawContent = await ctx.fs.readFile(filePath);
+        const hasCRLF = rawContent.includes("\r\n");
+        const content = hasCRLF ? rawContent.replaceAll("\r\n", "\n") : rawContent;
+
+        const actualOldString = findActualString(content, oldString);
+        if (!actualOldString) {
+          return {
+            error: `Error: old_string not found in ${filePath}. Make sure the string matches exactly, including whitespace and indentation.`,
+          };
+        }
+
+        if (!replaceAll) {
+          const count = content.split(actualOldString).length - 1;
+          if (count > 1) {
+            return {
+              error: `Error: old_string appears ${count} times in ${filePath}. Provide more context to make it unique, or set replace_all to true.`,
+            };
+          }
+        }
+
+        const actualNewString = preserveQuoteStyle(oldString, actualOldString, newString);
+
+        let result: string;
+        if (replaceAll) {
+          result = content.split(actualOldString).join(actualNewString);
+        } else if (actualNewString === "") {
+          const hasTrailingNewline =
+            !actualOldString.endsWith("\n") &&
+            content.includes(actualOldString + "\n");
+          const deleteTarget = hasTrailingNewline
+            ? actualOldString + "\n"
+            : actualOldString;
+          result = content.replace(deleteTarget, () => actualNewString);
+        } else {
+          result = content.replace(actualOldString, () => actualNewString);
+        }
+
+        if (hasCRLF) {
+          result = result.replaceAll("\n", "\r\n");
+        }
+
+        await ctx.fs.writeFile(filePath, result);
+        return { content: result };
+      });
+
+      if ("error" in updated) {
+        return { content: updated.error, isError: true };
+      }
 
       ctx.notifyHook?.("FileWrite", {
         event: "FileWrite",
@@ -218,7 +226,6 @@ export const editFileTool: Tool = {
         isNew: false,
       }).catch(() => {});
 
-      // Update cache with the full post-edit content
       if (ctx.fileStateCache) {
         let mtime = 0;
         try {
@@ -228,7 +235,7 @@ export const editFileTool: Tool = {
           // best-effort
         }
         ctx.fileStateCache.set(filePath, {
-          content: updated,
+          content: updated.content,
           timestamp: mtime,
         });
       }
