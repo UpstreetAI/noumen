@@ -41,7 +41,6 @@ import {
   runNotificationHooks,
 } from "./hooks/runner.js";
 import { ToolRegistry } from "./tools/registry.js";
-import { runToolsBatched, type ToolCallExecResult } from "./tools/orchestration.js";
 import {
   StreamingToolExecutor,
   type StreamingExecResult,
@@ -83,6 +82,7 @@ import {
 } from "./compact/reactive-compact.js";
 import { prepareMessagesForApi } from "./pipeline/prepare-messages.js";
 import { tryAutoCompactStep } from "./pipeline/auto-compact-step.js";
+import { executeToolsStep } from "./pipeline/execute-tools-step.js";
 import type { SnipConfig } from "./compact/history-snip.js";
 import { FileStateCache } from "./file-state/cache.js";
 import type { FileStateCacheConfig } from "./file-state/types.js";
@@ -97,8 +97,6 @@ import {
   createStructuredOutputTool,
   STRUCTURED_OUTPUT_TOOL_NAME,
 } from "./tools/structured-output.js";
-
-const FILE_TOOLS = new Set(["ReadFile", "WriteFile", "EditFile"]);
 
 export interface ThreadOptions {
   sessionId?: string;
@@ -1218,179 +1216,27 @@ export class Thread {
 
         if (toolCalls.length > 0) {
           consecutiveMalformedIterations = 0;
-          const touchedFilePaths: string[] = [];
-          const registry = this.toolRegistry;
-          const storage = this.storage;
-          const sessionId = this.sessionId;
-          const messages = this.messages;
 
-          // Choose execution path: streaming (already started) or batched (post-stream)
-          if (streamingExec) {
-            // Collect any results that were already gathered during streaming
-            const allResults = [...streamingResults];
-            for await (const result of streamingExec.getRemainingResults()) {
-              allResults.push(result);
-            }
-
-            const spilledRecords: import("./compact/tool-result-storage.js").ContentReplacementRecord[] = [];
-
-            for (const execResult of allResults) {
-              for (const evt of execResult.events) {
-                yield evt;
-              }
-
-              if (!execResult.permissionDenied) {
-                yield {
-                  type: "tool_result",
-                  toolUseId: execResult.toolCall.id,
-                  toolName: execResult.toolCall.function.name,
-                  result: execResult.result,
-                };
-
-                // Emit git operation events from bash tool results
-                const gitOps = execResult.result.metadata?.gitOperations as
-                  | Array<{ type: string; details: string }>
-                  | undefined;
-                if (gitOps) {
-                  for (const op of gitOps) {
-                    yield {
-                      type: "git_operation" as const,
-                      operation: op.type as "commit" | "push" | "pr_create" | "merge" | "rebase",
-                      details: op.details,
-                    };
-                  }
-                }
-              }
-
-              if (execResult.preventContinuation) {
-                preventContinuation = true;
-              }
-
-              // Spill oversized results to disk before appending to messages
-              let resultContent = execResult.result.content;
-              if (typeof resultContent === "string") {
-                const spill = await this.maybeSpillToolResult(
-                  execResult.toolCall.id,
-                  execResult.toolCall.function.name,
-                  resultContent,
-                );
-                if (spill.spilled) {
-                  resultContent = spill.content;
-                  spilledRecords.push({ toolUseId: execResult.toolCall.id, replacement: spill.content });
-                }
-              }
-
-              const toolResultMsg: ChatMessage = {
-                role: "tool",
-                tool_call_id: execResult.toolCall.id,
-                content: resultContent,
-                ...(execResult.result.isError ? { isError: true } : {}),
-              };
-              messages.push(toolResultMsg);
-              await storage.appendMessage(sessionId, toolResultMsg);
-
-              if (
-                FILE_TOOLS.has(execResult.toolCall.function.name) &&
-                typeof execResult.parsedArgs.file_path === "string"
-              ) {
-                touchedFilePaths.push(execResult.parsedArgs.file_path);
-                if (execResult.toolCall.function.name === "ReadFile" && !execResult.result.isError) {
-                  const content = typeof execResult.result.content === "string"
-                    ? execResult.result.content : "";
-                  this.recentlyReadFiles.set(execResult.parsedArgs.file_path, content);
-                }
-              }
-            }
-
-            // Persist content replacement records for resume
-            if (spilledRecords.length > 0) {
-              await storage.appendContentReplacement(sessionId, spilledRecords);
-            }
-          } else {
-            // Batched execution (original path)
-            const executor = async (
-              tc: ToolCallContent,
-              parsedArgs: Record<string, unknown>,
-            ): Promise<ToolCallExecResult> => {
-              const pipelineResult = await executeToolCall(tc, parsedArgs, execCtx);
-              if (pipelineResult.preventContinuation) preventContinuation = true;
-              return pipelineResult;
-            };
-
-          const batchSpilledRecords: import("./compact/tool-result-storage.js").ContentReplacementRecord[] = [];
-
-          for await (const execResult of runToolsBatched(
+          const stepResult = await executeToolsStep(
             toolCalls,
-            (name) => registry.get(name),
-            executor,
-          )) {
-            for (const evt of execResult.events ?? []) {
-              yield evt;
-            }
+            streamingExec,
+            streamingResults,
+            execCtx,
+            this.toolRegistry,
+            this.sessionId,
+            this.messages,
+            this.recentlyReadFiles,
+            this.storage,
+            (id, name, content) => this.maybeSpillToolResult(id, name, content),
+          );
+          for (const evt of stepResult.events) yield evt;
+          if (stepResult.preventContinuation) preventContinuation = true;
 
-            const { toolCall: tc, parsedArgs: finalArgs, result, permissionDenied } = execResult;
-
-            if (execResult.preventContinuation) {
-              preventContinuation = true;
-            }
-
-            if (!permissionDenied) {
-              yield {
-                type: "tool_result",
-                toolUseId: tc.id,
-                toolName: tc.function.name,
-                result,
-              };
-
-              // Emit git operation events from bash tool results
-              const gitOps = result.metadata?.gitOperations as
-                | Array<{ type: string; details: string }>
-                | undefined;
-              if (gitOps) {
-                for (const op of gitOps) {
-                  yield {
-                    type: "git_operation" as const,
-                    operation: op.type as "commit" | "push" | "pr_create" | "merge" | "rebase",
-                    details: op.details,
-                  };
-                }
-              }
-            }
-
-            // Spill oversized results to disk before appending to messages
-            let resultContent = result.content;
-            if (typeof resultContent === "string") {
-              const spill = await this.maybeSpillToolResult(tc.id, tc.function.name, resultContent);
-              if (spill.spilled) {
-                resultContent = spill.content;
-                batchSpilledRecords.push({ toolUseId: tc.id, replacement: spill.content });
-              }
-            }
-
-            const toolResultMsg: ChatMessage = {
-              role: "tool",
-              tool_call_id: tc.id,
-              content: resultContent,
-              ...(result.isError ? { isError: true } : {}),
-            };
-
-            messages.push(toolResultMsg);
-            await storage.appendMessage(sessionId, toolResultMsg);
-
-            if (FILE_TOOLS.has(tc.function.name) && typeof finalArgs.file_path === "string") {
-              touchedFilePaths.push(finalArgs.file_path);
-              if (tc.function.name === "ReadFile" && !result.isError) {
-                const content = typeof result.content === "string" ? result.content : "";
-                this.recentlyReadFiles.set(finalArgs.file_path, content);
-              }
-            }
+          if (stepResult.spilledRecords.length > 0) {
+            await this.storage.appendContentReplacement(this.sessionId, stepResult.spilledRecords);
           }
 
-            // Persist content replacement records for resume
-            if (batchSpilledRecords.length > 0) {
-              await storage.appendContentReplacement(sessionId, batchSpilledRecords);
-            }
-          }
+          const touchedFilePaths = stepResult.touchedFilePaths;
 
           if (signal.aborted) {
             const interruptionMsg: ChatMessage = {
