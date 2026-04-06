@@ -77,12 +77,15 @@ import {
   type ContentReplacementState,
 } from "./compact/tool-result-storage.js";
 import {
-  tryReactiveCompact,
   type ReactiveCompactConfig,
 } from "./compact/reactive-compact.js";
 import { prepareMessagesForApi } from "./pipeline/prepare-messages.js";
 import { tryAutoCompactStep } from "./pipeline/auto-compact-step.js";
 import { executeToolsStep } from "./pipeline/execute-tools-step.js";
+import {
+  buildPartialResults,
+  tryReactiveCompactRecovery as tryReactiveCompactRecoveryFn,
+} from "./pipeline/error-recovery.js";
 import type { SnipConfig } from "./compact/history-snip.js";
 import { FileStateCache } from "./file-state/cache.js";
 import type { FileStateCacheConfig } from "./file-state/types.js";
@@ -657,7 +660,7 @@ export class Thread {
           // Collect any already-completed streaming results before discarding.
           // These tools ran successfully with real side effects so their results
           // must be preserved rather than replaced with fabricated errors.
-          const completedBeforeError: import("./tools/streaming-executor.js").StreamingExecResult[] = [];
+          const completedBeforeError: StreamingExecResult[] = [];
           if (streamingExec) {
             for (const result of streamingExec.getCompletedResults()) {
               completedBeforeError.push(result);
@@ -681,21 +684,18 @@ export class Thread {
             providerSpan.end();
             yield { type: "span_end", name: "noumen.provider.chat", spanId: providerSpanId, durationMs: Date.now() - providerStart, error: "context overflow" };
 
-            await runNotificationHooks(hooks, "PreCompact", {
-              event: "PreCompact",
+            const recovery = await tryReactiveCompactRecoveryFn({
+              provider: this.config.provider,
+              model: this.model,
+              messages: this.messages,
+              storage: this.storage,
               sessionId: this.sessionId,
+              signal,
+              hooks,
             });
-            yield { type: "compact_start" };
-            const recovered = await tryReactiveCompact(
-              this.config.provider,
-              this.model,
-              this.messages,
-              this.storage,
-              this.sessionId,
-              { signal },
-            );
-            if (recovered) {
-              this.messages = recovered.messages;
+            for (const evt of recovery.events) yield evt;
+            if (recovery.recovered) {
+              this.messages = recovery.messages!;
               this.lastUsage = undefined;
               this.anchorMessageIndex = undefined;
               this.microcompactTokensFreed = 0;
@@ -704,74 +704,21 @@ export class Thread {
               this.fileStateCache?.clear();
               this.denialTracker?.reset();
               recordAutoCompactSuccess(this.autoCompactTracking);
-              yield { type: "compact_complete" };
-              await runNotificationHooks(hooks, "PostCompact", {
-                event: "PostCompact",
-                sessionId: this.sessionId,
-              });
               continue;
             }
-            yield { type: "compact_complete" };
-            await runNotificationHooks(hooks, "PostCompact", {
-              event: "PostCompact",
-              sessionId: this.sessionId,
-            });
           }
 
-          // Save any partially-streamed tool calls accumulated before the error.
-          // Use real results from completed streaming tools; only generate
-          // synthetic error results for tools that did not complete.
           const errorReason = `Provider error: ${providerErr instanceof Error ? providerErr.message : String(providerErr)}`;
-          if (accumulatedToolCalls.size > 0) {
-            const partialCalls: ToolCallContent[] = Array.from(accumulatedToolCalls.values()).map((tc) => ({
-              id: tc.id, type: "function" as const, function: { name: tc.name, arguments: tc.arguments },
-            }));
-            const partialText = accumulatedContent.join("");
-            const interruptedContent = partialText
-              ? `${partialText}\n[Response interrupted: ${errorReason}]`
-              : `[Response interrupted: ${errorReason}]`;
-            const partialAssistant: AssistantMessage = {
-              role: "assistant",
-              content: interruptedContent,
-              tool_calls: partialCalls,
-            };
-            this.messages.push(partialAssistant);
-            await this.storage.appendMessage(this.sessionId, partialAssistant);
-
-            // First, persist real results from tools that completed before the error
-            const realToolMsgs: ChatMessage[] = [];
-            for (const completed of completedBeforeError) {
-              const toolResultMsg: ChatMessage = {
-                role: "tool",
-                tool_call_id: completed.toolCall.id,
-                content: completed.result.content,
-                ...(completed.result.isError ? { isError: true } : {}),
-              };
-              this.messages.push(toolResultMsg);
-              await this.storage.appendMessage(this.sessionId, toolResultMsg);
-              realToolMsgs.push(toolResultMsg);
-            }
-
-            // Then generate synthetic error results only for incomplete tools
-            const syntheticResults = generateMissingToolResults(partialAssistant, realToolMsgs, errorReason);
-            for (const sr of syntheticResults) {
-              this.messages.push(sr);
-              await this.storage.appendMessage(this.sessionId, sr);
-            }
-          } else {
-            // Check the last persisted message for pending tool_calls
-            const lastMsg = this.messages[this.messages.length - 1];
-            if (lastMsg && lastMsg.role === "assistant" && (lastMsg as AssistantMessage).tool_calls) {
-              const syntheticResults = generateMissingToolResults(
-                lastMsg as AssistantMessage,
-                this.messages,
-                errorReason,
-              );
-              for (const sr of syntheticResults) {
-                this.messages.push(sr);
-                await this.storage.appendMessage(this.sessionId, sr);
-              }
-            }
+          const partial = buildPartialResults({
+            accumulatedToolCalls,
+            accumulatedContent,
+            completedStreamingResults: completedBeforeError,
+            reason: errorReason,
+            existingMessages: this.messages,
+          });
+          for (const msg of partial.messages) {
+            this.messages.push(msg);
+            await this.storage.appendMessage(this.sessionId, msg);
           }
 
           providerSpan.setStatus(SpanStatusCode.ERROR, providerErr instanceof Error ? providerErr.message : String(providerErr));
@@ -885,48 +832,23 @@ export class Thread {
           }
         }
         } catch (streamErr) {
-          const streamCompletedResults: import("./tools/streaming-executor.js").StreamingExecResult[] = [];
+          const streamCompletedResults: StreamingExecResult[] = [];
           if (streamingExec) {
             for (const result of streamingExec.getCompletedResults()) {
               streamCompletedResults.push(result);
             }
             streamingExec.discard();
           }
-          if (accumulatedToolCalls.size > 0 || accumulatedContent.length > 0) {
-            const partialCalls: ToolCallContent[] = Array.from(accumulatedToolCalls.values()).map((tc) => ({
-              id: tc.id, type: "function" as const, function: { name: tc.name, arguments: tc.arguments },
-            }));
-            const streamErrReason = `Stream error: ${streamErr instanceof Error ? streamErr.message : String(streamErr)}`;
-            const partialText = accumulatedContent.join("");
-            const interruptedStreamContent = partialCalls.length > 0
-              ? (partialText ? `${partialText}\n[Response interrupted: ${streamErrReason}]` : `[Response interrupted: ${streamErrReason}]`)
-              : (partialText || null);
-            const partialAssistant: AssistantMessage = {
-              role: "assistant",
-              content: interruptedStreamContent,
-              ...(partialCalls.length > 0 ? { tool_calls: partialCalls } : {}),
-            };
-            this.messages.push(partialAssistant);
-            await this.storage.appendMessage(this.sessionId, partialAssistant);
-            if (partialCalls.length > 0) {
-              const realToolMsgs: ChatMessage[] = [];
-              for (const completed of streamCompletedResults) {
-                const toolResultMsg: ChatMessage = {
-                  role: "tool",
-                  tool_call_id: completed.toolCall.id,
-                  content: completed.result.content,
-                  ...(completed.result.isError ? { isError: true } : {}),
-                };
-                this.messages.push(toolResultMsg);
-                await this.storage.appendMessage(this.sessionId, toolResultMsg);
-                realToolMsgs.push(toolResultMsg);
-              }
-              const syntheticResults = generateMissingToolResults(partialAssistant, realToolMsgs, streamErrReason);
-              for (const sr of syntheticResults) {
-                this.messages.push(sr);
-                await this.storage.appendMessage(this.sessionId, sr);
-              }
-            }
+          const streamErrReason = `Stream error: ${streamErr instanceof Error ? streamErr.message : String(streamErr)}`;
+          const partial = buildPartialResults({
+            accumulatedToolCalls,
+            accumulatedContent,
+            completedStreamingResults: streamCompletedResults,
+            reason: streamErrReason,
+          });
+          for (const msg of partial.messages) {
+            this.messages.push(msg);
+            await this.storage.appendMessage(this.sessionId, msg);
           }
           throw streamErr;
         }
@@ -948,32 +870,18 @@ export class Thread {
             }
           }
 
-          const partialToolCalls: ToolCallContent[] = Array.from(accumulatedToolCalls.values()).map((tc) => ({
-            id: tc.id, type: "function" as const, function: { name: tc.name, arguments: tc.arguments },
-          }));
-          if (partialToolCalls.length > 0) {
-            const partialAssistant: AssistantMessage = {
-              role: "assistant",
-              content: accumulatedContent.join("") || null,
-              tool_calls: partialToolCalls,
-            };
-            this.messages.push(partialAssistant);
-            await this.storage.appendMessage(this.sessionId, partialAssistant).catch((err) => {
-              console.warn("[noumen/thread] Failed to persist abort partial assistant:", err);
+          const abortPartial = buildPartialResults({
+            accumulatedToolCalls,
+            accumulatedContent,
+            completedStreamingResults: streamingResults,
+            reason: "abort",
+            includeInterruptionTag: false,
+          });
+          for (const msg of abortPartial.messages) {
+            this.messages.push(msg);
+            await this.storage.appendMessage(this.sessionId, msg).catch((err) => {
+              console.warn("[noumen/thread] Failed to persist abort message:", err);
             });
-
-            for (const sr of streamingResults) {
-              const toolResultMsg: ChatMessage = {
-                role: "tool",
-                tool_call_id: sr.toolCall.id,
-                content: sr.result.content,
-                ...(sr.result.isError ? { isError: true } : {}),
-              };
-              this.messages.push(toolResultMsg);
-              await this.storage.appendMessage(this.sessionId, toolResultMsg).catch((err) => {
-                console.warn("[noumen/thread] Failed to persist abort tool result:", err);
-              });
-            }
           }
 
           const interruptionMsg: ChatMessage = {
