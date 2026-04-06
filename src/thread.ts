@@ -86,6 +86,12 @@ import {
   buildPartialResults,
   tryReactiveCompactRecovery as tryReactiveCompactRecoveryFn,
 } from "./pipeline/error-recovery.js";
+import {
+  createAccumulator,
+  resetAccumulator,
+  consumeStream,
+  handleFinishReason,
+} from "./pipeline/consume-stream.js";
 import type { SnipConfig } from "./compact/history-snip.js";
 import { FileStateCache } from "./file-state/cache.js";
 import type { FileStateCacheConfig } from "./file-state/types.js";
@@ -527,16 +533,7 @@ export class Thread {
           messages: this.messages,
         });
 
-        const accumulatedContent: string[] = [];
-        const accumulatedThinking: string[] = [];
-        let accumulatedThinkingSignature: string | undefined;
-        let accumulatedRedactedThinkingData: string | undefined;
-        const accumulatedToolCalls = new Map<
-          number,
-          { id: string; name: string; arguments: string; complete: boolean; malformedJson?: boolean; startEmitted?: boolean }
-        >();
-        let finishReason: string | null = null;
-        let lastUsage: ChatCompletionUsage | undefined;
+        const accumulator = createAccumulator();
 
         let streamingExec: StreamingToolExecutor | null = null;
         const streamingResults: StreamingExecResult[] = [];
@@ -610,15 +607,7 @@ export class Thread {
               const sw = event as { type: "model_switch"; from: string; to: string };
               this.model = sw.to;
               stripThinkingSignatures(this.messages);
-              // Clear any partial accumulated state from the failed attempt.
-              // The new model's stream will start fresh — carrying over
-              // thinking signatures or partial content from a different model
-              // would cause API errors or corrupted output.
-              accumulatedContent.length = 0;
-              accumulatedThinking.length = 0;
-              accumulatedThinkingSignature = undefined;
-              accumulatedRedactedThinkingData = undefined;
-              accumulatedToolCalls.clear();
+              resetAccumulator(accumulator);
               if (streamingExec) {
                 streamingExec.discard();
                 streamingExec = new StreamingToolExecutor(
@@ -710,8 +699,8 @@ export class Thread {
 
           const errorReason = `Provider error: ${providerErr instanceof Error ? providerErr.message : String(providerErr)}`;
           const partial = buildPartialResults({
-            accumulatedToolCalls,
-            accumulatedContent,
+            accumulatedToolCalls: accumulator.toolCalls,
+            accumulatedContent: accumulator.content,
             completedStreamingResults: completedBeforeError,
             reason: errorReason,
             existingMessages: this.messages,
@@ -731,105 +720,8 @@ export class Thread {
         const apiStartTime = Date.now();
 
         try {
-        for await (const chunk of stream) {
-          if (signal.aborted) break;
-
-          if (chunk.usage) {
-            lastUsage = chunk.usage;
-          }
-
-          for (const choice of chunk.choices) {
-            if (choice.finish_reason) {
-              finishReason = choice.finish_reason;
-            }
-
-            const delta = choice.delta;
-
-            if (delta.thinking_content) {
-              accumulatedThinking.push(delta.thinking_content);
-              yield { type: "thinking_delta", text: delta.thinking_content };
-            }
-
-            if (delta.thinking_signature) {
-              accumulatedThinkingSignature = (accumulatedThinkingSignature ?? "") + delta.thinking_signature;
-            }
-
-            if (delta.redacted_thinking_data) {
-              accumulatedRedactedThinkingData = (accumulatedRedactedThinkingData ?? "") + delta.redacted_thinking_data;
-            }
-
-            if (delta.content) {
-              accumulatedContent.push(delta.content);
-              yield { type: "text_delta", text: delta.content };
-            }
-
-            if (delta.tool_calls) {
-              for (const tc of delta.tool_calls) {
-                const existing = accumulatedToolCalls.get(tc.index);
-
-                if (!existing) {
-                  const id = tc.id ?? "";
-                  const name = tc.function?.name ?? "";
-                  const startEmitted = !!(tc.id && tc.function?.name);
-                  accumulatedToolCalls.set(tc.index, {
-                    id,
-                    name,
-                    arguments: tc.function?.arguments ?? "",
-                    complete: false,
-                    startEmitted,
-                  });
-
-                  if (startEmitted) {
-                    yield {
-                      type: "tool_use_start",
-                      toolName: name,
-                      toolUseId: id,
-                    };
-                  }
-
-                  if (streamingExec && tc.index > 0) {
-                    const prevTc = accumulatedToolCalls.get(tc.index - 1);
-                    if (prevTc && !prevTc.complete) {
-                      prevTc.complete = true;
-                      try {
-                        const parsedArgs = JSON.parse(prevTc.arguments);
-                        streamingExec.addTool(
-                          { id: prevTc.id, type: "function", function: { name: prevTc.name, arguments: prevTc.arguments } },
-                          parsedArgs,
-                        );
-                      } catch {
-                        prevTc.malformedJson = true;
-                      }
-                    }
-                  }
-                } else {
-                  if (tc.id) existing.id = tc.id;
-                  if (tc.function?.name) existing.name = tc.function.name;
-                  if (!existing.startEmitted && existing.id && existing.name) {
-                    existing.startEmitted = true;
-                    yield {
-                      type: "tool_use_start",
-                      toolName: existing.name,
-                      toolUseId: existing.id,
-                    };
-                  }
-                  if (tc.function?.arguments) {
-                    existing.arguments += tc.function.arguments;
-                    yield {
-                      type: "tool_use_delta",
-                      input: tc.function.arguments,
-                    };
-                  }
-                }
-              }
-            }
-          }
-
-          if (streamingExec) {
-            for (const result of streamingExec.getCompletedResults()) {
-              streamingResults.push(result);
-            }
-          }
+        for await (const evt of consumeStream(stream, accumulator, streamingExec, streamingResults, signal)) {
+          yield evt;
         }
         } catch (streamErr) {
           const streamCompletedResults: StreamingExecResult[] = [];
@@ -841,8 +733,8 @@ export class Thread {
           }
           const streamErrReason = `Stream error: ${streamErr instanceof Error ? streamErr.message : String(streamErr)}`;
           const partial = buildPartialResults({
-            accumulatedToolCalls,
-            accumulatedContent,
+            accumulatedToolCalls: accumulator.toolCalls,
+            accumulatedContent: accumulator.content,
             completedStreamingResults: streamCompletedResults,
             reason: streamErrReason,
           });
@@ -871,8 +763,8 @@ export class Thread {
           }
 
           const abortPartial = buildPartialResults({
-            accumulatedToolCalls,
-            accumulatedContent,
+            accumulatedToolCalls: accumulator.toolCalls,
+            accumulatedContent: accumulator.content,
             completedStreamingResults: streamingResults,
             reason: "abort",
             includeInterruptionTag: false,
@@ -894,118 +786,45 @@ export class Thread {
           break;
         }
 
-        // Handle truncated responses (max output tokens reached).
-        // Only enter recovery for text-only truncation; when tool calls are
-        // present they may already have had side effects so we process them
-        // normally instead of discarding and retrying.
-        if (finishReason === "length" && accumulatedToolCalls.size === 0) {
-          const DEFAULT_MAX_TOKENS = 8192;
-          const ESCALATED_MAX_TOKENS = 65536;
-          const MAX_OUTPUT_RECOVERY_ATTEMPTS = 3;
-
-          if (
-            (currentMaxTokens === undefined || currentMaxTokens === DEFAULT_MAX_TOKENS) &&
-            outputTokenRecoveryAttempts === 0
-          ) {
-            currentMaxTokens = ESCALATED_MAX_TOKENS;
-            outputTokenRecoveryAttempts++;
-            const partialContent = accumulatedContent.join("");
-            if (partialContent) {
-              const partialAssistant: AssistantMessage = {
-                role: "assistant",
-                content: partialContent,
-              };
-              this.messages.push(partialAssistant);
-              await this.storage.appendMessage(this.sessionId, partialAssistant).catch(() => {});
-              const continueMsg: ChatMessage = {
-                role: "user",
-                content: "Continue from where you left off — no apology, no recap.",
-              };
-              this.messages.push(continueMsg);
-              await this.storage.appendMessage(this.sessionId, continueMsg).catch(() => {});
-            }
-            streamingExec?.discard();
-            accumulatedToolCalls.clear();
-            continue;
-          } else if (outputTokenRecoveryAttempts < MAX_OUTPUT_RECOVERY_ATTEMPTS) {
-            outputTokenRecoveryAttempts++;
-            const partialContent = accumulatedContent.join("");
-            if (partialContent) {
-              const partialAssistant: AssistantMessage = {
-                role: "assistant",
-                content: partialContent,
-              };
-              this.messages.push(partialAssistant);
-              await this.storage.appendMessage(this.sessionId, partialAssistant).catch(() => {});
-              const continueMsg: ChatMessage = {
-                role: "user",
-                content: "Continue from where you left off — no apology, no recap.",
-              };
-              this.messages.push(continueMsg);
-              await this.storage.appendMessage(this.sessionId, continueMsg).catch(() => {});
-            }
-            streamingExec?.discard();
-            accumulatedToolCalls.clear();
-            continue;
-          } else {
-            yield { type: "text_delta", text: "\n\n[Response truncated due to max output tokens]" };
-            streamingExec?.discard();
-            accumulatedToolCalls.clear();
-          }
+        const frResult = handleFinishReason(
+          accumulator, streamingExec, streamingResults,
+          currentMaxTokens, outputTokenRecoveryAttempts, signal,
+        );
+        for (const evt of frResult.events) yield evt;
+        for (const msg of frResult.messagesToPersist) {
+          this.messages.push(msg);
+          await this.storage.appendMessage(this.sessionId, msg).catch(() => {});
         }
-
-        if (finishReason === "content_filter") {
-          yield { type: "text_delta", text: "\n\n[Response blocked by content filter]" };
-          if (streamingExec) {
-            for (const result of streamingExec.getCompletedResults()) {
-              streamingResults.push(result);
-            }
-            streamingExec.discard();
-            preventContinuation = true;
-          } else {
-            accumulatedToolCalls.clear();
-          }
+        if (frResult.escalateMaxTokens !== undefined) currentMaxTokens = frResult.escalateMaxTokens;
+        if (frResult.shouldContinue) {
+          outputTokenRecoveryAttempts++;
+          streamingExec?.discard();
+          accumulator.toolCalls.clear();
+          continue;
         }
-
-        if (streamingExec && !signal.aborted) {
-          for (const [, tc] of accumulatedToolCalls) {
-            if (!tc.complete) {
-              tc.complete = true;
-              try {
-                const parsedArgs = JSON.parse(tc.arguments);
-                streamingExec.addTool(
-                  { id: tc.id, type: "function", function: { name: tc.name, arguments: tc.arguments } },
-                  parsedArgs,
-                );
-              } catch {
-                tc.malformedJson = true;
-              }
-            }
-          }
-        }
+        if (frResult.preventContinuation) preventContinuation = true;
 
         callCount++;
-        if (lastUsage) {
-          turnUsage.prompt_tokens += lastUsage.prompt_tokens;
-          turnUsage.completion_tokens += lastUsage.completion_tokens;
-          turnUsage.total_tokens += lastUsage.total_tokens;
-          turnUsage.cache_read_tokens = (turnUsage.cache_read_tokens ?? 0) + (lastUsage.cache_read_tokens ?? 0);
-          turnUsage.cache_creation_tokens = (turnUsage.cache_creation_tokens ?? 0) + (lastUsage.cache_creation_tokens ?? 0);
-          turnUsage.thinking_tokens = (turnUsage.thinking_tokens ?? 0) + (lastUsage.thinking_tokens ?? 0);
-          this.lastUsage = lastUsage;
+        if (accumulator.usage) {
+          turnUsage.prompt_tokens += accumulator.usage.prompt_tokens;
+          turnUsage.completion_tokens += accumulator.usage.completion_tokens;
+          turnUsage.total_tokens += accumulator.usage.total_tokens;
+          turnUsage.cache_read_tokens = (turnUsage.cache_read_tokens ?? 0) + (accumulator.usage.cache_read_tokens ?? 0);
+          turnUsage.cache_creation_tokens = (turnUsage.cache_creation_tokens ?? 0) + (accumulator.usage.cache_creation_tokens ?? 0);
+          turnUsage.thinking_tokens = (turnUsage.thinking_tokens ?? 0) + (accumulator.usage.thinking_tokens ?? 0);
+          this.lastUsage = accumulator.usage;
           this.anchorMessageIndex = this.messages.length - 1;
           this.microcompactTokensFreed = 0;
-          yield { type: "usage", usage: lastUsage, model: this.model };
+          yield { type: "usage", usage: accumulator.usage, model: this.model };
 
           if (this.config.costTracker) {
             const summary = this.config.costTracker.addUsage(
               this.model,
-              lastUsage,
+              accumulator.usage,
               apiDurationMs,
             );
             yield { type: "cost_update", summary };
 
-            // Persist cost state on every usage update so it survives crashes/aborts
             await this.storage.appendMetadata(
               this.sessionId,
               "costState",
@@ -1013,8 +832,8 @@ export class Thread {
             ).catch(() => {});
           }
 
-          providerSpan.setAttribute("tokens.input", lastUsage.prompt_tokens);
-          providerSpan.setAttribute("tokens.output", lastUsage.completion_tokens);
+          providerSpan.setAttribute("tokens.input", accumulator.usage.prompt_tokens);
+          providerSpan.setAttribute("tokens.output", accumulator.usage.completion_tokens);
         }
 
         if (this.config.promptCachingEnabled) {
@@ -1033,11 +852,11 @@ export class Thread {
         providerSpan.end();
         yield { type: "span_end", name: "noumen.provider.chat", spanId: providerSpanId, durationMs: Date.now() - providerStart };
 
-        const textContent = accumulatedContent.join("");
+        const textContent = accumulator.content.join("");
         // Separate valid tool calls from ones with malformed JSON
         const malformedToolCalls: Array<{ id: string; name: string }> = [];
         const toolCalls: ToolCallContent[] = [];
-        for (const tc of accumulatedToolCalls.values()) {
+        for (const tc of accumulator.toolCalls.values()) {
           let isMalformed = tc.malformedJson;
           if (!isMalformed && !streamingExec) {
             try { JSON.parse(tc.arguments); } catch { isMalformed = true; }
@@ -1065,14 +884,14 @@ export class Thread {
           })),
         ];
 
-        const thinkingContent = accumulatedThinking.join("") || undefined;
+        const thinkingContent = accumulator.thinking.join("") || undefined;
         const assistantMsg: AssistantMessage = {
           role: "assistant",
           content: textContent || null,
           ...(allToolCalls.length > 0 ? { tool_calls: allToolCalls } : {}),
           ...(thinkingContent ? { thinking_content: thinkingContent } : {}),
-          ...(accumulatedThinkingSignature ? { thinking_signature: accumulatedThinkingSignature } : {}),
-          ...(accumulatedRedactedThinkingData ? { redacted_thinking_data: accumulatedRedactedThinkingData } : {}),
+          ...(accumulator.thinkingSignature ? { thinking_signature: accumulator.thinkingSignature } : {}),
+          ...(accumulator.redactedThinkingData ? { redacted_thinking_data: accumulator.redactedThinkingData } : {}),
           _turnId: `${this.sessionId}:${callCount}`,
         };
 
