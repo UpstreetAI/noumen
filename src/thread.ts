@@ -134,6 +134,8 @@ export interface ThreadConfig {
   hooks?: HookDefinition[];
   spawnSubagent?: (config: SubagentConfig) => SubagentRun;
   streamingToolExecution?: boolean;
+  /** Truncate individual tool results exceeding this character count. Default: 100000. */
+  maxResultChars?: number;
   userInputHandler?: (question: string) => Promise<string>;
   taskStore?: TaskStore;
   lspManager?: LspServerManager;
@@ -462,6 +464,7 @@ export class Thread {
         tracer: this.tracer,
         parentSpan: interactionSpan,
         buildPermissionOpts: () => this.buildPermissionOpts(),
+        maxResultChars: this.config.maxResultChars ?? 100_000,
       };
 
       this.microcompactTokensFreed = 0;
@@ -469,11 +472,10 @@ export class Thread {
 
       while (!signal.aborted) {
         // --- Pre-call compaction pipeline ---
-        // Budget runs first on a snapshot (matching the reference), so its
-        // truncation decisions see the full canonical history. Microcompact
-        // then permanently mutates this.messages (replacing old tool results
-        // with placeholders) — but that does not affect the already-budgeted
-        // messagesForApi snapshot used for this API call.
+        // Disk spill and microcompact permanently mutate canonical
+        // this.messages. Budget creates a separate snapshot. After all
+        // three stages, messagesForApi reflects the union of all savings
+        // so the current API call benefits immediately.
 
         // Aggregate disk-based spill runs on canonical history every turn,
         // replacing oversized results with stubs. This is safe because disk
@@ -493,7 +495,17 @@ export class Thread {
           }
         }
 
-        // Apply budget to a snapshot so the canonical this.messages is not mutated
+        if (this.config.microcompact?.enabled) {
+          const mcResult = microcompactMessages(this.messages, this.config.microcompact);
+          if (mcResult.tokensFreed > 0) {
+            this.messages = mcResult.messages;
+            this.microcompactTokensFreed += mcResult.tokensFreed;
+            yield { type: "microcompact_complete", tokensFreed: mcResult.tokensFreed };
+          }
+        }
+
+        // Apply budget to a snapshot so the canonical this.messages is not mutated.
+        // Runs after microcompact so the budget sees already-cleared results.
         let messagesForApi: ChatMessage[] = this.messages;
         if (this.config.toolResultBudget?.enabled) {
           const budgetResult = enforceToolResultBudget(
@@ -511,15 +523,6 @@ export class Thread {
               originalChars: entry.originalChars,
               truncatedChars: entry.truncatedChars,
             };
-          }
-        }
-
-        if (this.config.microcompact?.enabled) {
-          const mcResult = microcompactMessages(this.messages, this.config.microcompact);
-          if (mcResult.tokensFreed > 0) {
-            this.messages = mcResult.messages;
-            this.microcompactTokensFreed += mcResult.tokensFreed;
-            yield { type: "microcompact_complete", tokensFreed: mcResult.tokensFreed };
           }
         }
 
@@ -1125,8 +1128,12 @@ export class Thread {
 
         if (finishReason === "content_filter") {
           yield { type: "text_delta", text: "\n\n[Response blocked by content filter]" };
-          streamingExec?.discard();
-          accumulatedToolCalls.clear();
+          if (streamingExec) {
+            for (const result of streamingExec.getCompletedResults()) {
+              streamingResults.push(result);
+            }
+            streamingExec.discard();
+          }
         }
 
         if (streamingExec && !signal.aborted) {

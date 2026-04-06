@@ -482,7 +482,7 @@ export function mergeConsecutiveSameRole(
       const currParts = toContentParts(curr.content as string | ContentPart[]);
       result[result.length - 1] = {
         role: "user",
-        content: [...prevParts, ...currParts],
+        content: joinUserPartsAtSeam(prevParts, currParts),
       };
     } else if (prev.role === "assistant" && curr.role === "assistant") {
       result[result.length - 1] = mergeAssistantPair(
@@ -626,6 +626,27 @@ function toContentParts(content: string | ContentPart[]): ContentPart[] {
   }
   if (Array.isArray(content)) return content;
   return [{ type: "text", text: contentToString(content) }];
+}
+
+/**
+ * Join two ContentPart arrays, inserting a `\n` separator when both the
+ * last part of `a` and the first part of `b` are text blocks. This
+ * prevents run-together text like "2 + 23 + 3" when merging consecutive
+ * user messages that should read "2 + 2\n3 + 3".
+ */
+function joinUserPartsAtSeam(a: ContentPart[], b: ContentPart[]): ContentPart[] {
+  if (a.length === 0) return b;
+  if (b.length === 0) return a;
+  const lastA = a[a.length - 1];
+  const firstB = b[0];
+  if (lastA.type === "text" && firstB.type === "text") {
+    return [
+      ...a.slice(0, -1),
+      { type: "text", text: lastA.text + "\n" + firstB.text },
+      ...b.slice(1),
+    ];
+  }
+  return [...a, ...b];
 }
 
 function assistantTextContent(asst: AssistantMessage): string {

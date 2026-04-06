@@ -344,7 +344,14 @@ export async function resolvePermission(
         opts.denialTracker.recordDenial();
         const fallback = opts.denialTracker.shouldFallback();
         if (fallback.triggered) {
-          opts.denialTracker.resetAfterFallback(fallback.reason);
+          if (fallback.reason === "repeated_consecutive") {
+            return {
+              behavior: "deny",
+              message: `Auto-mode classifier denied too many actions without user approval. Aborting.`,
+              reason: "denial_limit",
+            };
+          }
+          opts.denialTracker.resetAfterFallback(fallback.reason as "consecutive" | "total");
           return {
             behavior: "ask",
             message: `Auto-mode classifier denied too many consecutive actions. Falling back to user prompt.`,

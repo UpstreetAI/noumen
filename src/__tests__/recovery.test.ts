@@ -76,9 +76,9 @@ describe("filterWhitespaceOnlyAssistantMessages", () => {
     expect(result.messages[0].role).toBe("user");
     const parts = result.messages[0].content as Array<{ type: string; text: string }>;
     expect(Array.isArray(parts)).toBe(true);
-    const texts = parts.map((p) => p.text);
-    expect(texts).toContain("hi");
-    expect(texts).toContain("again");
+    const fullText = parts.map((p) => p.text).join("");
+    expect(fullText).toContain("hi");
+    expect(fullText).toContain("again");
   });
 
   it("keeps assistants with tool_calls even if text is empty", () => {

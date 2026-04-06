@@ -10,7 +10,7 @@ export interface DenialState {
 
 export type FallbackCheck =
   | { triggered: false }
-  | { triggered: true; reason: "consecutive" | "total" };
+  | { triggered: true; reason: "consecutive" | "total" | "repeated_consecutive" };
 
 const DEFAULT_LIMITS: DenialLimits = {
   maxConsecutive: 3,
@@ -24,6 +24,7 @@ const DEFAULT_LIMITS: DenialLimits = {
 export class DenialTracker {
   private state: DenialState = { consecutiveDenials: 0, totalDenials: 0 };
   private limits: DenialLimits;
+  private consecutiveFallbacksWithoutSuccess = 0;
 
   constructor(limits?: Partial<DenialLimits>) {
     this.limits = { ...DEFAULT_LIMITS, ...limits };
@@ -36,6 +37,7 @@ export class DenialTracker {
 
   recordSuccess(): void {
     this.state.consecutiveDenials = 0;
+    this.consecutiveFallbacksWithoutSuccess = 0;
   }
 
   shouldFallback(): FallbackCheck {
@@ -43,7 +45,12 @@ export class DenialTracker {
       return { triggered: true, reason: "total" };
     }
     if (this.state.consecutiveDenials >= this.limits.maxConsecutive) {
-      return { triggered: true, reason: "consecutive" };
+      return {
+        triggered: true,
+        reason: this.consecutiveFallbacksWithoutSuccess > 0
+          ? "repeated_consecutive"
+          : "consecutive",
+      };
     }
     return { triggered: false };
   }
@@ -52,11 +59,19 @@ export class DenialTracker {
    * Reset counters after a fallback. Only resets totalDenials when the
    * total limit was the trigger — consecutive-only fallbacks preserve
    * the total counter so the session-wide safety net stays effective.
+   *
+   * Tracks repeated consecutive fallbacks: if `resetAfterFallback("consecutive")`
+   * is called again without an intervening `recordSuccess()`, the next
+   * `shouldFallback()` returns `"repeated_consecutive"` to signal escalation.
    */
   resetAfterFallback(trigger: "consecutive" | "total"): void {
     this.state.consecutiveDenials = 0;
+    if (trigger === "consecutive") {
+      this.consecutiveFallbacksWithoutSuccess++;
+    }
     if (trigger === "total") {
       this.state.totalDenials = 0;
+      this.consecutiveFallbacksWithoutSuccess = 0;
     }
   }
 
@@ -67,5 +82,6 @@ export class DenialTracker {
   reset(): void {
     this.state.consecutiveDenials = 0;
     this.state.totalDenials = 0;
+    this.consecutiveFallbacksWithoutSuccess = 0;
   }
 }

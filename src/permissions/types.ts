@@ -111,6 +111,8 @@ export interface PermissionRequest {
   suggestions?: PermissionRule[];
   isReadOnly: boolean;
   isDestructive: boolean;
+  /** Abort signal from the session — handlers should stop promptly when fired. */
+  signal?: AbortSignal;
 }
 
 export interface PermissionResponse {

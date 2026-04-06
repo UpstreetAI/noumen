@@ -28,6 +28,7 @@ import { ChatStreamError } from "../providers/types.js";
 import type { Tool, ToolResult, ToolContext } from "../tools/types.js";
 import type { HookDefinition } from "../hooks/types.js";
 import { createAutoCompactConfig } from "../compact/auto-compact.js";
+import { CLEARED_PLACEHOLDER } from "../compact/microcompact.js";
 import { assertValidMessageSequence } from "../messages/invariants.js";
 import { normalizeMessagesForAPI } from "../messages/normalize.js";
 
@@ -1136,5 +1137,169 @@ describe("Integration: abort, error, and resume lifecycle", () => {
     expect(assistants.length).toBeGreaterThanOrEqual(1);
     const lastAssistant = assistants[assistants.length - 1];
     expect(typeof lastAssistant.content === "string" && lastAssistant.content).toContain("Clean response");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Microcompact ordering regression test
+// ---------------------------------------------------------------------------
+
+describe("Integration: microcompact savings reach current API call", () => {
+  it("within the same turn, second API call sees microcompacted tool results", async () => {
+    const largeContent = "x".repeat(500);
+    const readTool = makeTool({
+      name: "ReadFile",
+      parameters: {
+        type: "object",
+        properties: { file_path: { type: "string" } },
+        required: ["file_path"],
+      },
+      call: async () => ({ content: largeContent }),
+    });
+
+    // Track messages sent to the provider on each call
+    const providerCallMessages: ChatMessage[][] = [];
+    let callIdx = 0;
+    const spyProvider: AIProvider = {
+      async *chat(params: ChatParams) {
+        providerCallMessages.push([...params.messages]);
+        callIdx++;
+        if (callIdx === 1) {
+          // Iteration 1: return 6 tool calls so microcompact has enough to clear
+          for (const chunk of multiToolCallResponse([
+            { id: "tc1", name: "ReadFile", args: { file_path: "/a.txt" } },
+            { id: "tc2", name: "ReadFile", args: { file_path: "/b.txt" } },
+            { id: "tc3", name: "ReadFile", args: { file_path: "/c.txt" } },
+            { id: "tc4", name: "ReadFile", args: { file_path: "/d.txt" } },
+            { id: "tc5", name: "ReadFile", args: { file_path: "/e.txt" } },
+            { id: "tc6", name: "ReadFile", args: { file_path: "/f.txt" } },
+          ])) yield chunk;
+          return;
+        }
+        // Iteration 2: final text. The provider should see cleared old results.
+        for (const chunk of textResponse("Done.")) yield chunk;
+      },
+    };
+
+    const config: ThreadConfig = {
+      ...baseConfig,
+      tools: [readTool],
+      provider: spyProvider,
+      microcompact: { enabled: true, keepRecent: 0 },
+    };
+
+    const thread = new Thread(config, { sessionId: "mc-ordering" });
+    await collectEvents(thread.run("read files"));
+
+    // The second provider call (iteration 2) should have microcompacted messages.
+    // Bug: messagesForApi references the pre-microcompact array, so the provider
+    // sees full tool results instead of cleared placeholders.
+    expect(providerCallMessages.length).toBe(2);
+    const secondCallMsgs = providerCallMessages[1];
+    const toolMsgs = secondCallMsgs.filter((m: ChatMessage) => m.role === "tool");
+    expect(toolMsgs.length).toBe(6);
+    for (const tm of toolMsgs) {
+      expect(tm.content).toBe(CLEARED_PLACEHOLDER);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// content_filter streaming tool result preservation regression test
+// ---------------------------------------------------------------------------
+
+describe("Integration: content_filter preserves completed streaming tool results", () => {
+  it("tool calls accumulated before content_filter are persisted with results", async () => {
+    const executionLog: string[] = [];
+    const readTool = makeTool({
+      name: "ReadFile",
+      parameters: {
+        type: "object",
+        properties: { file_path: { type: "string" } },
+        required: ["file_path"],
+      },
+      call: async (args) => {
+        executionLog.push(`executed:${args.file_path}`);
+        return { content: `content-of-${args.file_path}` };
+      },
+    });
+
+    let callCount = 0;
+    const contentFilterProvider: AIProvider = {
+      async *chat() {
+        callCount++;
+        if (callCount === 1) {
+          // Stream two tool calls: tc1 args complete, then tc2 starts
+          // (which triggers tc1 being added to the streaming executor),
+          // then content_filter fires.
+          yield toolCallStartChunk("tc1", "ReadFile");
+          yield toolCallArgChunk(JSON.stringify({ file_path: "/a.txt" }));
+          // tc2 start triggers tc1 finalization in the streaming executor
+          yield {
+            id: "mock-tc2-start",
+            model: "mock-model",
+            choices: [{
+              index: 0,
+              delta: {
+                tool_calls: [{
+                  index: 1,
+                  id: "tc2",
+                  type: "function" as const,
+                  function: { name: "ReadFile", arguments: "" },
+                }],
+              },
+              finish_reason: null,
+            }],
+          };
+          yield {
+            id: "mock-tc2-args",
+            model: "mock-model",
+            choices: [{
+              index: 0,
+              delta: {
+                tool_calls: [{
+                  index: 1,
+                  function: { arguments: JSON.stringify({ file_path: "/b.txt" }) },
+                }],
+              },
+              finish_reason: null,
+            }],
+          };
+          // Allow tool 1 to execute during streaming
+          await new Promise((r) => setTimeout(r, 20));
+          // Content filter fires
+          yield {
+            id: "mock-cf",
+            model: "mock-model",
+            choices: [{ index: 0, delta: {}, finish_reason: "content_filter" }],
+          };
+          return;
+        }
+        for (const chunk of textResponse("Recovered.")) yield chunk;
+      },
+    };
+
+    const config: ThreadConfig = {
+      ...baseConfig,
+      tools: [readTool],
+      provider: contentFilterProvider,
+      streamingToolExecution: true,
+    };
+
+    const thread = new Thread(config, { sessionId: "cf-preserve" });
+    const events = await collectEvents(thread.run("read files"));
+
+    const msgs = await thread.getMessages();
+
+    // The assistant message should have tool_calls (not discarded)
+    const assistants = msgs.filter((m) => m.role === "assistant") as AssistantMessage[];
+    expect(assistants.length).toBeGreaterThanOrEqual(1);
+    const asstWithTools = assistants.find((a) => a.tool_calls && a.tool_calls.length > 0);
+    expect(asstWithTools).toBeDefined();
+    expect(asstWithTools!.tool_calls!.length).toBe(2);
+
+    // Tool results should be persisted (real result for tc1, error for tc2 since discarded)
+    const toolResults = msgs.filter((m) => m.role === "tool");
+    expect(toolResults.length).toBe(2);
   });
 });

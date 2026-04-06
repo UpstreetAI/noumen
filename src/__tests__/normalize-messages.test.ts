@@ -266,9 +266,8 @@ describe("normalizeMessagesForAPI", () => {
     expect(result[0].role).toBe("user");
     expect(Array.isArray(result[0].content)).toBe(true);
     const parts = result[0].content as { type: string; text: string }[];
-    expect(parts).toHaveLength(2);
-    expect(parts[0].text).toBe("first");
-    expect(parts[1].text).toBe("second");
+    expect(parts).toHaveLength(1);
+    expect(parts[0].text).toBe("first\nsecond");
   });
 
   it("merges consecutive assistant messages after filter removes a user between them", () => {
@@ -580,9 +579,52 @@ describe("mergeConsecutiveSameRole", () => {
     const result = mergeConsecutiveSameRole(messages);
     expect(result).toHaveLength(1);
     const parts = result[0].content as { type: string; text: string }[];
+    expect(parts).toHaveLength(1);
+    expect(parts[0].text).toBe("a\nb");
+  });
+
+  it("inserts newline separator between adjacent text parts when merging user messages", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "2 + 2" },
+      { role: "user", content: "3 + 3" },
+    ];
+    const result = mergeConsecutiveSameRole(messages);
+    expect(result).toHaveLength(1);
+    const parts = result[0].content as { type: string; text?: string }[];
+    const fullText = parts
+      .filter((p) => p.type === "text")
+      .map((p) => p.text)
+      .join("");
+    expect(fullText).toBe("2 + 2\n3 + 3");
+  });
+
+  it("does not insert separator between image and text parts", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: [{ type: "image", data: "abc", media_type: "image/png" }] },
+      { role: "user", content: "caption" },
+    ];
+    const result = mergeConsecutiveSameRole(messages);
+    expect(result).toHaveLength(1);
+    const parts = result[0].content as { type: string; text?: string }[];
     expect(parts).toHaveLength(2);
-    expect(parts[0].text).toBe("a");
-    expect(parts[1].text).toBe("b");
+    expect(parts[0].type).toBe("image");
+    expect(parts[1]).toEqual({ type: "text", text: "caption" });
+  });
+
+  it("merges three consecutive user messages with correct separators", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "alpha" },
+      { role: "user", content: "beta" },
+      { role: "user", content: "gamma" },
+    ];
+    const result = mergeConsecutiveSameRole(messages);
+    expect(result).toHaveLength(1);
+    const parts = result[0].content as { type: string; text?: string }[];
+    const fullText = parts
+      .filter((p) => p.type === "text")
+      .map((p) => p.text)
+      .join("");
+    expect(fullText).toBe("alpha\nbeta\ngamma");
   });
 });
 

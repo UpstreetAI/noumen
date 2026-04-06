@@ -57,8 +57,8 @@ describe("DenialTracker", () => {
     expect(tracker.shouldFallback().triggered).toBe(false);
   });
 
-  it("cycling through consecutive fallbacks eventually hits total limit", () => {
-    const tracker = new DenialTracker({ maxConsecutive: 2, maxTotal: 7 });
+  it("cycling through consecutive fallbacks with user approval in between stays at consecutive", () => {
+    const tracker = new DenialTracker({ maxConsecutive: 2, maxTotal: 100 });
 
     // Cycle 1: 2 denials → consecutive fallback
     tracker.recordDenial();
@@ -68,7 +68,10 @@ describe("DenialTracker", () => {
     tracker.resetAfterFallback("consecutive");
     expect(tracker.getState().totalDenials).toBe(2);
 
-    // Cycle 2: 2 more denials → consecutive fallback (total now 4)
+    // User approves (breaks the repeated cycle)
+    tracker.recordSuccess();
+
+    // Cycle 2: 2 more denials → still "consecutive" (not repeated)
     tracker.recordDenial();
     tracker.recordDenial();
     fb = tracker.shouldFallback();
@@ -76,19 +79,14 @@ describe("DenialTracker", () => {
     tracker.resetAfterFallback("consecutive");
     expect(tracker.getState().totalDenials).toBe(4);
 
-    // Cycle 3: 2 more denials → consecutive (total now 6), 1 more → total=7
+    // User approves again
+    tracker.recordSuccess();
+
+    // Cycle 3: 2 more denials → still "consecutive"
     tracker.recordDenial();
     tracker.recordDenial();
     fb = tracker.shouldFallback();
     expect(fb.triggered && fb.reason).toBe("consecutive");
-    tracker.resetAfterFallback("consecutive");
-    expect(tracker.getState().totalDenials).toBe(6);
-
-    // One more denial → total hits 7 = maxTotal
-    tracker.recordDenial();
-    fb = tracker.shouldFallback();
-    expect(fb.triggered).toBe(true);
-    if (fb.triggered) expect(fb.reason).toBe("total");
   });
 
   it("total limit takes priority over consecutive when both hit simultaneously", () => {
@@ -107,5 +105,42 @@ describe("DenialTracker", () => {
     expect(tracker.shouldFallback().triggered).toBe(false);
     expect(tracker.getState().consecutiveDenials).toBe(0);
     expect(tracker.getState().totalDenials).toBe(0);
+  });
+
+  it("repeated consecutive fallback without success escalates to repeated_consecutive", () => {
+    const tracker = new DenialTracker({ maxConsecutive: 3, maxTotal: 100 });
+
+    // First cycle: 3 denials → consecutive fallback → reset
+    for (let i = 0; i < 3; i++) tracker.recordDenial();
+    let fb = tracker.shouldFallback();
+    expect(fb.triggered).toBe(true);
+    if (fb.triggered) expect(fb.reason).toBe("consecutive");
+    tracker.resetAfterFallback("consecutive");
+
+    // Headless: no user approval (no recordSuccess call)
+    // Second cycle: 3 more denials → should escalate
+    for (let i = 0; i < 3; i++) tracker.recordDenial();
+    fb = tracker.shouldFallback();
+    expect(fb.triggered).toBe(true);
+    if (fb.triggered) expect(fb.reason).toBe("repeated_consecutive");
+  });
+
+  it("recordSuccess between consecutive fallbacks prevents escalation", () => {
+    const tracker = new DenialTracker({ maxConsecutive: 3, maxTotal: 100 });
+
+    // First cycle: 3 denials → consecutive fallback → reset
+    for (let i = 0; i < 3; i++) tracker.recordDenial();
+    let fb = tracker.shouldFallback();
+    expect(fb.triggered && fb.reason).toBe("consecutive");
+    tracker.resetAfterFallback("consecutive");
+
+    // User approves (recordSuccess)
+    tracker.recordSuccess();
+
+    // Second cycle: 3 denials → still "consecutive" (not escalated)
+    for (let i = 0; i < 3; i++) tracker.recordDenial();
+    fb = tracker.shouldFallback();
+    expect(fb.triggered).toBe(true);
+    if (fb.triggered) expect(fb.reason).toBe("consecutive");
   });
 });

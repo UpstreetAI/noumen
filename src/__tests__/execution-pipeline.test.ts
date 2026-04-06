@@ -569,4 +569,103 @@ describe("executeToolCall", () => {
     expect(result.result.content).toContain("original error");
     expect(result.result.content).not.toContain("hook explosion");
   });
+
+  it("truncates tool results exceeding maxResultChars", async () => {
+    const largeTool = makeTool({
+      call: async () => ({ content: "x".repeat(200_000) }),
+    });
+    const ctx = makeCtx({
+      registry: makeRegistry([largeTool]),
+      maxResultChars: 100_000,
+    });
+
+    const result = await executeToolCall(makeTc("TestTool"), {}, ctx);
+
+    expect(typeof result.result.content === "string").toBe(true);
+    const content = result.result.content as string;
+    expect(content.length).toBeLessThan(200_000);
+    expect(content).toContain("[Result truncated:");
+  });
+
+  it("does not truncate results under maxResultChars", async () => {
+    const smallTool = makeTool({
+      call: async () => ({ content: "short result" }),
+    });
+    const ctx = makeCtx({
+      registry: makeRegistry([smallTool]),
+      maxResultChars: 100_000,
+    });
+
+    const result = await executeToolCall(makeTc("TestTool"), {}, ctx);
+
+    expect(result.result.content).toBe("short result");
+  });
+
+  it("does not truncate when maxResultChars is not set", async () => {
+    const largeTool = makeTool({
+      call: async () => ({ content: "x".repeat(200_000) }),
+    });
+    const ctx = makeCtx({ registry: makeRegistry([largeTool]) });
+
+    const result = await executeToolCall(makeTc("TestTool"), {}, ctx);
+
+    expect((result.result.content as string).length).toBe(200_000);
+  });
+
+  it("aborts promptly when signal fires during permHandler", async () => {
+    const ac = new AbortController();
+    const tool = makeTool({ isReadOnly: false });
+
+    mockResolvePermission.mockResolvedValue({
+      behavior: "ask",
+      message: "Confirm?",
+    });
+
+    const hangingHandler = (_req: import("../permissions/types.js").PermissionRequest) =>
+      new Promise<import("../permissions/types.js").PermissionResponse>(() => {
+        // Never resolves — simulates waiting for user input
+      });
+
+    const ctx = makeCtx({
+      registry: makeRegistry([tool]),
+      permCtx: { mode: "default", rules: [], workingDirectories: [] },
+      permHandler: hangingHandler,
+      toolCtx: { ...makeToolCtx(), signal: ac.signal },
+    });
+
+    setTimeout(() => ac.abort(), 50);
+
+    const result = await executeToolCall(makeTc("TestTool"), {}, ctx);
+
+    expect(result.result.isError).toBe(true);
+    expect(result.result.content).toContain("abort");
+  });
+
+  it("returns immediately when signal is already aborted before permHandler", async () => {
+    const ac = new AbortController();
+    ac.abort();
+
+    const tool = makeTool({ isReadOnly: false });
+    mockResolvePermission.mockResolvedValue({
+      behavior: "ask",
+      message: "Confirm?",
+    });
+
+    let handlerCalled = false;
+    const ctx = makeCtx({
+      registry: makeRegistry([tool]),
+      permCtx: { mode: "default", rules: [], workingDirectories: [] },
+      permHandler: async () => {
+        handlerCalled = true;
+        return { allow: true };
+      },
+      toolCtx: { ...makeToolCtx(), signal: ac.signal },
+    });
+
+    const result = await executeToolCall(makeTc("TestTool"), {}, ctx);
+
+    expect(handlerCalled).toBe(false);
+    expect(result.permissionDenied).toBe(true);
+    expect(result.result.isError).toBe(true);
+  });
 });

@@ -45,6 +45,8 @@ export interface ToolExecutionContext {
   tracer: Tracer;
   parentSpan?: Span;
   buildPermissionOpts: () => ResolvePermissionOptions | undefined;
+  /** Truncate tool results exceeding this character count. */
+  maxResultChars?: number;
 }
 
 export interface ToolExecutionResult {
@@ -237,6 +239,13 @@ export async function executeToolCall(
           });
 
           if (permHandler) {
+            const signal = toolCtx.signal;
+            if (signal?.aborted) {
+              return {
+                toolCall: tc, parsedArgs, result: { content: "Error: Session aborted", isError: true },
+                permissionDenied: true, events,
+              };
+            }
             const isReadOnly = resolveToolFlag(tool.isReadOnly, currentArgs);
             const isDestructive = resolveToolFlag(tool.isDestructive, currentArgs);
             const request: PermissionRequest = {
@@ -246,8 +255,18 @@ export async function executeToolCall(
               suggestions: decision.suggestions,
               isReadOnly,
               isDestructive,
+              signal,
             };
-            const response = await permHandler(request);
+            const response = await (signal
+              ? Promise.race([
+                  permHandler(request),
+                  new Promise<never>((_, reject) => {
+                    signal.addEventListener("abort", () => {
+                      reject(new DOMException("Permission prompt aborted", "AbortError"));
+                    }, { once: true });
+                  }),
+                ])
+              : permHandler(request));
 
             if (!response.allow) {
               denialTracker?.recordDenial();
@@ -349,7 +368,15 @@ export async function executeToolCall(
       attributes: { "tool.name": tc.function.name, "tool.id": tc.id },
     });
     let result = await registry.execute(tc.function.name, currentArgs, toolCtx);
-    const resultText = contentToString(result.content);
+    let resultText = contentToString(result.content);
+
+    if (ctx.maxResultChars && resultText.length > ctx.maxResultChars) {
+      const truncated = resultText.slice(0, ctx.maxResultChars);
+      const omitted = resultText.length - ctx.maxResultChars;
+      resultText = truncated + `\n\n[Result truncated: ${omitted} chars omitted]`;
+      result = { ...result, content: resultText };
+    }
+
     toolSpan.setStatus(
       result.isError ? SpanStatusCode.ERROR : SpanStatusCode.OK,
       result.isError ? resultText : undefined,
