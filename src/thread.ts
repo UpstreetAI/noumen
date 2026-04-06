@@ -464,7 +464,11 @@ export class Thread {
 
       while (!signal.aborted) {
         // --- Pre-call compaction pipeline ---
-        // Microcompact first so the budget operates on already-compacted messages
+        // Microcompact runs first because it permanently mutates this.messages
+        // (replacing old tool results with placeholders). Budget then operates
+        // on a snapshot of the post-microcompact history, so its truncation
+        // decisions reflect already-replaced content. (claude-code runs budget
+        // first, but there neither operation mutates the canonical history.)
         if (this.config.microcompact?.enabled) {
           const mcResult = microcompactMessages(this.messages, this.config.microcompact);
           if (mcResult.tokensFreed > 0) {

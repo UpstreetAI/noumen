@@ -390,7 +390,7 @@ export async function executeToolCall(
     const msg = execErr instanceof Error ? execErr.message : String(execErr);
     return {
       toolCall: tc,
-      parsedArgs,
+      parsedArgs: currentArgs,
       result: { content: `Error executing tool: ${msg}`, isError: true },
       events,
     };
