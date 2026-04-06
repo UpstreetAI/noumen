@@ -145,7 +145,13 @@ export const readFileTool: Tool = {
         }
       }
 
-      const content = await ctx.fs.readFile(filePath);
+      const maxReadBytes = limit
+        ? Math.min((limit + (offset - 1)) * 500, 10 * 1024 * 1024)
+        : undefined;
+      const content = await ctx.fs.readFile(
+        filePath,
+        maxReadBytes ? { maxBytes: maxReadBytes } : undefined,
+      );
       const lines = content.split("\n");
 
       const startIdx = Math.max(0, offset - 1);

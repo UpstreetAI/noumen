@@ -78,6 +78,39 @@ describe("tryReactiveCompact", () => {
     }
   });
 
+  it("persists truncated messages when compaction fails (truncation fallback)", async () => {
+    const errorProvider = new MockAIProvider();
+    // No responses queued → provider will throw on chat()
+
+    // Create enough messages that truncation actually drops some.
+    // We need the estimated token count to exceed the effective context window
+    // for "mock-model" (128k default) so truncation trims something.
+    // Each message is ~25k chars ≈ 6250 tokens + 4 overhead each = ~6254 * 8 = ~50k
+    // To make truncation actually kick in, use a huge amount of content.
+    const msgs: ChatMessage[] = [];
+    for (let i = 0; i < 40; i++) {
+      msgs.push({ role: i % 2 === 0 ? "user" : "assistant", content: "x".repeat(20_000) } as ChatMessage);
+    }
+
+    const result = await tryReactiveCompact(
+      errorProvider,
+      "mock-model",
+      msgs,
+      storage,
+      "trunc-persist",
+    );
+
+    if (result && result.strategy === "truncated") {
+      // Verify persistence: compact boundary was written
+      const entries = await storage.loadAllEntries("trunc-persist");
+      expect(entries.some((e) => e.type === "compact-boundary")).toBe(true);
+      // And the post-boundary messages should be loadable
+      const loaded = await storage.loadMessages("trunc-persist");
+      expect(loaded.length).toBeGreaterThan(0);
+      expect(loaded.length).toBeLessThan(msgs.length);
+    }
+  });
+
   it("persists compact boundary and summary in storage", async () => {
     provider.addResponse(textResponse("A summary."));
 

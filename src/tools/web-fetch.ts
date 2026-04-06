@@ -16,7 +16,15 @@ export function isPrivateIP(ip: string): boolean {
 
   if (stripped === "::1" || stripped === "0.0.0.0" || stripped === "::") return true;
 
-  if (stripped.startsWith("fe80:") || stripped.startsWith("::ffff:")) return true;
+  if (stripped.startsWith("fe80:")) return true;
+
+  const firstTwo = stripped.slice(0, 2).toLowerCase();
+  if (firstTwo === "fc" || firstTwo === "fd") return true;
+
+  if (stripped.toLowerCase().startsWith("::ffff:")) {
+    const embedded = stripped.slice(7);
+    return embedded.includes(".") ? isPrivateIP(embedded) : true;
+  }
 
   const parts = stripped.split(".");
   if (parts.length === 4 && parts.every((p) => /^\d+$/.test(p))) {

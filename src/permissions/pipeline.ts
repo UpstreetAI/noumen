@@ -20,19 +20,19 @@ const ACCEPT_EDITS_BASH_ALLOWLIST = new Set([
 ]);
 
 const DANGEROUS_PATH_PATTERNS = [
-  /(?:^|\/)\.git\//,
+  /(?:^|\/)\.git(?:\/|$)/,
   /(?:^|\/)\.bashrc$/,
   /(?:^|\/)\.bash_profile$/,
   /(?:^|\/)\.zshrc$/,
   /(?:^|\/)\.zprofile$/,
   /(?:^|\/)\.profile$/,
-  /(?:^|\/)\.ssh\//,
+  /(?:^|\/)\.ssh(?:\/|$)/,
   /(?:^|\/)\.env$/,
   /(?:^|\/)\.npmrc$/,
-  /(?:^|\/)\.vscode\//,
-  /(?:^|\/)\.idea\//,
-  /(?:^|\/)\.claude\//,
-  /(?:^|\/)\.noumen\//,
+  /(?:^|\/)\.vscode(?:\/|$)/,
+  /(?:^|\/)\.idea(?:\/|$)/,
+  /(?:^|\/)\.claude(?:\/|$)/,
+  /(?:^|\/)\.noumen(?:\/|$)/,
   /(?:^|\/)\.gitconfig$/,
   /(?:^|\/)\.gitmodules$/,
   /(?:^|\/)\.mcp\.json$/,
@@ -269,6 +269,21 @@ export async function resolvePermission(
             message: `Tool "${toolName}" (${baseName}) is not in the acceptEdits allowlist.`,
             reason: "mode",
           };
+        }
+      }
+      if (permCtx.workingDirectories.length > 0) {
+        for (const sub of subCommands) {
+          const tokens = sub.trim().split(/\s+/).slice(1);
+          for (const token of tokens) {
+            if (token.startsWith("-")) continue;
+            if (path.isAbsolute(token) && !isPathInWorkingDirectories(token, permCtx.workingDirectories)) {
+              return {
+                behavior: "ask",
+                message: `Bash command references path "${token}" outside working directories.`,
+                reason: "workingDirectory",
+              };
+            }
+          }
         }
       }
     }

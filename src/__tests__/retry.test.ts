@@ -644,3 +644,50 @@ describe("retry engine totalAttempts budget", () => {
     expect(callCount).toBeLessThanOrEqual(7);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Gemini / Vertex context overflow parsing
+// ---------------------------------------------------------------------------
+describe("Gemini context overflow classification", () => {
+  it("parses Gemini 'prompt is too long' error format", () => {
+    const error = {
+      status: 400,
+      message: "prompt is too long: 137500 tokens > 135000 maximum",
+    };
+    const classified = classifyError(error);
+    expect(classified.isContextOverflow).toBe(true);
+    expect(classified.contextOverflowData).toBeDefined();
+    expect(classified.contextOverflowData!.inputTokens).toBe(137500);
+    expect(classified.contextOverflowData!.contextLimit).toBe(135000);
+    expect(classified.contextOverflowData!.maxTokens).toBe(2500);
+  });
+
+  it("parses Vertex 413 overflow errors", () => {
+    const error = {
+      status: 413,
+      message: "prompt is too long: 200000 tokens > 128000 maximum",
+    };
+    const classified = classifyError(error);
+    expect(classified.isContextOverflow).toBe(true);
+    expect(classified.contextOverflowData!.inputTokens).toBe(200000);
+    expect(classified.contextOverflowData!.contextLimit).toBe(128000);
+  });
+
+  it("is retryable when Gemini overflow is detected", () => {
+    const error = {
+      status: 400,
+      message: "prompt is too long: 137500 tokens > 135000 maximum",
+    };
+    const classified = classifyError(error);
+    expect(isRetryable(classified, DEFAULT_RETRY_CONFIG)).toBe(true);
+  });
+
+  it("does not false-positive on non-overflow 400 errors", () => {
+    const error = {
+      status: 400,
+      message: "Invalid model name",
+    };
+    const classified = classifyError(error);
+    expect(classified.isContextOverflow).toBe(false);
+  });
+});

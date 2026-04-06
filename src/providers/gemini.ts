@@ -197,7 +197,11 @@ export class GeminiProvider implements AIProvider {
           mapped = responseHasToolCalls ? "tool_calls" : "stop";
         } else if (finishReason === "MAX_TOKENS") {
           mapped = "length";
-        } else if (finishReason === "SAFETY" || finishReason === "RECITATION") {
+        } else if (
+          finishReason === "SAFETY" || finishReason === "RECITATION" ||
+          finishReason === "BLOCKLIST" || finishReason === "PROHIBITED_CONTENT" ||
+          finishReason === "SPII" || finishReason === "MALFORMED_FUNCTION_CALL"
+        ) {
           mapped = "content_filter";
         } else {
           mapped = "stop";

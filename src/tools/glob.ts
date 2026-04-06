@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import type { Tool, ToolResult, ToolContext } from "./types.js";
 import { GLOB_PROMPT } from "./prompts/glob.js";
 import { shellEscape } from "../utils/shell-escape.js";
@@ -36,7 +37,7 @@ export const globTool: Tool = {
     const pattern = args.pattern as string;
     const searchPath = (args.path as string | undefined) ?? ctx.cwd;
 
-    const fullPattern = pattern.startsWith("**/")
+    const fullPattern = pattern.startsWith("**/") || path.isAbsolute(pattern)
       ? pattern
       : `**/${pattern}`;
 

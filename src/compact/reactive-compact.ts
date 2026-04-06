@@ -47,10 +47,26 @@ export async function tryReactiveCompact(
     return { messages: compacted, strategy: "compacted" };
   } catch (err) {
     console.warn("[reactive-compact] compaction failed, falling back to head truncation:", err);
-    // Compaction failed — fall back to head truncation
     const targetTokens = getEffectiveContextWindow(model);
     const truncated = truncateHeadForPTLRetry(messages, targetTokens);
     if (truncated.length === messages.length) return null;
+    try {
+      await storage.appendCompactBoundary(sessionId);
+      const { generateUUID } = await import("../utils/uuid.js");
+      const ts = new Date().toISOString();
+      const entries: import("../session/types.js").Entry[] = truncated.map((msg) => ({
+        type: "message" as const,
+        uuid: generateUUID(),
+        parentUuid: null,
+        sessionId,
+        timestamp: ts,
+        message: msg,
+      }) as import("../session/types.js").MessageEntry);
+      await storage.appendEntriesBatch(sessionId, entries);
+      await storage.reAppendMetadataAfterCompact(sessionId);
+    } catch (persistErr) {
+      console.warn("[reactive-compact] failed to persist truncation:", persistErr);
+    }
     return { messages: truncated, strategy: "truncated" };
   }
 }

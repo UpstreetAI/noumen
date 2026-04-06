@@ -952,6 +952,26 @@ describe("isDangerousPath", () => {
   it("detects .git/shallow as dangerous", () => {
     expect(isDangerousPath(".git/shallow")).toBe(true);
   });
+
+  it("detects bare .git directory name (no trailing slash) as dangerous", () => {
+    expect(isDangerousPath(".git")).toBe(true);
+  });
+
+  it("detects bare .ssh directory name (no trailing slash) as dangerous", () => {
+    expect(isDangerousPath(".ssh")).toBe(true);
+  });
+
+  it("detects bare .vscode directory name as dangerous", () => {
+    expect(isDangerousPath(".vscode")).toBe(true);
+  });
+
+  it("detects bare .claude directory name as dangerous", () => {
+    expect(isDangerousPath(".claude")).toBe(true);
+  });
+
+  it("detects bare .noumen directory name as dangerous", () => {
+    expect(isDangerousPath(".noumen")).toBe(true);
+  });
 });
 
 describe("acceptEdits compound command check", () => {
@@ -1093,6 +1113,53 @@ describe("acceptEdits working-directory enforcement", () => {
       permCtx,
     );
 
+    expect(decision.behavior).toBe("allow");
+  });
+
+  it("enforces working directories for Bash commands with absolute path arguments", async () => {
+    const tool: Tool = {
+      name: "Bash",
+      description: "Run bash",
+      parameters: { type: "object" as const, properties: { command: { type: "string" } } },
+      async call() { return { content: "ok" }; },
+    };
+    const permCtx: PermissionContext = {
+      mode: "acceptEdits",
+      rules: [],
+      workingDirectories: ["/project"],
+    };
+    const toolCtx = { fs: new MockFs(), computer: new MockComputer(), cwd: "/project" };
+
+    const decision = await resolvePermission(
+      tool,
+      { command: "cp /etc/shadow /tmp/exfil" },
+      toolCtx,
+      permCtx,
+    );
+    expect(decision.behavior).toBe("ask");
+    expect(decision.reason).toBe("workingDirectory");
+  });
+
+  it("allows Bash commands with relative path arguments in acceptEdits mode", async () => {
+    const tool: Tool = {
+      name: "Bash",
+      description: "Run bash",
+      parameters: { type: "object" as const, properties: { command: { type: "string" } } },
+      async call() { return { content: "ok" }; },
+    };
+    const permCtx: PermissionContext = {
+      mode: "acceptEdits",
+      rules: [],
+      workingDirectories: ["/project"],
+    };
+    const toolCtx = { fs: new MockFs(), computer: new MockComputer(), cwd: "/project" };
+
+    const decision = await resolvePermission(
+      tool,
+      { command: "cp foo.ts bar.ts" },
+      toolCtx,
+      permCtx,
+    );
     expect(decision.behavior).toBe("allow");
   });
 });

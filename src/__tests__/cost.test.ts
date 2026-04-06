@@ -291,3 +291,33 @@ describe("Cost tracking in Thread", () => {
     expect(costEvents).toHaveLength(0);
   });
 });
+
+describe("Cost pricing — thinking token handling", () => {
+  it("does not double-count thinking tokens (they are included in completion_tokens)", () => {
+    const usageWithThinking: UsageRecord = {
+      prompt_tokens: 1000,
+      completion_tokens: 10000,
+      total_tokens: 11000,
+      thinking_tokens: 5000,
+    };
+    const usageWithout: UsageRecord = {
+      prompt_tokens: 1000,
+      completion_tokens: 10000,
+      total_tokens: 11000,
+    };
+    const costWith = calculateCost("claude-sonnet-4", usageWithThinking);
+    const costWithout = calculateCost("claude-sonnet-4", usageWithout);
+    expect(costWith).toBe(costWithout);
+  });
+
+  it("charges output cost only once for thinking-heavy responses", () => {
+    const usage: UsageRecord = {
+      prompt_tokens: 0,
+      completion_tokens: 1_000_000,
+      total_tokens: 1_000_000,
+      thinking_tokens: 900_000,
+    };
+    const cost = calculateCost("claude-sonnet-4", usage);
+    expect(cost).toBeCloseTo((1_000_000 / 1e6) * 25, 6);
+  });
+});

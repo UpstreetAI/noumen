@@ -141,6 +141,18 @@ function parseContextOverflow(
     };
   }
 
+  const geminiRegex = /prompt is too long[^0-9]*(\d+)\s*tokens?\s*>\s*(\d+)/i;
+  const geminiMatch = message.match(geminiRegex);
+  if (geminiMatch?.[1] && geminiMatch[2]) {
+    const totalTokens = parseInt(geminiMatch[1], 10);
+    const contextLimit = parseInt(geminiMatch[2], 10);
+    return {
+      inputTokens: totalTokens,
+      maxTokens: Math.max(0, totalTokens - contextLimit),
+      contextLimit,
+    };
+  }
+
   return undefined;
 }
 

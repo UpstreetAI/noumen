@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { estimateTokens, estimateMessagesTokens } from "../utils/tokens.js";
 import { jsonStringify, parseJSONL } from "../utils/json.js";
 import { generateUUID } from "../utils/uuid.js";
-import { getMaxOutputTokensForModel } from "../utils/context.js";
+import { getContextWindowForModel, getMaxOutputTokensForModel } from "../utils/context.js";
 
 describe("estimateTokens", () => {
   it("estimates roughly 1 token per 4 chars", () => {
@@ -102,5 +102,27 @@ describe("getMaxOutputTokensForModel", () => {
 
   it("returns 64000 for bedrock model prefix", () => {
     expect(getMaxOutputTokensForModel("us.anthropic.claude-3-5-sonnet-20240620")).toBe(64_000);
+  });
+});
+
+describe("GPT-4.1 context window support", () => {
+  it("returns 1M+ context window for gpt-4.1", () => {
+    expect(getContextWindowForModel("gpt-4.1")).toBe(1_047_576);
+  });
+
+  it("returns 1M+ context window for gpt-4.1-mini", () => {
+    expect(getContextWindowForModel("gpt-4.1-mini")).toBe(1_047_576);
+  });
+
+  it("returns 1M+ context window for gpt-4.1-nano", () => {
+    expect(getContextWindowForModel("gpt-4.1-nano")).toBe(1_047_576);
+  });
+
+  it("returns max output tokens for gpt-4.1", () => {
+    expect(getMaxOutputTokensForModel("gpt-4.1")).toBe(32_768);
+  });
+
+  it("does not fall back to 128k default", () => {
+    expect(getContextWindowForModel("gpt-4.1")).not.toBe(128_000);
   });
 });

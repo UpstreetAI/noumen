@@ -105,7 +105,6 @@ export function calculateCost(
   const nonCachedInput = Math.max(0, usage.prompt_tokens - cacheRead - cacheWrite);
   cost += (nonCachedInput / perMillion) * p.inputTokens;
   cost += (usage.completion_tokens / perMillion) * p.outputTokens;
-  cost += ((usage.thinking_tokens ?? 0) / perMillion) * p.outputTokens;
   if (cacheRead && p.cacheReadTokens) {
     cost += (cacheRead / perMillion) * p.cacheReadTokens;
   }

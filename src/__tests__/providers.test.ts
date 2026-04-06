@@ -1064,3 +1064,61 @@ describe("SDK maxRetries disabled", () => {
     expect(capturedOpts.maxRetries).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Gemini blocked finish reasons → content_filter
+// ---------------------------------------------------------------------------
+describe("Gemini blocked finish reasons", () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  for (const reason of ["BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "MALFORMED_FUNCTION_CALL"]) {
+    it(`maps ${reason} to content_filter`, async () => {
+      const streamChunks = [
+        {
+          candidates: [
+            {
+              content: { parts: [{ text: "partial" }] },
+              finishReason: undefined,
+            },
+          ],
+        },
+        {
+          candidates: [
+            {
+              content: { parts: [] },
+              finishReason: reason,
+            },
+          ],
+        },
+      ];
+
+      vi.doMock("@google/genai", () => ({
+        GoogleGenAI: class {
+          models = {
+            generateContentStream: vi.fn().mockResolvedValue(
+              (async function* () {
+                for (const chunk of streamChunks) yield chunk;
+              })(),
+            ),
+          };
+        },
+      }));
+
+      const { GeminiProvider } = await import("../providers/gemini.js");
+      const provider = new GeminiProvider({ apiKey: "test-key" });
+
+      const chunks: ChatStreamChunk[] = [];
+      for await (const chunk of provider.chat({
+        model: "gemini-2.5-flash",
+        messages: [{ role: "user", content: "hi" }],
+      })) {
+        chunks.push(chunk);
+      }
+
+      const filtered = chunks.find((c) => c.choices[0]?.finish_reason === "content_filter");
+      expect(filtered).toBeDefined();
+    });
+  }
+});

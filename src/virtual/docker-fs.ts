@@ -29,12 +29,16 @@ export class DockerFs implements VirtualFs {
   }
 
   private resolvePath(p: string): string {
+    if (p.includes("\0")) {
+      throw new Error("Path contains null bytes");
+    }
     const normalizedBase = this.workingDir.endsWith("/") ? this.workingDir : this.workingDir + "/";
     if (p.startsWith("/")) {
-      if (p !== this.workingDir && !p.startsWith(normalizedBase)) {
+      const normalized = path.normalize(p);
+      if (normalized !== this.workingDir && !normalized.startsWith(normalizedBase)) {
         throw new Error(`Absolute path "${p}" is outside working directory "${this.workingDir}"`);
       }
-      return p;
+      return normalized;
     }
     const resolved = path.resolve(this.workingDir, p);
     if (resolved !== this.workingDir && !resolved.startsWith(normalizedBase)) {

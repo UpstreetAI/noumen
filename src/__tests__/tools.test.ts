@@ -341,3 +341,69 @@ describe("glob tool fallback to find when rg unavailable", () => {
     expect(findCalled).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// ReadFile: limit should not load entire file into memory
+// ---------------------------------------------------------------------------
+describe("ReadFile with limit caps read size", () => {
+  it("passes maxBytes option to fs.readFile when limit is set", async () => {
+    let receivedOpts: any = undefined;
+    const bigFs = new MockFs({ "/project/big.ts": "line1\nline2\nline3" });
+    const origReadFile = bigFs.readFile.bind(bigFs);
+    bigFs.readFile = async (path: string, opts?: any) => {
+      receivedOpts = opts;
+      return origReadFile(path, opts);
+    };
+    bigFs.stats.set("/project/big.ts", { size: 500 * 1024 * 1024 });
+
+    const bigCtx = { fs: bigFs, computer, cwd: "/project" } as any;
+    await readFileTool.call({ file_path: "/project/big.ts", offset: 1, limit: 10 }, bigCtx);
+    expect(receivedOpts).toBeDefined();
+    expect(receivedOpts.maxBytes).toBeDefined();
+    expect(receivedOpts.maxBytes).toBeLessThanOrEqual(10 * 1024 * 1024);
+  });
+
+  it("does not pass maxBytes when limit is not set", async () => {
+    let receivedOpts: any = undefined;
+    const smallFs = new MockFs({ "/project/small.ts": "line1\nline2" });
+    const origReadFile = smallFs.readFile.bind(smallFs);
+    smallFs.readFile = async (path: string, opts?: any) => {
+      receivedOpts = opts;
+      return origReadFile(path, opts);
+    };
+
+    const smallCtx = { fs: smallFs, computer, cwd: "/project" } as any;
+    await readFileTool.call({ file_path: "/project/small.ts" }, smallCtx);
+    expect(receivedOpts).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Glob: absolute path patterns should not get **/ prepended
+// ---------------------------------------------------------------------------
+describe("Glob absolute path handling", () => {
+  it("does not prepend **/ to absolute path patterns", async () => {
+    let capturedCmd = "";
+    const mockComputer = new MockComputer((cmd) => {
+      capturedCmd = cmd;
+      return { exitCode: 0, stdout: "/project/src/index.ts\n", stderr: "" };
+    });
+
+    const absCtx = { fs, computer: mockComputer, cwd: "/project" } as any;
+    await globTool.call({ pattern: "/project/src/*.ts" }, absCtx);
+    expect(capturedCmd).not.toContain("**//project");
+    expect(capturedCmd).toContain("/project/src/*.ts");
+  });
+
+  it("still prepends **/ to relative patterns", async () => {
+    let capturedCmd = "";
+    const mockComputer = new MockComputer((cmd) => {
+      capturedCmd = cmd;
+      return { exitCode: 0, stdout: "src/index.ts\n", stderr: "" };
+    });
+
+    const relCtx = { fs, computer: mockComputer, cwd: "/project" } as any;
+    await globTool.call({ pattern: "*.ts" }, relCtx);
+    expect(capturedCmd).toContain("**/*.ts");
+  });
+});

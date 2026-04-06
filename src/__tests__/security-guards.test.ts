@@ -19,6 +19,27 @@ describe("sandbox path traversal prevention", () => {
     expect((dfs as any).resolvePath("subdir/file.txt")).toBe("/home/user/subdir/file.txt");
   });
 
+  it("docker-fs resolvePath blocks absolute paths with .. traversal", async () => {
+    const { DockerFs } = await import("../virtual/docker-fs.js");
+    const mockContainer = {} as any;
+    const dfs = new DockerFs({ container: mockContainer, workingDir: "/workspace" });
+    expect(() => (dfs as any).resolvePath("/workspace/../etc/passwd")).toThrow("outside working directory");
+  });
+
+  it("docker-fs resolvePath blocks null bytes in paths", async () => {
+    const { DockerFs } = await import("../virtual/docker-fs.js");
+    const mockContainer = {} as any;
+    const dfs = new DockerFs({ container: mockContainer, workingDir: "/workspace" });
+    expect(() => (dfs as any).resolvePath("test\0.txt")).toThrow("null bytes");
+  });
+
+  it("docker-fs resolvePath normalizes absolute paths within workingDir", async () => {
+    const { DockerFs } = await import("../virtual/docker-fs.js");
+    const mockContainer = {} as any;
+    const dfs = new DockerFs({ container: mockContainer, workingDir: "/workspace" });
+    expect((dfs as any).resolvePath("/workspace/sub/../file.txt")).toBe("/workspace/file.txt");
+  });
+
   it("e2b-fs resolvePath blocks relative ../", async () => {
     const { E2BFs } = await import("../virtual/e2b-fs.js");
     const mockSandbox = {} as any;
@@ -127,6 +148,20 @@ describe("isPrivateIP for DNS rebinding", () => {
     expect(isPrivateIP("8.8.8.8")).toBe(false);
     expect(isPrivateIP("1.1.1.1")).toBe(false);
     expect(isPrivateIP("93.184.216.34")).toBe(false);
+  });
+
+  it("blocks IPv6 Unique Local Addresses (fc00::/7)", () => {
+    expect(isPrivateIP("fd00::1")).toBe(true);
+    expect(isPrivateIP("fc00::1")).toBe(true);
+    expect(isPrivateIP("fdab:cdef:1234::1")).toBe(true);
+  });
+
+  it("handles ::ffff:-mapped IPv4 correctly", () => {
+    expect(isPrivateIP("::ffff:10.0.0.1")).toBe(true);
+    expect(isPrivateIP("::ffff:192.168.1.1")).toBe(true);
+    expect(isPrivateIP("::ffff:127.0.0.1")).toBe(true);
+    expect(isPrivateIP("::ffff:8.8.8.8")).toBe(false);
+    expect(isPrivateIP("::ffff:1.1.1.1")).toBe(false);
   });
 });
 
