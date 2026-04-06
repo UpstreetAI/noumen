@@ -3,6 +3,64 @@ import type { VirtualComputer, ExecOptions, CommandResult } from "../virtual/com
 import type { AIProvider, ChatParams, ChatStreamChunk, ChatCompletionUsage } from "../providers/types.js";
 
 // ---------------------------------------------------------------------------
+// SeededRng — deterministic PRNG for fuzz / property-based tests
+// ---------------------------------------------------------------------------
+
+function mulberry32(seed: number): () => number {
+  let s = seed | 0;
+  return () => {
+    s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+export class SeededRng {
+  private rng: () => number;
+  readonly seed: number;
+
+  constructor(seed: number) {
+    this.seed = seed;
+    this.rng = mulberry32(seed);
+  }
+
+  /** Raw float in [0, 1). */
+  next(): number {
+    return this.rng();
+  }
+
+  /** Integer in [min, max] (inclusive). */
+  int(min: number, max: number): number {
+    return min + Math.floor(this.rng() * (max - min + 1));
+  }
+
+  /** Pick a random element from a non-empty array. */
+  pick<T>(arr: readonly T[]): T {
+    return arr[Math.floor(this.rng() * arr.length)];
+  }
+
+  /** Returns true with the given probability (0-1). */
+  bool(probability = 0.5): boolean {
+    return this.rng() < probability;
+  }
+
+  /** Returns `value` with `probability`, otherwise `undefined`. */
+  maybe<T>(probability: number, value: T): T | undefined {
+    return this.rng() < probability ? value : undefined;
+  }
+
+  /** Shuffle an array in place (Fisher-Yates). */
+  shuffle<T>(arr: T[]): T[] {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(this.rng() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // MockFs — in-memory VirtualFs backed by a Map<path, content>
 // ---------------------------------------------------------------------------
 
