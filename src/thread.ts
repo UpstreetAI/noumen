@@ -475,6 +475,24 @@ export class Thread {
         // with placeholders) — but that does not affect the already-budgeted
         // messagesForApi snapshot used for this API call.
 
+        // Aggregate disk-based spill runs on canonical history every turn,
+        // replacing oversized results with stubs. This is safe because disk
+        // spill is idempotent (already-replaced results are skipped via state).
+        if (this.config.toolResultStorage?.enabled && this.config.fs) {
+          const storageResult = await enforceToolResultStorageBudget(
+            this.messages,
+            this.config.toolResultStorage,
+            this.config.fs,
+            this.sessionId,
+            this.contentReplacementState,
+          );
+          if (storageResult.tokensFreed > 0) {
+            this.messages = storageResult.messages;
+            this.contentReplacementState = storageResult.state;
+            this.microcompactTokensFreed += storageResult.tokensFreed;
+          }
+        }
+
         // Apply budget to a snapshot so the canonical this.messages is not mutated
         let messagesForApi: ChatMessage[] = this.messages;
         if (this.config.toolResultBudget?.enabled) {
@@ -550,13 +568,17 @@ export class Thread {
             this.lastUsage = undefined;
             this.anchorMessageIndex = undefined;
             this.microcompactTokensFreed = 0;
+            this.budgetState = createBudgetState();
+            this.contentReplacementState = createContentReplacementState();
+            this.fileStateCache?.clear();
+            this.denialTracker?.reset();
             recordAutoCompactSuccess(this.autoCompactTracking);
             yield { type: "compact_complete" };
             await runNotificationHooks(hooks, "PostCompact", {
               event: "PostCompact",
               sessionId: this.sessionId,
             });
-            continue; // re-enter loop to recompute messagesForApi from compacted this.messages
+            continue;
           } catch (compactErr) {
             recordAutoCompactFailure(this.autoCompactTracking);
             const error = compactErr instanceof Error
@@ -754,6 +776,10 @@ export class Thread {
               this.lastUsage = undefined;
               this.anchorMessageIndex = undefined;
               this.microcompactTokensFreed = 0;
+              this.budgetState = createBudgetState();
+              this.contentReplacementState = createContentReplacementState();
+              this.fileStateCache?.clear();
+              this.denialTracker?.reset();
               recordAutoCompactSuccess(this.autoCompactTracking);
               yield { type: "compact_complete" };
               await runNotificationHooks(hooks, "PostCompact", {
@@ -777,9 +803,13 @@ export class Thread {
             const partialCalls: ToolCallContent[] = Array.from(accumulatedToolCalls.values()).map((tc) => ({
               id: tc.id, type: "function" as const, function: { name: tc.name, arguments: tc.arguments },
             }));
+            const partialText = accumulatedContent.join("");
+            const interruptedContent = partialText
+              ? `${partialText}\n[Response interrupted: ${errorReason}]`
+              : `[Response interrupted: ${errorReason}]`;
             const partialAssistant: AssistantMessage = {
               role: "assistant",
-              content: accumulatedContent.join("") || null,
+              content: interruptedContent,
               tool_calls: partialCalls,
             };
             this.messages.push(partialAssistant);
@@ -943,9 +973,14 @@ export class Thread {
             const partialCalls: ToolCallContent[] = Array.from(accumulatedToolCalls.values()).map((tc) => ({
               id: tc.id, type: "function" as const, function: { name: tc.name, arguments: tc.arguments },
             }));
+            const streamErrReason = `Stream error: ${streamErr instanceof Error ? streamErr.message : String(streamErr)}`;
+            const partialText = accumulatedContent.join("");
+            const interruptedStreamContent = partialCalls.length > 0
+              ? (partialText ? `${partialText}\n[Response interrupted: ${streamErrReason}]` : `[Response interrupted: ${streamErrReason}]`)
+              : (partialText || null);
             const partialAssistant: AssistantMessage = {
               role: "assistant",
-              content: accumulatedContent.join("") || null,
+              content: interruptedStreamContent,
               ...(partialCalls.length > 0 ? { tool_calls: partialCalls } : {}),
             };
             this.messages.push(partialAssistant);
@@ -963,8 +998,7 @@ export class Thread {
                 await this.storage.appendMessage(this.sessionId, toolResultMsg);
                 realToolMsgs.push(toolResultMsg);
               }
-              const reason = `Stream error: ${streamErr instanceof Error ? streamErr.message : String(streamErr)}`;
-              const syntheticResults = generateMissingToolResults(partialAssistant, realToolMsgs, reason);
+              const syntheticResults = generateMissingToolResults(partialAssistant, realToolMsgs, streamErrReason);
               for (const sr of syntheticResults) {
                 this.messages.push(sr);
                 await this.storage.appendMessage(this.sessionId, sr);

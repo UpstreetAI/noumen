@@ -8,6 +8,7 @@ import {
   filterOrphanedThinkingAssistants,
 } from "../messages/normalize.js";
 import { normalizeToolInputForAPI } from "../messages/tool-input-normalize.js";
+import { assertValidMessageSequence } from "../messages/invariants.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -40,6 +41,7 @@ describe("normalizeMessagesForAPI", () => {
       { role: "assistant", content: "hi" },
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     expect(result).toEqual(messages);
   });
 
@@ -65,7 +67,9 @@ describe("normalizeMessagesForAPI", () => {
       // missing t2
     ];
     const first = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(first);
     const second = normalizeMessagesForAPI(first);
+    assertValidMessageSequence(second);
     expect(second).toEqual(first);
   });
 
@@ -78,6 +82,7 @@ describe("normalizeMessagesForAPI", () => {
       { role: "assistant", content: "hello" },
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     expect(result.every((m) => m.role !== "system")).toBe(true);
     expect(result).toHaveLength(2);
   });
@@ -94,6 +99,7 @@ describe("normalizeMessagesForAPI", () => {
       toolResult("t1"),
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     const toolUseIds = result
       .filter((m) => m.role === "assistant" && (m as AssistantMessage).tool_calls)
       .flatMap((m) => (m as AssistantMessage).tool_calls!.map((tc) => tc.id));
@@ -109,6 +115,7 @@ describe("normalizeMessagesForAPI", () => {
       asstWithCalls(["t1"]), // all dupes, no content
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     const assistants = result.filter((m) => m.role === "assistant");
     expect(assistants).toHaveLength(1);
   });
@@ -122,6 +129,7 @@ describe("normalizeMessagesForAPI", () => {
       { ...asstWithCalls(["t1"]), content: "some text" },
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     const assistants = result.filter((m) => m.role === "assistant");
     expect(assistants).toHaveLength(2);
     expect((assistants[1] as AssistantMessage).tool_calls).toBeUndefined();
@@ -137,6 +145,7 @@ describe("normalizeMessagesForAPI", () => {
       { role: "assistant", content: "reply" },
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     expect(result.find((m) => m.role === "tool")).toBeUndefined();
   });
 
@@ -147,6 +156,7 @@ describe("normalizeMessagesForAPI", () => {
       { role: "assistant", content: "hello" },
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     expect(result[0].role).toBe("user");
     expect(result.find((m) => m.role === "tool")).toBeUndefined();
   });
@@ -161,6 +171,7 @@ describe("normalizeMessagesForAPI", () => {
       // t2 and t3 missing
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     const tools = result.filter((m) => m.role === "tool") as ToolResultMessage[];
     expect(tools).toHaveLength(3);
     expect(tools[1].tool_call_id).toBe("t2");
@@ -177,6 +188,7 @@ describe("normalizeMessagesForAPI", () => {
       // t1 missing, but t2 exists after assistant
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     const tools = result.filter((m) => m.role === "tool") as ToolResultMessage[];
     expect(tools).toHaveLength(2);
     // The synthetic for t1 should come after the real t2
@@ -196,6 +208,7 @@ describe("normalizeMessagesForAPI", () => {
       { role: "assistant", content: "real reply" } as AssistantMessage,
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     const assistants = result.filter((m) => m.role === "assistant");
     expect(assistants).toHaveLength(1);
     expect((assistants[0] as AssistantMessage).content).toBe("real reply");
@@ -208,6 +221,7 @@ describe("normalizeMessagesForAPI", () => {
       toolResult("t1"),
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     expect(result.filter((m) => m.role === "assistant")).toHaveLength(1);
   });
 
@@ -221,6 +235,7 @@ describe("normalizeMessagesForAPI", () => {
       { role: "assistant", content: "real answer" } as AssistantMessage,
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     const assistants = result.filter((m) => m.role === "assistant");
     expect(assistants).toHaveLength(1);
     expect((assistants[0] as AssistantMessage).content).toBe("real answer");
@@ -233,6 +248,7 @@ describe("normalizeMessagesForAPI", () => {
       toolResult("t1"),
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     expect(result.filter((m) => m.role === "assistant")).toHaveLength(1);
   });
 
@@ -245,6 +261,7 @@ describe("normalizeMessagesForAPI", () => {
       { role: "assistant", content: "reply" } as AssistantMessage,
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     expect(result).toHaveLength(2);
     expect(result[0].role).toBe("user");
     expect(Array.isArray(result[0].content)).toBe(true);
@@ -264,6 +281,7 @@ describe("normalizeMessagesForAPI", () => {
       { role: "assistant", content: "reply" } as AssistantMessage,
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     expect(result[0].role).toBe("user");
     expect(result[1].role).toBe("assistant");
     // The two users got merged because the whitespace assistant was removed
@@ -280,6 +298,7 @@ describe("normalizeMessagesForAPI", () => {
       toolResult("t1"),
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     const asst = result.find((m) => m.role === "assistant") as AssistantMessage;
     expect(asst.content).toBe("");
   });
@@ -291,6 +310,7 @@ describe("normalizeMessagesForAPI", () => {
       { role: "assistant", content: "I started" } as AssistantMessage,
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     expect(result[0].role).toBe("user");
     expect(result[0].content).toBe("[Conversation resumed]");
     expect(result[1].role).toBe("assistant");
@@ -298,6 +318,7 @@ describe("normalizeMessagesForAPI", () => {
 
   it("prepends placeholder for empty array", () => {
     const result = normalizeMessagesForAPI([]);
+    assertValidMessageSequence(result);
     expect(result).toHaveLength(1);
     expect(result[0].role).toBe("user");
   });
@@ -308,6 +329,7 @@ describe("normalizeMessagesForAPI", () => {
       { role: "assistant", content: "hi" } as AssistantMessage,
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     expect(result[0].content).toBe("hello");
   });
 
@@ -325,6 +347,7 @@ describe("normalizeMessagesForAPI", () => {
       // t2 and t3 missing (provider error mid-stream)
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     const tools = result.filter((m) => m.role === "tool");
     expect(tools).toHaveLength(3);
   });
@@ -338,6 +361,7 @@ describe("normalizeMessagesForAPI", () => {
       { role: "user", content: "[Session interrupted by user]" },
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     // Should have synthetic for t2 inserted before the interruption user
     const tools = result.filter((m) => m.role === "tool");
     expect(tools).toHaveLength(2);
@@ -360,6 +384,7 @@ describe("normalizeMessagesForAPI", () => {
       { role: "user", content: "[auto-continue after malformed tool calls]" },
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     expect(result.filter((m) => m.role === "tool")).toHaveLength(2);
     expect(result.filter((m) => m.role === "assistant")).toHaveLength(1);
   });
@@ -378,6 +403,7 @@ describe("normalizeMessagesForAPI", () => {
       { role: "user", content: "end" },
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     // Verify structure
     expect(result[0].role).toBe("user");
     expect(result.every((m) => m.role !== "system")).toBe(true);
@@ -409,7 +435,7 @@ describe("ensureToolResultPairing", () => {
     expect(ensureToolResultPairing(messages)).toBe(messages);
   });
 
-  it("inserts synthetics for multiple assistants", () => {
+  it("drops all-unresolved empty assistants (strict fallback)", () => {
     const messages: ChatMessage[] = [
       { role: "user", content: "a" },
       asstWithCalls(["t1"]),
@@ -417,10 +443,37 @@ describe("ensureToolResultPairing", () => {
       asstWithCalls(["t2"]),
     ];
     const result = ensureToolResultPairing(messages);
+    // Both assistants have null content and all-unresolved calls → dropped
+    const assistants = result.filter((m) => m.role === "assistant");
+    expect(assistants).toHaveLength(0);
+    const tools = result.filter((m) => m.role === "tool");
+    expect(tools).toHaveLength(0);
+  });
+
+  it("inserts synthetics for partially resolved assistants", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "go" },
+      asstWithCalls(["t1", "t2"]),
+      toolResult("t1"),
+    ];
+    const result = ensureToolResultPairing(messages);
     const tools = result.filter((m) => m.role === "tool") as ToolResultMessage[];
     expect(tools).toHaveLength(2);
     expect(tools[0].tool_call_id).toBe("t1");
     expect(tools[1].tool_call_id).toBe("t2");
+    expect(tools[1].isError).toBe(true);
+  });
+
+  it("inserts synthetics for all-unresolved assistant with text content", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "a" },
+      { ...asstWithCalls(["t1"]), content: "I'll help with that" } as AssistantMessage,
+    ];
+    const result = ensureToolResultPairing(messages);
+    const tools = result.filter((m) => m.role === "tool") as ToolResultMessage[];
+    expect(tools).toHaveLength(1);
+    expect(tools[0].tool_call_id).toBe("t1");
+    expect(tools[0].isError).toBe(true);
   });
 });
 
@@ -580,6 +633,7 @@ describe("normalizeMessagesForAPI — duplicate tool_result dedup", () => {
       toolResult("t1", "duplicate result"),
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     const toolResults = result.filter((m) => m.role === "tool");
     expect(toolResults).toHaveLength(1);
     expect((toolResults[0] as import("../session/types.js").ToolResultMessage).content).toBe("first result");
@@ -593,6 +647,7 @@ describe("normalizeMessagesForAPI — duplicate tool_result dedup", () => {
       toolResult("t2", "result2"),
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     const toolResults = result.filter((m) => m.role === "tool");
     expect(toolResults).toHaveLength(2);
   });
@@ -607,6 +662,7 @@ describe("normalizeMessagesForAPI — duplicate tool_result dedup", () => {
       toolResult("t2", "dup-2"),
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     const toolResults = result.filter((m) => m.role === "tool");
     expect(toolResults).toHaveLength(2);
   });
@@ -623,6 +679,7 @@ describe("normalizeMessagesForAPI — trailing thinking-only assistant", () => {
       { role: "assistant", content: "", thinking_content: "deep thought", thinking_signature: "sig123" } as AssistantMessage,
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     expect(result).toHaveLength(1);
     expect(result[0].role).toBe("user");
   });
@@ -633,6 +690,7 @@ describe("normalizeMessagesForAPI — trailing thinking-only assistant", () => {
       { role: "assistant", content: "Here is my answer", thinking_content: "deep thought" } as AssistantMessage,
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     const last = result[result.length - 1] as AssistantMessage;
     expect(last.thinking_content).toBe("deep thought");
   });
@@ -644,6 +702,7 @@ describe("normalizeMessagesForAPI — trailing thinking-only assistant", () => {
       toolResult("t1", "done"),
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     const assistants = result.filter((m) => m.role === "assistant");
     expect((assistants[0] as AssistantMessage).thinking_content).toBe("planning");
   });
@@ -656,6 +715,7 @@ describe("normalizeMessagesForAPI — trailing thinking-only assistant", () => {
       { role: "assistant", content: "response" } as AssistantMessage,
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     const assistants = result.filter((m) => m.role === "assistant");
     expect(assistants).toHaveLength(2);
     expect((assistants[0] as AssistantMessage).thinking_content).toBe("thought");
@@ -667,6 +727,7 @@ describe("normalizeMessagesForAPI — trailing thinking-only assistant", () => {
       { role: "assistant", content: null, thinking_content: "secret", redacted_thinking_data: "redacted" } as AssistantMessage,
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     expect(result).toHaveLength(1);
     expect(result[0].role).toBe("user");
   });
@@ -688,6 +749,7 @@ describe("normalizeMessagesForAPI — thinking/whitespace ordering", () => {
       } as AssistantMessage,
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     expect(result).toHaveLength(1);
     expect(result[0].role).toBe("user");
     expect(result[0].content).toBe("think about this");
@@ -702,6 +764,7 @@ describe("normalizeMessagesForAPI — thinking/whitespace ordering", () => {
       { role: "assistant", content: "real reply" } as AssistantMessage,
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     expect(result[0].role).toBe("user");
     const lastAsst = result.find((m) => m.role === "assistant") as AssistantMessage;
     expect(lastAsst.content).toBe("real reply");
@@ -720,6 +783,7 @@ describe("normalizeMessagesForAPI — thinking/whitespace ordering", () => {
       { role: "assistant", content: "", thinking_content: "thought B" } as AssistantMessage,
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     const assistants = result.filter((m) => m.role === "assistant");
     expect(assistants).toHaveLength(1);
     expect((assistants[0] as AssistantMessage).content).toBe("real answer");
@@ -740,6 +804,7 @@ describe("normalizeMessagesForAPI — _turnId merge", () => {
       { role: "assistant", content: "part 2", _turnId: "s:1" } as AssistantMessage,
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     const assistants = result.filter((m) => m.role === "assistant") as AssistantMessage[];
     expect(assistants).toHaveLength(1);
     expect(assistants[0].content).toContain("part 1");
@@ -756,6 +821,7 @@ describe("normalizeMessagesForAPI — _turnId merge", () => {
       toolResult("t2", "result"),
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     const assistants = result.filter((m) => m.role === "assistant") as AssistantMessage[];
     expect(assistants).toHaveLength(2);
   });
@@ -768,6 +834,7 @@ describe("normalizeMessagesForAPI — _turnId merge", () => {
       { role: "assistant", content: "also no turn id" } as AssistantMessage,
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     const assistants = result.filter((m) => m.role === "assistant") as AssistantMessage[];
     expect(assistants).toHaveLength(2);
   });
@@ -778,6 +845,7 @@ describe("normalizeMessagesForAPI — _turnId merge", () => {
       { role: "assistant", content: "reply", _turnId: "s:1" } as AssistantMessage,
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     const asst = result.find((m) => m.role === "assistant") as AssistantMessage;
     expect(asst._turnId).toBeUndefined();
   });
@@ -791,6 +859,7 @@ describe("normalizeMessagesForAPI — _turnId merge", () => {
       toolResult("t2", "ok"),
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     const assistants = result.filter((m) => m.role === "assistant") as AssistantMessage[];
     expect(assistants).toHaveLength(1);
     expect(assistants[0].tool_calls).toHaveLength(2);
@@ -811,6 +880,7 @@ describe("normalizeMessagesForAPI — _turnId merge", () => {
       { role: "assistant", content: "b", thinking_content: "think2", _turnId: "s:1" } as AssistantMessage,
     ];
     const result = normalizeMessagesForAPI(messages2);
+    assertValidMessageSequence(result);
     const asst = result.find((m) => m.role === "assistant") as AssistantMessage;
     expect(asst.thinking_content).toContain("think1");
     expect(asst.thinking_content).toContain("think2");
@@ -887,6 +957,104 @@ describe("normalizeToolInputForAPI", () => {
   });
 });
 
+describe("normalizeMessagesForAPI — sanitizeErrorToolResultContent", () => {
+  it("strips non-text content from isError tool results", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: "calling tool",
+        tool_calls: [{ id: "t1", type: "function", function: { name: "Bash", arguments: "{}" } }],
+      } as AssistantMessage,
+      {
+        role: "tool",
+        tool_call_id: "t1",
+        content: [
+          { type: "text", text: "Error: command failed" },
+          { type: "image", data: "abc123", media_type: "image/png" },
+        ],
+        isError: true,
+      } as ToolResultMessage,
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
+    const toolMsg = result.find((m) => m.role === "tool") as ToolResultMessage;
+    expect(toolMsg.content).toBe("Error: command failed");
+    expect(typeof toolMsg.content).toBe("string");
+  });
+
+  it("preserves non-error tool results with images", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: "calling tool",
+        tool_calls: [{ id: "t1", type: "function", function: { name: "Bash", arguments: "{}" } }],
+      } as AssistantMessage,
+      {
+        role: "tool",
+        tool_call_id: "t1",
+        content: [
+          { type: "text", text: "result" },
+          { type: "image", data: "abc123", media_type: "image/png" },
+        ],
+      } as ToolResultMessage,
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
+    const toolMsg = result.find((m) => m.role === "tool") as ToolResultMessage;
+    expect(Array.isArray(toolMsg.content)).toBe(true);
+  });
+
+  it("handles isError with only image content (no text)", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: "calling tool",
+        tool_calls: [{ id: "t1", type: "function", function: { name: "Bash", arguments: "{}" } }],
+      } as AssistantMessage,
+      {
+        role: "tool",
+        tool_call_id: "t1",
+        content: [
+          { type: "image", data: "abc123", media_type: "image/png" },
+        ],
+        isError: true,
+      } as ToolResultMessage,
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
+    const toolMsg = result.find((m) => m.role === "tool") as ToolResultMessage;
+    expect(toolMsg.content).toBe("Error (details unavailable)");
+  });
+
+  it("joins multiple text parts in error tool results", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: "calling tool",
+        tool_calls: [{ id: "t1", type: "function", function: { name: "Bash", arguments: "{}" } }],
+      } as AssistantMessage,
+      {
+        role: "tool",
+        tool_call_id: "t1",
+        content: [
+          { type: "text", text: "Error line 1" },
+          { type: "image", data: "abc123", media_type: "image/png" },
+          { type: "text", text: "Error line 2" },
+        ],
+        isError: true,
+      } as ToolResultMessage,
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
+    const toolMsg = result.find((m) => m.role === "tool") as ToolResultMessage;
+    expect(toolMsg.content).toBe("Error line 1\n\nError line 2");
+  });
+});
+
 describe("normalizeMessagesForAPI — tool input stripping integration", () => {
   it("strips _meta from tool call args in the full pipeline", () => {
     const messages: ChatMessage[] = [
@@ -903,6 +1071,7 @@ describe("normalizeMessagesForAPI — tool input stripping integration", () => {
       toolResult("t1", "ok"),
     ];
     const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
     const asst = result.find((m) => m.role === "assistant") as AssistantMessage;
     const args = JSON.parse(asst.tool_calls![0].function.arguments);
     expect(args._meta).toBeUndefined();

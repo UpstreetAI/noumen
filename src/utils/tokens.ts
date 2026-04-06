@@ -82,11 +82,10 @@ export function tokenCountWithEstimation(
 }
 
 /**
- * Group messages into API-round groups. A new group starts when an
- * assistant message follows a tool result (i.e. each model response
- * round). This gives finer-grained groups than splitting on user
- * messages, enabling PTL recovery in agentic sessions with many
- * tool-use rounds under a single user prompt.
+ * Group messages into API-round groups. A new group starts at each
+ * assistant boundary (after tool results) or user message. This gives
+ * finer-grained groups than splitting on user messages alone, enabling
+ * PTL recovery in agentic sessions with many tool-use rounds.
  */
 export function groupMessagesByTurn(
   messages: ChatMessage[],
@@ -117,14 +116,29 @@ export function groupMessagesByTurn(
 const PTL_RETRY_MARKER =
   "[Earlier conversation history was truncated to fit context window.]";
 
+export interface PTLRetryOptions {
+  /** Tokens the server reported we need to shed, or undefined if unknown. */
+  tokenGap?: number;
+  /** Effective context window for this model (fallback when gap unknown). */
+  targetTokens: number;
+}
+
 /**
- * Drop the oldest turn groups until estimated tokens drop below `targetTokens`.
- * Returns the trimmed message list. Used for prompt-too-long recovery.
+ * Drop the oldest turn groups to fit within the context window.
+ *
+ * If `tokenGap` is provided (parsed from the server error), use it to
+ * determine exactly how many tokens to shed. Otherwise fall back to
+ * dropping 20% of groups (more conservative than the heuristic target).
  */
 export function truncateHeadForPTLRetry(
   messages: ChatMessage[],
-  targetTokens: number,
+  targetOrOpts: number | PTLRetryOptions,
 ): ChatMessage[] {
+  const opts: PTLRetryOptions =
+    typeof targetOrOpts === "number"
+      ? { targetTokens: targetOrOpts }
+      : targetOrOpts;
+
   const input =
     messages.length > 0 &&
     messages[0].role === "user" &&
@@ -136,12 +150,27 @@ export function truncateHeadForPTLRetry(
   const groups = groupMessagesByTurn(input);
   if (groups.length <= 1) return messages;
 
-  let totalEstimate = estimateMessagesTokens(input);
-  let dropCount = 0;
+  let dropCount: number;
 
-  while (dropCount < groups.length - 1 && totalEstimate > targetTokens) {
-    totalEstimate -= estimateMessagesTokens(groups[dropCount]);
-    dropCount++;
+  if (opts.tokenGap !== undefined && opts.tokenGap > 0) {
+    // Server told us exactly how much we're over — drop groups until we
+    // shed at least that many tokens.
+    let shed = 0;
+    dropCount = 0;
+    while (dropCount < groups.length - 1 && shed < opts.tokenGap) {
+      shed += estimateMessagesTokens(groups[dropCount]);
+      dropCount++;
+    }
+  } else {
+    // Fallback: drop 20% of groups or until under target, whichever is more
+    const minDrop = Math.max(1, Math.floor(groups.length * 0.2));
+    let totalEstimate = estimateMessagesTokens(input);
+    dropCount = 0;
+
+    while (dropCount < groups.length - 1 && (dropCount < minDrop || totalEstimate > opts.targetTokens)) {
+      totalEstimate -= estimateMessagesTokens(groups[dropCount]);
+      dropCount++;
+    }
   }
 
   if (dropCount === 0) return messages;

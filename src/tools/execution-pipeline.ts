@@ -102,6 +102,22 @@ export async function executeToolCall(
       currentArgs = parsed.data as Record<string, unknown>;
     }
 
+    // --- 1b. Per-tool semantic validation ---
+    if (toolDef?.validateInput) {
+      const validationError = await toolDef.validateInput(currentArgs, toolCtx);
+      if (validationError) {
+        return {
+          toolCall: tc,
+          parsedArgs: currentArgs,
+          result: {
+            content: `Validation error for ${tc.function.name}: ${validationError}`,
+            isError: true,
+          },
+          events,
+        };
+      }
+    }
+
     // --- 2. PreToolUse hooks (run before permissions so hooks can modify input / supply decisions) ---
     if (hooks.length > 0) {
       const hookOutput = await runPreToolUseHooks(hooks, {

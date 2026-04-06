@@ -47,12 +47,16 @@ export function normalizeMessagesForAPI(messages: ChatMessage[]): ChatMessage[] 
   result = stripOrphanedToolResults(result);
   result = deduplicateToolResults(result);
   result = ensureToolResultPairing(result);
+  result = sanitizeErrorToolResultContent(result);
+  result = reorderToolResultsAfterAssistant(result);
   result = filterOrphanedThinkingAssistants(result);
   result = filterWhitespaceOnlyAssistants(result);
   result = mergeAssistantsByTurnId(result);
   result = mergeConsecutiveSameRole(result);
   result = ensureNonEmptyAssistantContent(result);
   result = stripTrailingThinkingOnlyAssistant(result);
+  result = stripStaleSignatureBlocks(result);
+  result = validateImagesForAPI(result);
   result = ensureStartsWithUser(result);
   result = stripInternalFields(result);
   result = normalizeToolInputsInMessages(result);
@@ -82,7 +86,7 @@ function dropSystemMessages(messages: ChatMessage[]): ChatMessage[] {
  */
 function deduplicateToolUseIds(messages: ChatMessage[]): ChatMessage[] {
   const seen = new Set<string>();
-  const strippedIds = new Set<string>();
+  let changed = false;
   const result: ChatMessage[] = [];
 
   for (const msg of messages) {
@@ -90,20 +94,20 @@ function deduplicateToolUseIds(messages: ChatMessage[]): ChatMessage[] {
       const asst = msg as AssistantMessage;
       if (asst.tool_calls && asst.tool_calls.length > 0) {
         const kept = asst.tool_calls.filter((tc) => {
-          if (seen.has(tc.id)) {
-            strippedIds.add(tc.id);
-            return false;
-          }
+          if (seen.has(tc.id)) return false;
           seen.add(tc.id);
           return true;
         });
 
-        if (kept.length === 0) {
-          const text = asst.content != null ? contentToString(asst.content) : "";
-          if (text.trim() === "") continue; // drop entirely
-          result.push({ ...asst, tool_calls: undefined } as AssistantMessage);
-        } else if (kept.length < asst.tool_calls.length) {
-          result.push({ ...asst, tool_calls: kept });
+        if (kept.length < asst.tool_calls.length) {
+          changed = true;
+          if (kept.length === 0) {
+            const text = asst.content != null ? contentToString(asst.content) : "";
+            if (text.trim() === "") continue;
+            result.push({ ...asst, tool_calls: undefined } as AssistantMessage);
+          } else {
+            result.push({ ...asst, tool_calls: kept });
+          }
         } else {
           result.push(msg);
         }
@@ -115,12 +119,7 @@ function deduplicateToolUseIds(messages: ChatMessage[]): ChatMessage[] {
     }
   }
 
-  if (strippedIds.size === 0) return result;
-
-  return result.filter((msg) => {
-    if (msg.role !== "tool") return true;
-    return !strippedIds.has((msg as ToolResultMessage).tool_call_id);
-  });
+  return changed ? result : messages;
 }
 
 // ---------------------------------------------------------------------------
@@ -188,7 +187,13 @@ export function ensureToolResultPairing(messages: ChatMessage[]): ChatMessage[] 
     }
   }
 
+  // Strict fallback: drop assistants whose tool_calls are ALL unresolved
+  // and that have no meaningful text content. The context is clearly
+  // truncated and synthetic results would add noise, not value.
+  const dropIndices = new Set<number>();
+  const dropCallIds = new Set<string>();
   const insertions = new Map<number, ToolResultMessage[]>();
+
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     if (msg.role !== "assistant") continue;
@@ -198,6 +203,17 @@ export function ensureToolResultPairing(messages: ChatMessage[]): ChatMessage[] 
     const missing = asst.tool_calls.filter((tc) => !resolvedIds.has(tc.id));
     if (missing.length === 0) continue;
 
+    // If ALL calls are unresolved and text content is empty, drop entirely
+    if (missing.length === asst.tool_calls.length) {
+      const text = asst.content != null ? contentToString(asst.content) : "";
+      if (text.trim() === "") {
+        dropIndices.add(i);
+        for (const tc of asst.tool_calls) dropCallIds.add(tc.id);
+        continue;
+      }
+    }
+
+    // Partial resolution: insert synthetic errors for missing results
     const allCallIds = new Set(asst.tool_calls.map((tc) => tc.id));
     let insertAfter = i;
     for (let j = i + 1; j < messages.length; j++) {
@@ -225,14 +241,117 @@ export function ensureToolResultPairing(messages: ChatMessage[]): ChatMessage[] 
     }
   }
 
-  if (insertions.size === 0) return messages;
+  if (insertions.size === 0 && dropIndices.size === 0) return messages;
 
   const result: ChatMessage[] = [];
   for (let i = 0; i < messages.length; i++) {
+    if (dropIndices.has(i)) continue;
+    if (messages[i].role === "tool" && dropCallIds.has((messages[i] as ToolResultMessage).tool_call_id)) continue;
     result.push(messages[i]);
     const toInsert = insertions.get(i);
     if (toInsert) result.push(...toInsert);
   }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Step 5b: Sanitize error tool result content
+// ---------------------------------------------------------------------------
+
+/**
+ * The API rejects tool_results with `isError: true` that contain non-text
+ * content (images, etc.). Strip non-text parts and keep only text, joining
+ * multiple text segments. Avoids permanent 400s from resumed sessions that
+ * persisted images in error results.
+ */
+function sanitizeErrorToolResultContent(messages: ChatMessage[]): ChatMessage[] {
+  let changed = false;
+  const result = messages.map((msg) => {
+    if (msg.role !== "tool") return msg;
+    const tr = msg as ToolResultMessage;
+    if (!tr.isError) return msg;
+    if (!Array.isArray(tr.content)) return msg;
+    if (tr.content.every((c) => c.type === "text")) return msg;
+
+    changed = true;
+    const texts = tr.content
+      .filter((c): c is { type: "text"; text: string } => c.type === "text")
+      .map((c) => c.text);
+    return {
+      ...tr,
+      content: texts.length > 0 ? texts.join("\n\n") : "Error (details unavailable)",
+    } as ToolResultMessage;
+  });
+  return changed ? result : messages;
+}
+
+// ---------------------------------------------------------------------------
+// Step 5c: Reorder tool results to follow their owning assistant
+// ---------------------------------------------------------------------------
+
+/**
+ * Ensure every tool result appears in the contiguous block after its owning
+ * assistant. Corrupt transcripts (crash recovery, bad session merge) can
+ * have user messages or other non-tool rows between an assistant and its
+ * results. This step moves displaced tool results back to the correct
+ * position without dropping any data.
+ */
+function reorderToolResultsAfterAssistant(
+  messages: ChatMessage[],
+): ChatMessage[] {
+  // Build a map: tool_call_id → index of the owning assistant
+  const ownerIdx = new Map<string, number>();
+  for (let i = 0; i < messages.length; i++) {
+    if (messages[i].role !== "assistant") continue;
+    const asst = messages[i] as AssistantMessage;
+    if (!asst.tool_calls) continue;
+    for (const tc of asst.tool_calls) {
+      ownerIdx.set(tc.id, i);
+    }
+  }
+
+  // Check if any tool results are displaced (separated from assistant by non-tool)
+  let needsReorder = false;
+  for (let i = 0; i < messages.length; i++) {
+    if (messages[i].role !== "tool") continue;
+    const callId = (messages[i] as ToolResultMessage).tool_call_id;
+    const asstIdx = ownerIdx.get(callId);
+    if (asstIdx === undefined) continue;
+    for (let j = asstIdx + 1; j < i; j++) {
+      if (messages[j].role === "user") {
+        needsReorder = true;
+        break;
+      }
+    }
+    if (needsReorder) break;
+  }
+  if (!needsReorder) return messages;
+
+  // Rebuild: for each assistant with tool_calls, collect its results and
+  // place them immediately after the assistant, then emit remaining messages.
+  const consumed = new Set<number>();
+  const result: ChatMessage[] = [];
+
+  for (let i = 0; i < messages.length; i++) {
+    if (consumed.has(i)) continue;
+    result.push(messages[i]);
+
+    if (messages[i].role !== "assistant") continue;
+    const asst = messages[i] as AssistantMessage;
+    if (!asst.tool_calls || asst.tool_calls.length === 0) continue;
+
+    const callIds = new Set(asst.tool_calls.map((tc) => tc.id));
+    // Gather all tool results for this assistant (in original order)
+    for (let j = i + 1; j < messages.length; j++) {
+      if (messages[j].role !== "tool") continue;
+      if (!callIds.has((messages[j] as ToolResultMessage).tool_call_id)) continue;
+      if (!consumed.has(j)) {
+        consumed.add(j);
+        result.push(messages[j]);
+      }
+    }
+  }
+
   return result;
 }
 
@@ -425,25 +544,26 @@ function mergeAssistantPair(
 // ---------------------------------------------------------------------------
 
 /**
- * Providers may reject assistants with `content: null`. If the assistant
- * survived all prior filters, set content to `""`.
+ * Providers reject assistants with `content: null`.
  *
- * Note: The reference (claude-code) leaves the final assistant empty for
- * prefill, but its message model uses `content: []` (empty array) not
- * `null`. Our model uses `null` which providers universally reject, so
- * we fill all assistants unconditionally.
+ * - Non-final assistants: set null/undefined content to `""`.
+ * - Final assistant: also set to `""` — enables prefill/continuation;
+ *   an empty string is accepted by all providers (unlike `null`).
  */
 function ensureNonEmptyAssistantContent(
   messages: ChatMessage[],
 ): ChatMessage[] {
-  return messages.map((msg) => {
+  let changed = false;
+  const result = messages.map((msg) => {
     if (msg.role !== "assistant") return msg;
     const asst = msg as AssistantMessage;
     if (asst.content === null || asst.content === undefined) {
+      changed = true;
       return { ...asst, content: "" };
     }
     return msg;
   });
+  return changed ? result : messages;
 }
 
 // ---------------------------------------------------------------------------
@@ -514,6 +634,115 @@ function assistantTextContent(asst: AssistantMessage): string {
     return contentToString(asst.content as ContentPart[]);
   }
   return "";
+}
+
+// ---------------------------------------------------------------------------
+// Step 10b: Strip stale thinking signatures from non-final assistants
+// ---------------------------------------------------------------------------
+
+/**
+ * thinking_signature and redacted_thinking_data are model-bound: replaying
+ * them to a different model causes API 400s. After a model switch or across
+ * compaction boundaries, these fields on older messages become stale.
+ *
+ * Only the final assistant's signature is potentially valid (belongs to
+ * the current turn). All earlier signatures are stripped.
+ */
+function stripStaleSignatureBlocks(messages: ChatMessage[]): ChatMessage[] {
+  if (messages.length === 0) return messages;
+
+  let changed = false;
+  const result = messages.map((msg, i) => {
+    if (msg.role !== "assistant") return msg;
+    const asst = msg as AssistantMessage;
+    const isLast = i === messages.length - 1;
+    if (isLast) return msg;
+
+    if (asst.thinking_signature || asst.redacted_thinking_data) {
+      changed = true;
+      const {
+        thinking_signature: _sig,
+        redacted_thinking_data: _red,
+        ...rest
+      } = asst;
+      return rest as AssistantMessage;
+    }
+    return msg;
+  });
+  return changed ? result : messages;
+}
+
+// ---------------------------------------------------------------------------
+// Step 10c: Validate images for API
+// ---------------------------------------------------------------------------
+
+const MAX_IMAGES_PER_REQUEST = 20;
+const MAX_IMAGE_BASE64_SIZE = 5 * 1024 * 1024; // 5 MB
+const VALID_IMAGE_MEDIA_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/gif",
+  "image/webp",
+]);
+
+/**
+ * Strip oversized or invalid images from messages to prevent API rejections.
+ * Providers impose limits on image count, size, and format.
+ */
+function validateImagesForAPI(messages: ChatMessage[]): ChatMessage[] {
+  let imageCount = 0;
+  let changed = false;
+
+  const result = messages.map((msg) => {
+    if (msg.role === "assistant") return msg;
+    const content = (msg as { content: string | ContentPart[] }).content;
+    if (!Array.isArray(content)) return msg;
+
+    let msgChanged = false;
+    const validated = content.map((part) => {
+      if (part.type !== "image") return part;
+
+      imageCount++;
+
+      if (imageCount > MAX_IMAGES_PER_REQUEST) {
+        msgChanged = true;
+        return {
+          type: "text" as const,
+          text: "[image removed — too many images in this request]",
+        };
+      }
+
+      if (part.data && part.data.length > MAX_IMAGE_BASE64_SIZE) {
+        msgChanged = true;
+        return {
+          type: "text" as const,
+          text: `[image removed — exceeds ${MAX_IMAGE_BASE64_SIZE / 1024 / 1024}MB size limit]`,
+        };
+      }
+
+      if (
+        part.media_type &&
+        !VALID_IMAGE_MEDIA_TYPES.has(part.media_type)
+      ) {
+        msgChanged = true;
+        return {
+          type: "text" as const,
+          text: `[image removed — unsupported format: ${part.media_type}]`,
+        };
+      }
+
+      return part;
+    });
+
+    if (msgChanged) {
+      changed = true;
+      return { ...msg, content: validated } as ChatMessage;
+    }
+    return msg;
+  });
+
+  return changed ? result : messages;
 }
 
 // ---------------------------------------------------------------------------

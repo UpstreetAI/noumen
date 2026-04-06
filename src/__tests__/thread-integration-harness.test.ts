@@ -26,6 +26,7 @@ import type { StreamEvent } from "../session/types.js";
 import type { Tool, ToolResult, ToolContext } from "../tools/types.js";
 import type { HookDefinition } from "../hooks/types.js";
 import { createAutoCompactConfig } from "../compact/auto-compact.js";
+import { assertValidMessageSequence } from "../messages/invariants.js";
 
 // ---------------------------------------------------------------------------
 // Shared setup
@@ -179,6 +180,7 @@ describe("Integration: Thread.run scenarios", () => {
     ];
 
     const normalized = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(normalized);
     const assistants = normalized.filter((m) => m.role === "assistant");
 
     // All three segments should merge into a single assistant
@@ -342,6 +344,7 @@ describe("Integration: Thread.run scenarios", () => {
         isError: true,
       },
     ]);
+    assertValidMessageSequence(messages);
 
     const { messages: anthropicMsgs } = convertAnthropicMessages(
       "system prompt",
@@ -552,6 +555,7 @@ describe("Integration: Thread.run scenarios", () => {
     ];
 
     const normalized = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(normalized);
     const assistants = normalized.filter((m) => m.role === "assistant");
 
     // All assistants should have non-null content

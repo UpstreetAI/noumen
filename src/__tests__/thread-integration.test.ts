@@ -18,6 +18,7 @@ import type { StreamEvent, ChatMessage, AssistantMessage } from "../session/type
 import type { AIProvider, ChatParams, ChatStreamChunk } from "../providers/types.js";
 import { createAutoCompactConfig } from "../compact/auto-compact.js";
 import { normalizeMessagesForAPI } from "../messages/normalize.js";
+import { assertValidMessageSequence } from "../messages/invariants.js";
 
 let fs: MockFs;
 let computer: MockComputer;
@@ -302,57 +303,9 @@ describe("integration: session resume round-trip", () => {
 describe("integration: normalization invariants", () => {
   function assertNormalizationInvariants(messages: ChatMessage[]) {
     const result = normalizeMessagesForAPI(messages);
-
-    expect(result.length).toBeGreaterThan(0);
-    expect(result[0].role).toBe("user");
-
-    for (let i = 1; i < result.length; i++) {
-      const prev = result[i - 1];
-      const curr = result[i];
-      if (curr.role !== "tool") {
-        expect(curr.role).not.toBe(prev.role);
-      }
-    }
-
-    const toolUseIds = new Set<string>();
-    for (const msg of result) {
-      if (msg.role === "assistant") {
-        const asst = msg as AssistantMessage;
-        for (const tc of asst.tool_calls ?? []) {
-          toolUseIds.add(tc.id);
-        }
-      }
-    }
-
-    const toolResultIds: string[] = [];
-    for (const msg of result) {
-      if (msg.role === "tool") {
-        const id = (msg as any).tool_call_id;
-        toolResultIds.push(id);
-        expect(toolUseIds.has(id)).toBe(true);
-      }
-    }
-    expect(new Set(toolResultIds).size).toBe(toolResultIds.length);
-
-    for (const msg of result) {
-      if (msg.role === "assistant") {
-        const asst = msg as AssistantMessage;
-        for (const tc of asst.tool_calls ?? []) {
-          expect(toolResultIds).toContain(tc.id);
-        }
-      }
-    }
-
-    const last = result[result.length - 1];
-    if (last.role === "assistant") {
-      const asst = last as AssistantMessage;
-      if (!asst.tool_calls?.length) {
-        const text = typeof asst.content === "string" ? asst.content : "";
-        if (text.trim() === "") {
-          expect(asst.thinking_content).toBeUndefined();
-        }
-      }
-    }
+    assertValidMessageSequence(result);
+    // Idempotency
+    expect(normalizeMessagesForAPI(result)).toEqual(result);
   }
 
   it("handles duplicate tool_result IDs", () => {

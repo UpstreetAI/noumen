@@ -151,5 +151,16 @@ export interface Tool {
    */
   requiresUserInteraction?: boolean;
 
+  /**
+   * Optional semantic validation after schema parse succeeds. Catches
+   * domain-specific errors (e.g. invalid file path, conflicting flags)
+   * before execution. Return a string error message to reject, or
+   * undefined to proceed.
+   */
+  validateInput?: (
+    args: Record<string, unknown>,
+    ctx: ToolContext,
+  ) => string | undefined | Promise<string | undefined>;
+
   call(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult>;
 }

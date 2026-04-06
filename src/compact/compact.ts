@@ -106,7 +106,15 @@ export async function compactConversation(
         throw err;
       }
       const targetTokens = getEffectiveContextWindow(model);
-      const truncated = truncateHeadForPTLRetry(currentToSummarize, targetTokens);
+      const tokenGap = classification.contextOverflowData
+        ? classification.contextOverflowData.inputTokens +
+          classification.contextOverflowData.maxTokens -
+          classification.contextOverflowData.contextLimit
+        : undefined;
+      const truncated = truncateHeadForPTLRetry(currentToSummarize, {
+        targetTokens,
+        tokenGap: tokenGap && tokenGap > 0 ? tokenGap : undefined,
+      });
       if (truncated.length >= currentToSummarize.length || truncated.length === 0) {
         throw err;
       }

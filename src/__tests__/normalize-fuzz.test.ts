@@ -394,7 +394,6 @@ describe("adjustSplitForToolPairs — fuzz", () => {
         // If the adjusted split lands on a tool result, the preceding
         // assistant must be in the same partition (tail).
         if (adjusted < messages.length && messages[adjusted]?.role === "tool") {
-          // Walk back — the assistant owning this tool call should also be in the tail
           let foundAsst = false;
           for (let k = adjusted - 1; k >= 0; k--) {
             if (messages[k].role === "assistant") {
@@ -405,10 +404,35 @@ describe("adjustSplitForToolPairs — fuzz", () => {
               break;
             }
           }
-          // If there's an assistant before the split with tool_calls,
-          // the split should have been pushed back before it
           if (foundAsst) {
             expect(adjusted).toBeLessThanOrEqual(splitIdx);
+          }
+        }
+
+        // Both partitions should independently normalize to valid sequences
+        const head = messages.slice(0, adjusted);
+        const tail = messages.slice(adjusted);
+
+        if (head.length > 0) {
+          const normalizedHead = normalizeMessagesForAPI(head);
+          try {
+            assertValidMessageSequence(normalizedHead);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            expect.fail(
+              `seed=${seed} iter=${iter} head partition: ${msg}`,
+            );
+          }
+        }
+        if (tail.length > 0) {
+          const normalizedTail = normalizeMessagesForAPI(tail);
+          try {
+            assertValidMessageSequence(normalizedTail);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            expect.fail(
+              `seed=${seed} iter=${iter} tail partition: ${msg}`,
+            );
           }
         }
       }

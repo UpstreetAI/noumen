@@ -12,6 +12,7 @@ import type {
   AssistantMessage,
   ToolResultMessage,
 } from "../session/types.js";
+import { contentToString } from "../utils/content.js";
 
 export class InvariantViolation extends Error {
   constructor(message: string) {
@@ -33,7 +34,9 @@ export class InvariantViolation extends Error {
  *  7. No duplicate tool_use IDs
  *  8. No duplicate tool_result IDs
  *  9. No assistant with null/undefined content
- * 10. No whitespace-only assistant without tool_calls or thinking
+ * 10. No whitespace-only assistant without tool_calls or thinking_content
+ * 11. Trailing assistant must not be thinking-only (no text, no tool_calls)
+ * 12. Tool results appear in a contiguous block after their owning assistant
  */
 export function assertValidMessageSequence(messages: ChatMessage[]): void {
   if (messages.length === 0) {
@@ -48,16 +51,16 @@ export function assertValidMessageSequence(messages: ChatMessage[]): void {
 
   const toolUseIds = new Set<string>();
   const toolResultIds = new Set<string>();
+  // Map tool_use id → index of the assistant that owns it
+  const toolUseOwnerIdx = new Map<string, number>();
 
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
 
-    // No system messages
     if (msg.role === "system") {
       throw new InvariantViolation(`message[${i}] is a system message`);
     }
 
-    // No consecutive same non-tool role
     if (i > 0) {
       const prev = messages[i - 1];
       if (msg.role !== "tool" && prev.role !== "tool" && msg.role === prev.role) {
@@ -70,14 +73,25 @@ export function assertValidMessageSequence(messages: ChatMessage[]): void {
     if (msg.role === "assistant") {
       const asst = msg as AssistantMessage;
 
-      // No null/undefined content
       if (asst.content === null || asst.content === undefined) {
         throw new InvariantViolation(
           `message[${i}] assistant has null/undefined content`,
         );
       }
 
-      // Collect tool_use IDs
+      // Invariant #10: whitespace-only assistant without tool_calls or thinking
+      if (!asst.tool_calls || asst.tool_calls.length === 0) {
+        const text =
+          typeof asst.content === "string"
+            ? asst.content
+            : contentToString(asst.content ?? "");
+        if (text.trim() === "" && !asst.thinking_content) {
+          throw new InvariantViolation(
+            `message[${i}] is a whitespace-only assistant with no tool_calls or thinking_content`,
+          );
+        }
+      }
+
       if (asst.tool_calls) {
         for (const tc of asst.tool_calls) {
           if (toolUseIds.has(tc.id)) {
@@ -86,6 +100,7 @@ export function assertValidMessageSequence(messages: ChatMessage[]): void {
             );
           }
           toolUseIds.add(tc.id);
+          toolUseOwnerIdx.set(tc.id, i);
         }
       }
     } else if (msg.role === "tool") {
@@ -114,6 +129,49 @@ export function assertValidMessageSequence(messages: ChatMessage[]): void {
       throw new InvariantViolation(
         `tool_result "${id}" has no matching tool_use`,
       );
+    }
+  }
+
+  // Invariant #11: trailing assistant must not be thinking-only
+  const last = messages[messages.length - 1];
+  if (last.role === "assistant") {
+    const asst = last as AssistantMessage;
+    if ((!asst.tool_calls || asst.tool_calls.length === 0) && asst.thinking_content) {
+      const text =
+        typeof asst.content === "string"
+          ? asst.content
+          : contentToString(asst.content ?? "");
+      if (text.trim() === "") {
+        throw new InvariantViolation(
+          "Trailing assistant is thinking-only (no text content, no tool_calls)",
+        );
+      }
+    }
+  }
+
+  // Invariant #12: tool results must appear after their owning assistant,
+  // with no intervening non-tool messages between the assistant and its results.
+  for (let i = 0; i < messages.length; i++) {
+    if (messages[i].role !== "tool") continue;
+    const tr = messages[i] as ToolResultMessage;
+    const ownerIdx = toolUseOwnerIdx.get(tr.tool_call_id);
+    if (ownerIdx === undefined) continue; // orphan already caught above
+
+    if (i <= ownerIdx) {
+      throw new InvariantViolation(
+        `tool_result "${tr.tool_call_id}" at message[${i}] appears before its owning assistant at message[${ownerIdx}]`,
+      );
+    }
+
+    // Check no non-tool, non-assistant-with-same-owner messages intervene
+    // between the owning assistant and this tool result — i.e., a user message
+    // must not separate an assistant from its tool results.
+    for (let j = ownerIdx + 1; j < i; j++) {
+      if (messages[j].role === "user") {
+        throw new InvariantViolation(
+          `tool_result "${tr.tool_call_id}" at message[${i}] is separated from its owning assistant[${ownerIdx}] by a user message at [${j}]`,
+        );
+      }
     }
   }
 }

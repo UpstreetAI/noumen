@@ -431,12 +431,31 @@ describe("sanitizeForResume — preserves thinking fields on assistant merge", (
 // ensureToolResultPairing
 // ---------------------------------------------------------------------------
 describe("ensureToolResultPairing", () => {
-  it("injects synthetic results for orphaned tool_calls", () => {
+  it("drops all-unresolved assistant with null content (strict fallback)", () => {
     const messages: ChatMessage[] = [
       { role: "user", content: "hello" },
       {
         role: "assistant",
         content: null,
+        tool_calls: [
+          { id: "tc1", type: "function", function: { name: "ReadFile", arguments: '{"file_path":"x.ts"}' } },
+          { id: "tc2", type: "function", function: { name: "Bash", arguments: '{"command":"ls"}' } },
+        ],
+      } as any,
+    ];
+
+    const repaired = ensureToolResultPairing(messages);
+    // Null content + all-unresolved → strict fallback drops the assistant
+    expect(repaired.length).toBe(1);
+    expect(repaired[0].role).toBe("user");
+  });
+
+  it("injects synthetic results when assistant has text content", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "hello" },
+      {
+        role: "assistant",
+        content: "I'll help with that",
         tool_calls: [
           { id: "tc1", type: "function", function: { name: "ReadFile", arguments: '{"file_path":"x.ts"}' } },
           { id: "tc2", type: "function", function: { name: "Bash", arguments: '{"command":"ls"}' } },

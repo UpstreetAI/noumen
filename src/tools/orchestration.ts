@@ -15,6 +15,12 @@ export interface ToolCallExecResult {
   preventContinuation?: boolean;
   /** Permission and lifecycle events emitted during execution */
   events?: StreamEvent[];
+  /**
+   * Optional context modifier to apply after a concurrent batch completes.
+   * Applied in original tool_call order (not completion order) so state
+   * transitions are deterministic.
+   */
+  contextModifier?: () => void | Promise<void>;
 }
 
 export type ToolCallExecutor = (
@@ -83,6 +89,10 @@ export async function* runToolsBatched(
 
   for (const batch of batches) {
     if (batch.isConcurrencySafe && batch.items.length > 1) {
+      // Collect all results from the concurrent batch, then yield them.
+      // This lets us apply context modifiers in tool_call order after
+      // all concurrent executions complete.
+      const results: ToolCallExecResult[] = [];
       const generators = batch.items.map(({ toolCall, parsedArgs }) =>
         (async function* () {
           try {
@@ -99,11 +109,37 @@ export async function* runToolsBatched(
           }
         })(),
       );
-      yield* all(generators, concurrencyCap);
+      for await (const result of all(generators, concurrencyCap)) {
+        results.push(result);
+      }
+
+      // Sort by original tool_call order for deterministic context updates
+      const orderMap = new Map(
+        batch.items.map(({ toolCall }, i) => [toolCall.id, i]),
+      );
+      results.sort(
+        (a, b) =>
+          (orderMap.get(a.toolCall.id) ?? 0) - (orderMap.get(b.toolCall.id) ?? 0),
+      );
+
+      for (const result of results) {
+        yield result;
+      }
+
+      // Apply context modifiers in tool_call order after the batch
+      for (const result of results) {
+        if (result.contextModifier) {
+          await result.contextModifier();
+        }
+      }
     } else {
       for (const { toolCall, parsedArgs } of batch.items) {
         try {
-          yield await executor(toolCall, parsedArgs);
+          const result = await executor(toolCall, parsedArgs);
+          yield result;
+          if (result.contextModifier) {
+            await result.contextModifier();
+          }
         } catch (err) {
           yield {
             toolCall,

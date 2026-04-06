@@ -218,14 +218,15 @@ export async function enforceToolResultStorageBudget(
     // Sort largest first and spill until under budget
     sizes.sort((a, b) => b.size - a.size);
 
+    const previewChars = config.previewChars ?? DEFAULT_PREVIEW_CHARS;
+
     for (const { idx, size } of sizes) {
       if (groupTotal <= budget) break;
       const toolMsg = result[idx] as ToolResultMessage;
       const text = contentToString(toolMsg.content);
-      if (text.length < (config.previewChars ?? DEFAULT_PREVIEW_CHARS) + 100) continue;
 
       const toolName = toolCallIdToName.get(toolMsg.tool_call_id) ?? "unknown";
-      const replacement = await persistToolResult(
+      let replacement = await persistToolResult(
         fs,
         sessionId,
         toolMsg.tool_call_id,
@@ -233,6 +234,17 @@ export async function enforceToolResultStorageBudget(
         text,
         config,
       );
+
+      // If the result is under the disk-spill threshold but still large
+      // enough to help, truncate it in-place with a preview.
+      if (!replacement && text.length > previewChars + 200) {
+        const preview = generatePreview(text, previewChars);
+        replacement =
+          `<truncated-output original-size="${text.length}">\n` +
+          preview +
+          `\n...[${text.length - preview.length} chars truncated]\n` +
+          `</truncated-output>`;
+      }
 
       if (replacement) {
         const freed = estimateTokens(text) - estimateTokens(replacement);
