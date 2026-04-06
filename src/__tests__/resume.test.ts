@@ -151,6 +151,73 @@ describe("restoreSession", () => {
     const hasNew = payload.messages.some((m) => m.content === "new");
     expect(hasNew).toBe(true);
   });
+
+  it("detects interrupted_tool interruption", async () => {
+    await storage.appendMessage("s1", { role: "user", content: "do something" });
+    await storage.appendMessage("s1", {
+      role: "assistant",
+      content: null,
+      tool_calls: [{ id: "tc1", type: "function", function: { name: "Bash", arguments: "{}" } }],
+    });
+    await storage.appendMessage("s1", {
+      role: "tool",
+      tool_call_id: "tc1",
+      content: "command output",
+    });
+
+    const payload = await restoreSession(storage, "s1");
+    expect(payload.interruption.kind).toBe("interrupted_tool");
+  });
+
+  it("detects interrupted_prompt interruption", async () => {
+    await storage.appendMessage("s1", { role: "user", content: "hello" });
+    await storage.appendMessage("s1", { role: "assistant", content: "thinking..." });
+    await storage.appendMessage("s1", { role: "user", content: "more input" });
+
+    const payload = await restoreSession(storage, "s1");
+    expect(payload.interruption.kind).toBe("interrupted_prompt");
+  });
+
+  it("reports recoveryRemovals for orphaned tool uses", async () => {
+    await storage.appendMessage("s1", { role: "user", content: "go" });
+    await storage.appendMessage("s1", {
+      role: "assistant",
+      content: null,
+      tool_calls: [{ id: "tc_orphan", type: "function", function: { name: "Bash", arguments: "{}" } }],
+    });
+    // No tool result follows — the tool_use is orphaned
+
+    const payload = await restoreSession(storage, "s1");
+    expect(payload.recoveryRemovals.unresolvedToolUses).toBeGreaterThanOrEqual(1);
+  });
+
+  it("reports recoveryRemovals for whitespace-only assistants", async () => {
+    await storage.appendMessage("s1", { role: "user", content: "go" });
+    await storage.appendMessage("s1", { role: "assistant", content: "   " });
+    await storage.appendMessage("s1", { role: "assistant", content: "valid response" });
+
+    const payload = await restoreSession(storage, "s1");
+    expect(payload.recoveryRemovals.whitespaceOnly).toBeGreaterThanOrEqual(1);
+  });
+
+  it("restores after compaction + abort scenario", async () => {
+    await storage.appendMessage("s1", { role: "user", content: "old turn" });
+    await storage.appendMessage("s1", { role: "assistant", content: "old response" });
+    await storage.appendCompactBoundary("s1");
+    await storage.appendSummary("s1", { role: "user", content: "[Conversation Summary] compacted" });
+    await storage.appendMessage("s1", { role: "user", content: "post-compact turn" });
+    await storage.appendMessage("s1", {
+      role: "assistant",
+      content: null,
+      tool_calls: [{ id: "tc_aborted", type: "function", function: { name: "Bash", arguments: "{}" } }],
+    });
+    // Aborted — no tool result
+
+    const payload = await restoreSession(storage, "s1");
+    expect(payload.messages[0].content).toContain("compacted");
+    // The orphaned tool call should be removed or have synthetic result
+    expect(payload.recoveryRemovals.unresolvedToolUses).toBeGreaterThanOrEqual(1);
+  });
 });
 
 describe("CostTracker getState/restore", () => {

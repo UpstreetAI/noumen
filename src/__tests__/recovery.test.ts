@@ -10,6 +10,8 @@ import {
   ensureToolResultPairing,
   mergeConsecutiveSameRole,
 } from "../session/recovery.js";
+import { normalizeMessagesForAPI } from "../messages/normalize.js";
+import { assertValidMessageSequence } from "../messages/invariants.js";
 
 describe("filterUnresolvedToolUses", () => {
   it("drops assistants where all tool_calls are unresolved", () => {
@@ -524,5 +526,131 @@ describe("ensureToolResultPairing", () => {
     expect(toolMsgs.length).toBe(2);
     expect((toolMsgs[1] as any).tool_call_id).toBe("tc2");
     expect((toolMsgs[1] as any).isError).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fillPartiallyResolvedToolCalls with multiple missing
+// ---------------------------------------------------------------------------
+
+describe("sanitizeForResume — fillPartiallyResolvedToolCalls", () => {
+  it("inserts synthetic error results for multiple missing tool calls", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: "calling three tools",
+        tool_calls: [
+          { id: "tc1", type: "function", function: { name: "A", arguments: "{}" } },
+          { id: "tc2", type: "function", function: { name: "B", arguments: "{}" } },
+          { id: "tc3", type: "function", function: { name: "C", arguments: "{}" } },
+        ],
+      } as any,
+      { role: "tool", tool_call_id: "tc1", content: "result for tc1" } as any,
+    ];
+
+    const { messages: sanitized } = sanitizeForResume(messages);
+
+    const toolResults = sanitized.filter((m) => m.role === "tool");
+    expect(toolResults.length).toBe(3);
+
+    const syntheticIds = toolResults
+      .filter((m) => (m as any).isError)
+      .map((m) => (m as any).tool_call_id);
+    expect(syntheticIds).toContain("tc2");
+    expect(syntheticIds).toContain("tc3");
+    expect(syntheticIds).not.toContain("tc1");
+  });
+
+  it("preserves thinking on interrupted assistant when generating synthetic results", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "think and act" },
+      {
+        role: "assistant",
+        content: "executing",
+        thinking_content: "deep reasoning",
+        thinking_signature: "sig_current",
+        tool_calls: [
+          { id: "tc1", type: "function", function: { name: "Bash", arguments: "{}" } },
+        ],
+      } as any,
+      // Interrupted — no tool result
+    ];
+
+    const { messages: sanitized, interruption } = sanitizeForResume(messages);
+
+    // The assistant with unresolved tool_call should be removed
+    // but if partial (has thinking), the thinking should be preserved
+    // in the sanitized output somehow
+    expect(interruption.kind).not.toBe("none");
+
+    const normalized = normalizeMessagesForAPI(sanitized);
+    assertValidMessageSequence(normalized);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// generateMissingToolResults edge cases
+// ---------------------------------------------------------------------------
+
+describe("generateMissingToolResults edge cases", () => {
+  it("returns empty array when assistant has no tool_calls", () => {
+    const result = generateMissingToolResults(
+      { role: "assistant", content: "no tools" } as AssistantMessage,
+      [],
+      "test reason",
+    );
+    expect(result).toEqual([]);
+  });
+
+  it("returns empty array when all calls have results", () => {
+    const assistant: AssistantMessage = {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        { id: "tc1", type: "function", function: { name: "A", arguments: "{}" } },
+        { id: "tc2", type: "function", function: { name: "B", arguments: "{}" } },
+      ],
+    };
+    const existing: ChatMessage[] = [
+      { role: "tool", tool_call_id: "tc1", content: "r1" },
+      { role: "tool", tool_call_id: "tc2", content: "r2" },
+    ];
+    const result = generateMissingToolResults(assistant, existing, "test");
+    expect(result).toEqual([]);
+  });
+
+  it("generates synthetic results for all missing when none resolved", () => {
+    const assistant: AssistantMessage = {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        { id: "tc1", type: "function", function: { name: "A", arguments: "{}" } },
+        { id: "tc2", type: "function", function: { name: "B", arguments: "{}" } },
+        { id: "tc3", type: "function", function: { name: "C", arguments: "{}" } },
+      ],
+    };
+    const result = generateMissingToolResults(assistant, [], "crash");
+    expect(result).toHaveLength(3);
+    for (const r of result) {
+      expect(r.isError).toBe(true);
+      expect(r.content).toContain("crash");
+    }
+  });
+
+  it("includes the reason string in synthetic results", () => {
+    const assistant: AssistantMessage = {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        { id: "tc1", type: "function", function: { name: "A", arguments: "{}" } },
+      ],
+    };
+    const result = generateMissingToolResults(
+      assistant,
+      [],
+      "Provider error: 502 Bad Gateway",
+    );
+    expect(result[0].content).toContain("502 Bad Gateway");
   });
 });

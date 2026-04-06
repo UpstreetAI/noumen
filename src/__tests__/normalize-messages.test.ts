@@ -1078,3 +1078,258 @@ describe("normalizeMessagesForAPI — tool input stripping integration", () => {
     expect(args.command).toBe("ls");
   });
 });
+
+// ---------------------------------------------------------------------------
+// reorderToolResultsAfterAssistant
+// ---------------------------------------------------------------------------
+
+describe("normalizeMessagesForAPI — reorderToolResultsAfterAssistant", () => {
+  it("moves displaced tool results back after their owning assistant", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: "calling tool",
+        tool_calls: [{ id: "tc1", type: "function", function: { name: "Bash", arguments: "{}" } }],
+      } as AssistantMessage,
+      { role: "user", content: "interruption wedged between assistant and result" },
+      { role: "tool", tool_call_id: "tc1", content: "tool output" } as ToolResultMessage,
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
+
+    const asstIdx = result.findIndex((m) => m.role === "assistant");
+    const toolIdx = result.findIndex((m) => m.role === "tool");
+    expect(toolIdx).toBe(asstIdx + 1);
+  });
+
+  it("reorders multiple displaced tool results from different assistants", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: "first call",
+        tool_calls: [{ id: "tc1", type: "function", function: { name: "A", arguments: "{}" } }],
+      } as AssistantMessage,
+      { role: "user", content: "wedge 1" },
+      {
+        role: "assistant",
+        content: "second call",
+        tool_calls: [{ id: "tc2", type: "function", function: { name: "B", arguments: "{}" } }],
+      } as AssistantMessage,
+      { role: "user", content: "wedge 2" },
+      { role: "tool", tool_call_id: "tc1", content: "result1" } as ToolResultMessage,
+      { role: "tool", tool_call_id: "tc2", content: "result2" } as ToolResultMessage,
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
+
+    const idempotent = normalizeMessagesForAPI(result);
+    expect(idempotent).toEqual(result);
+  });
+
+  it("handles assistant with multiple tool_calls and all results displaced", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: "multi-tool",
+        tool_calls: [
+          { id: "tc1", type: "function", function: { name: "A", arguments: "{}" } },
+          { id: "tc2", type: "function", function: { name: "B", arguments: "{}" } },
+        ],
+      } as AssistantMessage,
+      { role: "user", content: "interruption" },
+      { role: "tool", tool_call_id: "tc1", content: "r1" } as ToolResultMessage,
+      { role: "tool", tool_call_id: "tc2", content: "r2" } as ToolResultMessage,
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
+
+    const asstIdx = result.findIndex((m) => m.role === "assistant");
+    expect(result[asstIdx + 1]?.role).toBe("tool");
+    expect(result[asstIdx + 2]?.role).toBe("tool");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateImagesForAPI
+// ---------------------------------------------------------------------------
+
+describe("normalizeMessagesForAPI — validateImagesForAPI", () => {
+  it("caps images at 20 per request", () => {
+    const imageParts: ContentPart[] = [];
+    for (let i = 0; i < 25; i++) {
+      imageParts.push({
+        type: "image",
+        data: `base64data${i}`,
+        media_type: "image/png",
+      } as ContentPart);
+    }
+    const messages: ChatMessage[] = [
+      { role: "user", content: imageParts },
+      { role: "assistant", content: "ok" } as AssistantMessage,
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
+
+    const userMsg = result[0];
+    const content = userMsg.content as ContentPart[];
+    expect(Array.isArray(content)).toBe(true);
+
+    const imageCount = content.filter((p) => p.type === "image").length;
+    expect(imageCount).toBeLessThanOrEqual(20);
+
+    const placeholders = content.filter(
+      (p) => p.type === "text" && (p as { text: string }).text.includes("too many images"),
+    );
+    expect(placeholders.length).toBe(5);
+  });
+
+  it("replaces oversized base64 images with placeholder", () => {
+    const bigData = "x".repeat(6 * 1024 * 1024); // 6MB
+    const messages: ChatMessage[] = [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "check this" },
+          { type: "image", data: bigData, media_type: "image/png" } as ContentPart,
+        ],
+      },
+      { role: "assistant", content: "ok" } as AssistantMessage,
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
+
+    const userContent = result[0].content as ContentPart[];
+    const placeholder = userContent.find(
+      (p) => p.type === "text" && (p as { text: string }).text.includes("size limit"),
+    );
+    expect(placeholder).toBeDefined();
+    expect(userContent.filter((p) => p.type === "image").length).toBe(0);
+  });
+
+  it("replaces images with unsupported media_type", () => {
+    const messages: ChatMessage[] = [
+      {
+        role: "user",
+        content: [
+          { type: "image", data: "abc", media_type: "image/bmp" } as ContentPart,
+        ],
+      },
+      { role: "assistant", content: "ok" } as AssistantMessage,
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
+
+    const userContent = result[0].content as ContentPart[];
+    const placeholder = userContent.find(
+      (p) => p.type === "text" && (p as { text: string }).text.includes("unsupported format"),
+    );
+    expect(placeholder).toBeDefined();
+  });
+
+  it("allows valid images through unchanged", () => {
+    const messages: ChatMessage[] = [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "analyze" },
+          { type: "image", data: "smalldata", media_type: "image/jpeg" } as ContentPart,
+        ],
+      },
+      { role: "assistant", content: "ok" } as AssistantMessage,
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    const userContent = result[0].content as ContentPart[];
+    expect(userContent.filter((p) => p.type === "image").length).toBe(1);
+  });
+
+  it("does not touch images in assistant messages", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "here is an image" },
+          { type: "image", data: "x".repeat(6 * 1024 * 1024), media_type: "image/bmp" },
+        ],
+      } as AssistantMessage,
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    const asstContent = (result.find((m) => m.role === "assistant") as AssistantMessage).content;
+    if (Array.isArray(asstContent)) {
+      expect(asstContent.some((p) => (p as ContentPart).type === "image")).toBe(true);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// stripStaleSignatureBlocks
+// ---------------------------------------------------------------------------
+
+describe("normalizeMessagesForAPI — stripStaleSignatureBlocks", () => {
+  it("strips thinking_signature from non-final assistants", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: "thought 1",
+        thinking_content: "deep",
+        thinking_signature: "sig-old",
+      } as AssistantMessage,
+      { role: "user", content: "continue" },
+      {
+        role: "assistant",
+        content: "thought 2",
+        thinking_content: "deeper",
+        thinking_signature: "sig-current",
+      } as AssistantMessage,
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
+
+    const assistants = result.filter((m) => m.role === "assistant") as AssistantMessage[];
+    expect(assistants[0].thinking_signature).toBeUndefined();
+    expect(assistants[1].thinking_signature).toBe("sig-current");
+  });
+
+  it("strips redacted_thinking_data from non-final assistants", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: "first",
+        redacted_thinking_data: "redacted-old",
+      } as AssistantMessage,
+      { role: "user", content: "next" },
+      {
+        role: "assistant",
+        content: "second",
+        redacted_thinking_data: "redacted-current",
+      } as AssistantMessage,
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    assertValidMessageSequence(result);
+
+    const assistants = result.filter((m) => m.role === "assistant") as AssistantMessage[];
+    expect(assistants[0].redacted_thinking_data).toBeUndefined();
+    expect(assistants[1].redacted_thinking_data).toBe("redacted-current");
+  });
+
+  it("no-ops when only one assistant exists", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: "only one",
+        thinking_signature: "sig",
+        redacted_thinking_data: "data",
+      } as AssistantMessage,
+    ];
+    const result = normalizeMessagesForAPI(messages);
+    const asst = result.find((m) => m.role === "assistant") as AssistantMessage;
+    expect(asst.thinking_signature).toBe("sig");
+    expect(asst.redacted_thinking_data).toBe("data");
+  });
+});

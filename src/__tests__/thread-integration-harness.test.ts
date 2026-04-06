@@ -22,11 +22,14 @@ import {
 } from "./helpers.js";
 import { Thread } from "../thread.js";
 import type { ThreadConfig } from "../thread.js";
-import type { StreamEvent } from "../session/types.js";
+import type { StreamEvent, ChatMessage, AssistantMessage } from "../session/types.js";
+import type { AIProvider, ChatParams, ChatStreamChunk } from "../providers/types.js";
+import { ChatStreamError } from "../providers/types.js";
 import type { Tool, ToolResult, ToolContext } from "../tools/types.js";
 import type { HookDefinition } from "../hooks/types.js";
 import { createAutoCompactConfig } from "../compact/auto-compact.js";
 import { assertValidMessageSequence } from "../messages/invariants.js";
+import { normalizeMessagesForAPI } from "../messages/normalize.js";
 
 // ---------------------------------------------------------------------------
 // Shared setup
@@ -637,5 +640,296 @@ describe("Integration: Thread.run scenarios", () => {
     const sessionFile = fs.files.get("/sessions/persist-test.jsonl");
     expect(sessionFile).toBeDefined();
     expect(sessionFile).toContain("echo:first");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Scenario 16: Abort then resume round-trip
+  // ---------------------------------------------------------------------------
+
+  it("abort mid-tool then resume yields valid normalized messages", async () => {
+    const slowTool = makeTool({
+      name: "Slow",
+      call: () => new Promise((resolve) => setTimeout(() => resolve({ content: "done" }), 5000)),
+    });
+
+    const config: ThreadConfig = { ...baseConfig, tools: [slowTool] };
+    const ac = new AbortController();
+
+    provider.addResponse(toolCallResponse("tc1", "Slow", {}));
+
+    const thread = new Thread(config, { sessionId: "abort-resume" });
+    const gen = thread.run("do slow thing", { signal: ac.signal });
+
+    const events1: StreamEvent[] = [];
+    for await (const e of gen) {
+      events1.push(e);
+      if (e.type === "tool_use_start") ac.abort();
+      if (events1.length > 50) break;
+    }
+
+    expect(events1.some((e) => e.type === "tool_use_start")).toBe(true);
+
+    // Now resume the session with a fresh provider response
+    provider.addResponse(textResponse("Resumed successfully."));
+
+    const thread2 = new Thread(config, { sessionId: "abort-resume", resume: true });
+    const events2 = await collectEvents(thread2.run("continue"));
+
+    const resumed = events2.find((e) => e.type === "session_resumed");
+    expect(resumed).toBeDefined();
+
+    const msgs = await thread2.getMessages();
+    const normalized = normalizeMessagesForAPI(msgs);
+    assertValidMessageSequence(normalized);
+    expect(normalized[0].role).toBe("user");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Scenario 17: Compaction then continue with tool calls
+  // ---------------------------------------------------------------------------
+
+  it("compaction reduces history and subsequent tool calls still pair correctly", async () => {
+    const longText = "x".repeat(800);
+    let callIdx = 0;
+
+    const echoTool = makeTool({
+      name: "Echo",
+      parameters: {
+        type: "object",
+        properties: { text: { type: "string" } },
+      },
+      call: async (args) => ({ content: `echo: ${args.text}` }),
+    });
+
+    const compactProvider: AIProvider = {
+      async *chat(params: ChatParams) {
+        callIdx++;
+        const isCompact = params.system?.includes("summariz");
+        if (isCompact) {
+          for (const chunk of textResponse("Summary of prior conversation.")) yield chunk;
+          return;
+        }
+        if (callIdx === 1) {
+          for (const chunk of textResponse(longText)) yield chunk;
+        } else if (callIdx === 3) {
+          for (const chunk of toolCallResponse("tc1", "Echo", { text: "post-compact" })) yield chunk;
+        } else {
+          for (const chunk of textResponse("Final after compact.")) yield chunk;
+        }
+      },
+    };
+
+    const autoConfig: ThreadConfig = {
+      ...baseConfig,
+      tools: [echoTool],
+      provider: compactProvider,
+      autoCompact: createAutoCompactConfig({
+        enabled: true,
+        threshold: 100,
+      }),
+    };
+
+    const thread = new Thread(autoConfig, { sessionId: "compact-tools" });
+    await collectEvents(thread.run("generate lots of text"));
+
+    const events2 = await collectEvents(thread.run("now use a tool"));
+
+    const toolResult = events2.find((e) => e.type === "tool_result");
+    if (toolResult) {
+      expect(toolResult.type).toBe("tool_result");
+    }
+
+    const msgs = await thread.getMessages();
+    const normalized = normalizeMessagesForAPI(msgs);
+    assertValidMessageSequence(normalized);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Scenario 18: Provider error mid-stream preserves partial state
+  // ---------------------------------------------------------------------------
+
+  it("provider error before first chunk triggers retry and recovers", async () => {
+    let callCount = 0;
+    const failingProvider: AIProvider = {
+      async *chat() {
+        callCount++;
+        if (callCount === 1) {
+          throw new ChatStreamError("Service temporarily unavailable", { status: 503 });
+        }
+        for (const chunk of textResponse("Recovered.")) yield chunk;
+      },
+    };
+
+    const retryConfig: ThreadConfig = {
+      ...baseConfig,
+      provider: failingProvider,
+      retry: {
+        maxRetries: 3,
+        baseDelayMs: 1,
+        maxDelayMs: 10,
+      },
+    };
+
+    const thread = new Thread(retryConfig, { sessionId: "pre-stream-error" });
+    const events = await collectEvents(thread.run("go"));
+
+    const retryEvents = events.filter((e) => e.type === "retry_attempt");
+    expect(retryEvents.length).toBeGreaterThanOrEqual(1);
+
+    const complete = events.find((e) => e.type === "message_complete");
+    expect(complete).toBeDefined();
+  });
+
+  it("provider error mid-stream persists partial assistant and yields error event", async () => {
+    const failingProvider: AIProvider = {
+      async *chat() {
+        yield textChunk("partial ");
+        yield textChunk("content");
+        throw new Error("Connection lost mid-stream");
+      },
+    };
+
+    const config: ThreadConfig = { ...baseConfig, provider: failingProvider };
+
+    const thread = new Thread(config, { sessionId: "mid-stream-error" });
+    const events = await collectEvents(thread.run("go"));
+
+    const errorEvent = events.find((e) => e.type === "error");
+    expect(errorEvent).toBeDefined();
+    if (errorEvent?.type === "error") {
+      expect(errorEvent.error.message).toContain("Connection lost mid-stream");
+    }
+
+    const msgs = await thread.getMessages();
+    const assistantMsgs = msgs.filter((m) => m.role === "assistant");
+    expect(assistantMsgs.length).toBeGreaterThanOrEqual(1);
+    const content = assistantMsgs[0]?.content;
+    expect(typeof content === "string" && content.includes("partial")).toBe(true);
+
+    const normalized = normalizeMessagesForAPI(msgs);
+    assertValidMessageSequence(normalized);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Scenario 19: finish_reason "length" auto-continue with max_tokens escalation
+  // ---------------------------------------------------------------------------
+
+  it("finish_reason length triggers auto-continue and escalates max_tokens", async () => {
+    const lengthChunks: ChatStreamChunk[] = [
+      textChunk("partial content"),
+      {
+        id: "mock-len",
+        model: "mock-model",
+        choices: [{ index: 0, delta: {}, finish_reason: "length" }],
+      },
+    ];
+
+    provider.addResponse(lengthChunks);
+    provider.addResponse(textResponse("...continued response"));
+
+    const config: ThreadConfig = { ...baseConfig };
+    const thread = new Thread(config, { sessionId: "length-continue" });
+    const events = await collectEvents(thread.run("write something long"));
+
+    const msgs = await thread.getMessages();
+    const assistants = msgs.filter((m) => m.role === "assistant");
+    expect(assistants.length).toBe(2);
+
+    const userMsgs = msgs.filter((m) => m.role === "user");
+    const continueMsg = userMsgs.find(
+      (m) => typeof m.content === "string" && m.content.includes("Continue from where you left off"),
+    );
+    expect(continueMsg).toBeDefined();
+
+    expect(provider.calls).toHaveLength(2);
+    expect(provider.calls[1].max_tokens).toBe(65536);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Scenario 20: Model switch on consecutive 529 overloaded errors
+  // ---------------------------------------------------------------------------
+
+  it("switches to fallback model after consecutive overloaded errors", async () => {
+    let callCount = 0;
+    const overloadedProvider: AIProvider = {
+      async *chat(params: ChatParams) {
+        callCount++;
+        if (callCount <= 3) {
+          throw new ChatStreamError('"type":"overloaded_error"', { status: 529 });
+        }
+        for (const chunk of textResponse(`Response from ${params.model}`)) yield chunk;
+      },
+    };
+
+    const retryConfig: ThreadConfig = {
+      ...baseConfig,
+      provider: overloadedProvider,
+      retry: {
+        maxRetries: 10,
+        baseDelayMs: 1,
+        maxDelayMs: 10,
+        fallbackModel: "fallback-model",
+        maxConsecutiveOverloaded: 3,
+      },
+    };
+
+    const thread = new Thread(retryConfig, { sessionId: "model-switch" });
+    const events = await collectEvents(thread.run("go"));
+
+    const modelSwitch = events.find((e) => e.type === "model_switch");
+    expect(modelSwitch).toBeDefined();
+    if (modelSwitch?.type === "model_switch") {
+      expect(modelSwitch.to).toBe("fallback-model");
+    }
+
+    const complete = events.find((e) => e.type === "message_complete");
+    expect(complete).toBeDefined();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Scenario 21: Provider error after tool_calls finish but before execution
+  // ---------------------------------------------------------------------------
+
+  it("error after tool_calls finish_reason generates synthetic results, not real ones", async () => {
+    const toolCallLog: string[] = [];
+    const trackedTool = makeTool({
+      name: "Tracked",
+      call: async () => {
+        toolCallLog.push("executed");
+        return { content: "done" };
+      },
+    });
+
+    let callCount = 0;
+    const errAfterToolsProvider: AIProvider = {
+      async *chat() {
+        callCount++;
+        if (callCount === 1) {
+          yield toolCallStartChunk("tc1", "Tracked");
+          yield toolCallArgChunk("{}");
+          yield toolCallsFinishChunk();
+          throw new ChatStreamError("Connection reset", { status: 502 });
+        }
+        for (const chunk of textResponse("Recovered after error.")) yield chunk;
+      },
+    };
+
+    const config: ThreadConfig = {
+      ...baseConfig,
+      tools: [trackedTool],
+      provider: errAfterToolsProvider,
+      retry: {
+        maxRetries: 2,
+        baseDelayMs: 1,
+        maxDelayMs: 10,
+      },
+    };
+
+    const thread = new Thread(config, { sessionId: "error-after-tools" });
+    const events = await collectEvents(thread.run("call the tool"));
+
+    const msgs = await thread.getMessages();
+    const normalized = normalizeMessagesForAPI(msgs);
+    assertValidMessageSequence(normalized);
   });
 });

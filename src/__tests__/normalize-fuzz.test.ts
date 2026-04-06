@@ -144,6 +144,41 @@ function generateRandomMessages(rng: SeededRng): ChatMessage[] {
         content: rng.bool(0.2) ? `Error: something failed` : `result ${i}`,
         ...(rng.bool(0.15) ? { isError: true } : {}),
       } as ToolResultMessage);
+    } else if (roll < 0.84) {
+      // User message with images (for image validation fuzz)
+      const numImages = rng.int(1, 8);
+      const parts: ContentPart[] = [{ type: "text", text: `image msg ${i}` }];
+      for (let j = 0; j < numImages; j++) {
+        const oversized = rng.bool(0.1);
+        const invalidFormat = rng.bool(0.1);
+        parts.push({
+          type: "image",
+          data: oversized ? "x".repeat(6 * 1024 * 1024) : `base64data_${i}_${j}`,
+          media_type: invalidFormat
+            ? rng.pick(["image/bmp", "image/tiff", "application/pdf"])
+            : rng.pick(["image/png", "image/jpeg", "image/gif", "image/webp"]),
+        } as ContentPart);
+      }
+      messages.push({ role: "user", content: parts });
+    } else if (roll < 0.87) {
+      // Displaced tool result: insert a user message between assistant and its tool results
+      const lastAsst = [...messages].reverse().find(
+        (m) => m.role === "assistant" && (m as AssistantMessage).tool_calls?.length,
+      );
+      if (lastAsst) {
+        messages.push({ role: "user", content: `wedge ${i}` });
+        const tc = (lastAsst as AssistantMessage).tool_calls![0];
+        if (!emittedToolResultIds.includes(tc.id)) {
+          emittedToolResultIds.push(tc.id);
+          messages.push({
+            role: "tool",
+            tool_call_id: tc.id,
+            content: `displaced result ${i}`,
+          } as ToolResultMessage);
+        }
+      } else {
+        messages.push({ role: "user", content: `filler ${i}` });
+      }
     } else if (roll < 0.90) {
       const prev = messages[messages.length - 1];
       if (prev) {
@@ -182,6 +217,8 @@ function generateRandomMessages(rng: SeededRng): ChatMessage[] {
  * Wraps the shared `assertValidMessageSequence` with vitest assertions
  * and adds the idempotency check specific to fuzz testing.
  */
+const MAX_IMAGES_PER_REQUEST = 20;
+
 function assertNormalizationInvariants(
   result: ChatMessage[],
   label: string,
@@ -196,6 +233,45 @@ function assertNormalizationInvariants(
   // Idempotency: normalizing again should produce identical output
   const second = normalizeMessagesForAPI(result);
   expect(second, `${label}: not idempotent`).toEqual(result);
+
+  // No _turnId on output messages
+  for (const msg of result) {
+    if (msg.role === "assistant") {
+      expect(
+        (msg as AssistantMessage)._turnId,
+        `${label}: _turnId not stripped`,
+      ).toBeUndefined();
+    }
+  }
+
+  // No _meta in tool args
+  for (const msg of result) {
+    if (msg.role === "assistant" && (msg as AssistantMessage).tool_calls) {
+      for (const tc of (msg as AssistantMessage).tool_calls!) {
+        try {
+          const args = JSON.parse(tc.function.arguments);
+          expect(args._meta, `${label}: _meta not stripped from tool args`).toBeUndefined();
+        } catch {
+          // Malformed JSON — not our concern here
+        }
+      }
+    }
+  }
+
+  // Image count per user message <= cap
+  let totalImages = 0;
+  for (const msg of result) {
+    if (msg.role === "assistant") continue;
+    const content = (msg as { content: string | ContentPart[] }).content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if ((part as ContentPart).type === "image") totalImages++;
+    }
+  }
+  expect(
+    totalImages,
+    `${label}: too many images (${totalImages} > ${MAX_IMAGES_PER_REQUEST})`,
+  ).toBeLessThanOrEqual(MAX_IMAGES_PER_REQUEST);
 }
 
 // ---------------------------------------------------------------------------
@@ -203,7 +279,7 @@ function assertNormalizationInvariants(
 // ---------------------------------------------------------------------------
 
 const SEEDS = [42, 137, 2025, 9999, 31337, 65536, 777, 12345, 99999, 314159];
-const ITERATIONS_PER_SEED = 200;
+const ITERATIONS_PER_SEED = 500;
 
 describe("normalizeMessagesForAPI — fuzz", () => {
   for (const seed of SEEDS) {

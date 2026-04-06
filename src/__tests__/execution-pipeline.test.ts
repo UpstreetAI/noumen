@@ -369,4 +369,204 @@ describe("executeToolCall", () => {
     expect(result.parsedArgs).toEqual({ modified: true });
     expect(result.parsedArgs).not.toHaveProperty("original");
   });
+
+  // --- validateInput rejects ---
+
+  it("returns error when validateInput rejects", async () => {
+    const callSpy = vi.fn(async () => ({ content: "should not run" }));
+    const tool = makeTool({
+      name: "Validated",
+      validateInput: async (args) => {
+        if (!args.file_path) return "file_path is required";
+        return undefined;
+      },
+      call: callSpy,
+    });
+    const ctx = makeCtx({ registry: makeRegistry([tool]) });
+
+    const result = await executeToolCall(
+      makeTc("Validated"),
+      {},
+      ctx,
+    );
+
+    expect(result.result.isError).toBe(true);
+    expect(result.result.content).toContain("file_path is required");
+    expect(callSpy).not.toHaveBeenCalled();
+  });
+
+  // --- Allow with updatedInput from resolvePermission ---
+
+  it("uses updatedInput from resolvePermission allow decision", async () => {
+    const callSpy = vi.fn(async (args: Record<string, unknown>) => ({
+      content: `ran with ${args.command}`,
+    }));
+    const tool = makeTool({ call: callSpy });
+
+    mockResolvePermission.mockResolvedValue({
+      behavior: "allow",
+      updatedInput: { command: "sanitized" },
+    });
+
+    const permCtx: PermissionContext = {
+      mode: "default",
+      rules: [],
+      workingDirectories: ["/test"],
+    };
+    const ctx = makeCtx({
+      registry: makeRegistry([tool]),
+      permCtx,
+    });
+
+    const result = await executeToolCall(
+      makeTc("TestTool"),
+      { command: "dangerous" },
+      ctx,
+    );
+
+    expect(result.result.isError).toBeFalsy();
+    expect(callSpy).toHaveBeenCalledWith(
+      { command: "sanitized" },
+      expect.anything(),
+    );
+    expect(result.events.some((e: StreamEvent) => e.type === "permission_granted")).toBe(true);
+  });
+
+  // --- Classifier deny skips DenialTracker ---
+
+  it("does not record denial for classifier reason", async () => {
+    mockResolvePermission.mockResolvedValue({
+      behavior: "deny",
+      message: "Classified as dangerous",
+      reason: "classifier",
+    });
+
+    const tracker = new DenialTracker({ maxConsecutive: 10, maxTotal: 100 });
+    const permCtx: PermissionContext = {
+      mode: "default",
+      rules: [],
+      workingDirectories: ["/test"],
+    };
+    const ctx = makeCtx({
+      permCtx,
+      denialTracker: tracker,
+    });
+
+    await executeToolCall(makeTc("TestTool"), {}, ctx);
+
+    expect(tracker.getState().consecutiveDenials).toBe(0);
+    expect(tracker.getState().totalDenials).toBe(0);
+  });
+
+  // --- Denial limit exceeded + preventContinuation ---
+
+  it("emits denial_limit_exceeded and sets preventContinuation on threshold", async () => {
+    mockResolvePermission.mockResolvedValue({
+      behavior: "deny",
+      message: "Not allowed",
+      reason: "rule",
+    });
+
+    const tracker = new DenialTracker({ maxConsecutive: 2, maxTotal: 100 });
+    const permCtx: PermissionContext = {
+      mode: "default",
+      rules: [],
+      workingDirectories: ["/test"],
+    };
+    const ctx = makeCtx({
+      permCtx,
+      denialTracker: tracker,
+    });
+
+    // First denial — not yet at limit
+    await executeToolCall(makeTc("TestTool", "tc_1"), {}, ctx);
+    expect(tracker.getState().consecutiveDenials).toBe(1);
+
+    // Second denial — hits the limit
+    const result = await executeToolCall(makeTc("TestTool", "tc_2"), {}, ctx);
+
+    expect(result.preventContinuation).toBe(true);
+    const limitEvent = result.events.find((e: StreamEvent) => e.type === "denial_limit_exceeded");
+    expect(limitEvent).toBeDefined();
+  });
+
+  // --- PreToolUse sets preventContinuation ---
+
+  it("PreToolUse hook can set preventContinuation", async () => {
+    const hooks: HookDefinition[] = [
+      {
+        event: "PreToolUse",
+        handler: async () => ({
+          preventContinuation: true,
+        }),
+      },
+    ];
+    const ctx = makeCtx({ hooks });
+
+    const result = await executeToolCall(makeTc("TestTool"), {}, ctx);
+
+    expect(result.preventContinuation).toBe(true);
+    expect(result.result.isError).toBeFalsy();
+  });
+
+  // --- PostToolUse sets preventContinuation ---
+
+  it("PostToolUse hook can set preventContinuation", async () => {
+    const hooks: HookDefinition[] = [
+      {
+        event: "PostToolUse",
+        handler: async () => ({
+          preventContinuation: true,
+        }),
+      },
+    ];
+    const ctx = makeCtx({ hooks });
+
+    const result = await executeToolCall(makeTc("TestTool"), {}, ctx);
+
+    expect(result.preventContinuation).toBe(true);
+  });
+
+  // --- PostToolUseFailure replaces output on caught error ---
+
+  it("PostToolUseFailure hook replaces output when tool throws", async () => {
+    const tool = makeTool({
+      call: async () => { throw new Error("boom"); },
+    });
+    const hooks: HookDefinition[] = [
+      {
+        event: "PostToolUseFailure",
+        handler: async () => ({
+          updatedOutput: "gracefully handled error",
+        }),
+      },
+    ];
+    const ctx = makeCtx({ registry: makeRegistry([tool]), hooks });
+
+    const result = await executeToolCall(makeTc("TestTool"), {}, ctx);
+
+    expect(result.result.isError).toBe(true);
+    expect(result.result.content).toBe("gracefully handled error");
+  });
+
+  // --- Hook throw in catch path is swallowed ---
+
+  it("swallows PostToolUseFailure hook errors in catch path", async () => {
+    const tool = makeTool({
+      call: async () => { throw new Error("original error"); },
+    });
+    const hooks: HookDefinition[] = [
+      {
+        event: "PostToolUseFailure",
+        handler: async () => { throw new Error("hook explosion"); },
+      },
+    ];
+    const ctx = makeCtx({ registry: makeRegistry([tool]), hooks });
+
+    const result = await executeToolCall(makeTc("TestTool"), {}, ctx);
+
+    expect(result.result.isError).toBe(true);
+    expect(result.result.content).toContain("original error");
+    expect(result.result.content).not.toContain("hook explosion");
+  });
 });

@@ -469,6 +469,207 @@ describe("StreamingToolExecutor re-entrance guard", () => {
     expect(executionCounts.get("u3")).toBe(1);
   });
 
+  it("two safe tools both erroring do not trigger sibling abort", async () => {
+    const { StreamingToolExecutor } = await import("../tools/streaming-executor.js");
+
+    const executor = new StreamingToolExecutor(
+      () => ({ name: "ReadFile", description: "", parameters: { type: "object", properties: {} }, isConcurrencySafe: true, call: async () => ({ content: "" }) } as any),
+      async (toolCall) => {
+        throw new Error(`${toolCall.id} failed`);
+      },
+    );
+
+    executor.addTool({ id: "a", type: "function" as const, function: { name: "ReadFile", arguments: '{}' } }, {});
+    executor.addTool({ id: "b", type: "function" as const, function: { name: "ReadFile", arguments: '{}' } }, {});
+
+    const results: any[] = [];
+    for await (const r of executor.getRemainingResults()) {
+      results.push(r);
+    }
+
+    expect(results).toHaveLength(2);
+    expect(results[0].result.isError).toBe(true);
+    expect(results[1].result.isError).toBe(true);
+    expect(results[0].result.content).toContain("a failed");
+    expect(results[1].result.content).toContain("b failed");
+  });
+
+  it("addTool after discard produces immediate error result", async () => {
+    const { StreamingToolExecutor } = await import("../tools/streaming-executor.js");
+
+    const executor = new StreamingToolExecutor(
+      () => ({ name: "T", description: "", parameters: { type: "object", properties: {} }, isConcurrencySafe: true, call: async () => ({ content: "" }) } as any),
+      async () => ({ result: { content: "ok" }, events: [] }),
+    );
+
+    executor.discard();
+
+    executor.addTool(
+      { id: "late", type: "function" as const, function: { name: "T", arguments: '{}' } },
+      {},
+    );
+
+    const results: any[] = [];
+    for await (const r of executor.getRemainingResults()) {
+      results.push(r);
+    }
+
+    expect(results).toHaveLength(1);
+    expect(results[0].toolCall.id).toBe("late");
+    expect(results[0].result.isError).toBe(true);
+    expect(results[0].result.content).toContain("discarded");
+  });
+
+  it("Bash throw triggers sibling abort (catch branch)", async () => {
+    const { StreamingToolExecutor } = await import("../tools/streaming-executor.js");
+
+    let siblingAborted = false;
+    const executor = new StreamingToolExecutor(
+      (name) => ({ name, description: "", parameters: { type: "object", properties: {} }, isConcurrencySafe: true, call: async () => ({ content: "" }) } as any),
+      async (toolCall, _args, signal) => {
+        if (toolCall.function.name === "Bash") {
+          throw new Error("bash command failed hard");
+        }
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(() => resolve(), 500);
+          signal?.addEventListener("abort", () => {
+            clearTimeout(timer);
+            siblingAborted = true;
+            resolve();
+          });
+        });
+        return { result: { content: "sibling done" }, events: [] };
+      },
+    );
+
+    executor.addTool(
+      { id: "b1", type: "function" as const, function: { name: "Bash", arguments: '{}' } },
+      {},
+    );
+    executor.addTool(
+      { id: "s1", type: "function" as const, function: { name: "ReadFile", arguments: '{}' } },
+      {},
+    );
+
+    const results: any[] = [];
+    for await (const r of executor.getRemainingResults()) {
+      results.push(r);
+    }
+
+    expect(results).toHaveLength(2);
+    const bashResult = results.find((r: any) => r.toolCall.id === "b1");
+    expect(bashResult.result.isError).toBe(true);
+    expect(bashResult.result.content).toContain("bash command failed hard");
+  });
+
+  it("resolveToolFlag throw treats tool as unsafe (serial)", async () => {
+    const { StreamingToolExecutor } = await import("../tools/streaming-executor.js");
+
+    const executionOrder: string[] = [];
+    const executor = new StreamingToolExecutor(
+      () => ({
+        name: "T",
+        description: "",
+        parameters: { type: "object", properties: {} },
+        isConcurrencySafe: () => { throw new Error("predicate boom"); },
+        call: async () => ({ content: "" }),
+      } as any),
+      async (tc) => {
+        executionOrder.push(tc.id);
+        await new Promise((r) => setTimeout(r, 10));
+        return { result: { content: `done-${tc.id}` }, events: [] };
+      },
+    );
+
+    executor.addTool({ id: "x1", type: "function" as const, function: { name: "T", arguments: '{}' } }, {});
+    executor.addTool({ id: "x2", type: "function" as const, function: { name: "T", arguments: '{}' } }, {});
+
+    const results: any[] = [];
+    for await (const r of executor.getRemainingResults()) {
+      results.push(r);
+    }
+
+    expect(results).toHaveLength(2);
+    expect(executionOrder).toEqual(["x1", "x2"]);
+  });
+
+  it("2 safe + 1 unsafe: unsafe waits, results in original order", async () => {
+    const { StreamingToolExecutor } = await import("../tools/streaming-executor.js");
+
+    const executionOrder: string[] = [];
+    const toolDefs = new Map<string, any>([
+      ["Safe", { name: "Safe", description: "", parameters: { type: "object", properties: {} }, isConcurrencySafe: true, call: async () => ({ content: "" }) }],
+      ["Unsafe", { name: "Unsafe", description: "", parameters: { type: "object", properties: {} }, isConcurrencySafe: false, call: async () => ({ content: "" }) }],
+    ]);
+
+    const executor = new StreamingToolExecutor(
+      (name) => toolDefs.get(name),
+      async (tc) => {
+        executionOrder.push(tc.id);
+        await new Promise((r) => setTimeout(r, 10));
+        return { result: { content: `done-${tc.id}` }, events: [] };
+      },
+    );
+
+    executor.addTool({ id: "s1", type: "function" as const, function: { name: "Safe", arguments: '{}' } }, {});
+    executor.addTool({ id: "s2", type: "function" as const, function: { name: "Safe", arguments: '{}' } }, {});
+    executor.addTool({ id: "u1", type: "function" as const, function: { name: "Unsafe", arguments: '{}' } }, {});
+
+    const results: any[] = [];
+    for await (const r of executor.getRemainingResults()) {
+      results.push(r);
+    }
+
+    expect(results).toHaveLength(3);
+    expect(results.map((r: any) => r.toolCall.id)).toEqual(["s1", "s2", "u1"]);
+
+    // Unsafe should have executed after safe ones
+    const unsafeIdx = executionOrder.indexOf("u1");
+    expect(unsafeIdx).toBeGreaterThanOrEqual(2);
+  });
+
+  it("parent abort mid-batch: completed tool clean, rest get errors", async () => {
+    const { StreamingToolExecutor } = await import("../tools/streaming-executor.js");
+    const ac = new AbortController();
+
+    let fastDone = false;
+    const executor = new StreamingToolExecutor(
+      () => ({ name: "T", description: "", parameters: { type: "object", properties: {} }, isConcurrencySafe: true, call: async () => ({ content: "" }) } as any),
+      async (tc, _args, signal) => {
+        if (tc.id === "fast") {
+          fastDone = true;
+          return { result: { content: "fast-result" }, events: [] };
+        }
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(() => resolve(), 5000);
+          signal?.addEventListener("abort", () => { clearTimeout(timer); resolve(); });
+        });
+        return { result: { content: "slow-result" }, events: [] };
+      },
+      ac.signal,
+    );
+
+    executor.addTool({ id: "fast", type: "function" as const, function: { name: "T", arguments: '{}' } }, {});
+    executor.addTool({ id: "slow1", type: "function" as const, function: { name: "T", arguments: '{}' } }, {});
+    executor.addTool({ id: "slow2", type: "function" as const, function: { name: "T", arguments: '{}' } }, {});
+
+    await new Promise((r) => setTimeout(r, 30));
+    expect(fastDone).toBe(true);
+    ac.abort();
+
+    executor.discard();
+    const results: any[] = [];
+    for await (const r of executor.getRemainingResults()) {
+      results.push(r);
+    }
+
+    expect(results.length).toBeGreaterThanOrEqual(1);
+    const fastResult = results.find((r: any) => r.toolCall.id === "fast");
+    expect(fastResult).toBeDefined();
+    expect(fastResult.result.content).toBe("fast-result");
+    expect(fastResult.result.isError).toBeFalsy();
+  });
+
   it("getCompletedResults returns finished tools before discard", async () => {
     let resolveSecond!: () => void;
     const secondStarted = new Promise<void>((r) => { resolveSecond = r; });
