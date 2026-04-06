@@ -1456,7 +1456,7 @@ describe("allow rule does not bypass working directory", () => {
     const permCtx = makeContext({
       mode: "default",
       rules: [
-        { tool: "WriteFile", behavior: "allow" as const },
+        { toolName: "WriteFile", behavior: "allow" as const },
       ],
       workingDirectories: ["/project"],
     });

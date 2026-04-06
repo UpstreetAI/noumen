@@ -923,18 +923,6 @@ describe("Gemini empty assistant message", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Anthropic thinking budget clamp
-// ---------------------------------------------------------------------------
-describe("Anthropic thinking budget clamp", () => {
-  it("does not exceed model max_tokens", async () => {
-    const { buildStreamParams } = await import("../providers/anthropic-shared.js");
-    if (typeof buildStreamParams !== "function") {
-      return;
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
 // Bug fix: AbortSignal passed in request options, not body
 // ---------------------------------------------------------------------------
 describe("Anthropic abort signal wiring", () => {

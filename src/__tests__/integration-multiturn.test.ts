@@ -289,9 +289,8 @@ describe("Multi-turn integration tests", () => {
         provider: fallbackProvider,
         retry: {
           maxRetries: 2,
-          initialDelayMs: 10,
+          baseDelayMs: 10,
           maxDelayMs: 50,
-          backoffMultiplier: 1,
         },
       };
 

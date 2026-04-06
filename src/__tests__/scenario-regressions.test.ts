@@ -308,7 +308,7 @@ describe("scenario: denial tracking produces valid transcripts", () => {
       ...baseConfig,
       permissions: {
         mode: "default",
-        rules: [{ tool: "WriteFile", permission: "deny" }],
+        rules: [{ toolName: "WriteFile", behavior: "deny" }],
         workingDirectories: ["/"],
       },
     };

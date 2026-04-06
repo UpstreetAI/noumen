@@ -770,7 +770,7 @@ describe("Thread", () => {
 
       const budgetConfig: ThreadConfig = {
         ...config,
-        toolResultBudget: { enabled: true, maxCharsPerResult: 100, maxTotalChars: 500 },
+        toolResultBudget: { enabled: true, maxCharsPerResult: 100, maxCharsPerGroup: 500 },
       };
 
       const thread = new Thread(budgetConfig, { sessionId: "s1", resume: true });
@@ -1346,7 +1346,7 @@ describe("abort signal propagation to streaming executor", () => {
 
     // FastTool completed — its real result must be preserved, not dropped
     expect(fastResult).toBeDefined();
-    expect(fastResult.content).toBe("fast-result");
+    expect(fastResult!.content).toBe("fast-result");
 
     // SlowTool was still running — it should have a synthetic/error result
     expect(slowResult).toBeDefined();
@@ -1371,8 +1371,8 @@ describe("batched path preventContinuation", () => {
       hooks: [
         {
           event: "PostToolUse",
-          handler: async ({ toolName }) => {
-            if (toolName === "WriteFile") {
+          handler: async (input) => {
+            if (input.event === "PostToolUse" && input.toolName === "WriteFile") {
               return { preventContinuation: true };
             }
             return {};
@@ -1520,9 +1520,8 @@ describe("model switch clears accumulated state", () => {
       provider: switchProvider,
       retry: {
         maxRetries: 10,
-        initialDelayMs: 10,
+        baseDelayMs: 10,
         maxDelayMs: 50,
-        backoffMultiplier: 1,
         fallbackModel: "fallback-model",
         maxConsecutiveOverloaded: 3,
       },
@@ -1562,9 +1561,8 @@ describe("model switch clears accumulated state", () => {
       provider: retryProvider,
       retry: {
         maxRetries: 3,
-        initialDelayMs: 10,
+        baseDelayMs: 10,
         maxDelayMs: 50,
-        backoffMultiplier: 1,
       },
     };
 

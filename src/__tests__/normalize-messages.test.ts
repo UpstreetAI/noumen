@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { ChatMessage, AssistantMessage, ToolResultMessage } from "../session/types.js";
+import type { ChatMessage, AssistantMessage, ToolResultMessage, ContentPart } from "../session/types.js";
 import {
   normalizeMessagesForAPI,
   ensureToolResultPairing,
@@ -1296,7 +1296,7 @@ describe("normalizeMessagesForAPI — validateImagesForAPI", () => {
           { type: "text", text: "here is an image" },
           { type: "image", data: "x".repeat(6 * 1024 * 1024), media_type: "image/bmp" },
         ],
-      } as AssistantMessage,
+      } as unknown as AssistantMessage,
     ];
     const result = normalizeMessagesForAPI(messages);
     const asstContent = (result.find((m) => m.role === "assistant") as AssistantMessage).content;

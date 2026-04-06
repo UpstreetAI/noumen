@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { executeToolsStep, type SpillFn } from "../pipeline/execute-tools-step.js";
-import type { ToolCallContent, StreamEvent, ChatMessage } from "../session/types.js";
+import type { ToolCallContent, StreamEvent, ChatMessage, ToolResultMessage } from "../session/types.js";
 import type { Tool, ToolContext } from "../tools/types.js";
 import type { ToolExecutionContext } from "../tools/execution-pipeline.js";
 import type { StreamingExecResult } from "../tools/streaming-executor.js";
@@ -115,7 +115,7 @@ describe("executeToolsStep", () => {
 
       expect(messages).toHaveLength(1);
       expect(messages[0].role).toBe("tool");
-      expect(messages[0].tool_call_id).toBe("tc_stream_1");
+      expect((messages[0] as ToolResultMessage).tool_call_id).toBe("tc_stream_1");
     });
 
     it("includes pre-collected streaming results", async () => {
@@ -341,7 +341,7 @@ describe("executeToolsStep", () => {
         parsedArgs: {},
         result: { content: "Permission denied" },
         permissionDenied: true,
-        events: [{ type: "permission_denied", toolName: "TestTool", toolUseId: "tc_denied" } as StreamEvent],
+        events: [{ type: "permission_denied", toolName: "TestTool", input: {}, message: "denied" } as StreamEvent],
       };
 
       const executor = new StreamingToolExecutor(

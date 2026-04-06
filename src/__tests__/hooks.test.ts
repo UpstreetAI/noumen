@@ -346,7 +346,7 @@ describe("runPostToolUseFailureHooks blocking error handling", () => {
       sessionId: "s1",
       toolInput: {},
       toolOutput: "error output",
-      error: "tool failed",
+      errorMessage: "tool failed",
     });
 
     expect(result.preventContinuation).toBe(true);
@@ -368,7 +368,7 @@ describe("runPostToolUseFailureHooks blocking error handling", () => {
       sessionId: "s1",
       toolInput: {},
       toolOutput: "error output",
-      error: "tool failed",
+      errorMessage: "tool failed",
     });
 
     expect(result.preventContinuation).toBeUndefined();

@@ -369,30 +369,34 @@ describe("EditFile — checkpoint tracking on empty file", () => {
 // UNC path protection
 // ---------------------------------------------------------------------------
 describe("UNC path protection", () => {
-  it("EditFile rejects UNC paths via checkPermissions", () => {
-    const result = editFileTool.checkPermissions!(
+  it("EditFile rejects UNC paths via checkPermissions", async () => {
+    const result = await editFileTool.checkPermissions!(
       { file_path: "\\\\server\\share\\file.txt" },
       ctx,
     );
     expect(result.behavior).toBe("deny");
-    expect(result.message).toContain("UNC");
+    if (result.behavior === "deny") {
+      expect(result.message).toContain("UNC");
+    }
   });
 
-  it("EditFile rejects forward-slash UNC paths", () => {
-    const result = editFileTool.checkPermissions!(
+  it("EditFile rejects forward-slash UNC paths", async () => {
+    const result = await editFileTool.checkPermissions!(
       { file_path: "//server/share/file.txt" },
       ctx,
     );
     expect(result.behavior).toBe("deny");
   });
 
-  it("WriteFile rejects UNC paths via checkPermissions", () => {
-    const result = writeFileTool.checkPermissions!(
+  it("WriteFile rejects UNC paths via checkPermissions", async () => {
+    const result = await writeFileTool.checkPermissions!(
       { file_path: "\\\\server\\share\\file.txt" },
       ctx,
     );
     expect(result.behavior).toBe("deny");
-    expect(result.message).toContain("UNC");
+    if (result.behavior === "deny") {
+      expect(result.message).toContain("UNC");
+    }
   });
 
   it("ReadFile rejects UNC paths in call", async () => {
