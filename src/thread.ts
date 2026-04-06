@@ -37,8 +37,6 @@ import { sortToolDefinitionsForCache } from "./providers/cache.js";
 import { saveCacheSafeParams, createCacheSafeParams } from "./providers/cache-safe-params.js";
 import { restoreSession } from "./session/resume.js";
 import { generateMissingToolResults } from "./session/recovery.js";
-import { normalizeMessagesForAPI } from "./messages/normalize.js";
-import { assertValidMessageSequence } from "./messages/invariants.js";
 import {
   runNotificationHooks,
 } from "./hooks/runner.js";
@@ -57,20 +55,15 @@ import { buildSystemPrompt } from "./prompt/system.js";
 import { compactConversation } from "./compact/compact.js";
 import {
   createAutoCompactConfig,
-  shouldAutoCompact,
-  canAutoCompact,
   recordAutoCompactSuccess,
-  recordAutoCompactFailure,
   createAutoCompactTracking,
   type AutoCompactConfig,
   type AutoCompactTrackingState,
 } from "./compact/auto-compact.js";
 import {
-  microcompactMessages,
   type MicrocompactConfig,
 } from "./compact/microcompact.js";
 import {
-  enforceToolResultBudget,
   createBudgetState,
   type ToolResultBudgetConfig,
   type BudgetState,
@@ -88,6 +81,8 @@ import {
   tryReactiveCompact,
   type ReactiveCompactConfig,
 } from "./compact/reactive-compact.js";
+import { prepareMessagesForApi } from "./pipeline/prepare-messages.js";
+import { tryAutoCompactStep } from "./pipeline/auto-compact-step.js";
 import type { SnipConfig } from "./compact/history-snip.js";
 import { FileStateCache } from "./file-state/cache.js";
 import type { FileStateCacheConfig } from "./file-state/types.js";
@@ -471,130 +466,57 @@ export class Thread {
       this.hasAttemptedReactiveCompact = false;
 
       while (!signal.aborted) {
-        // --- Pre-call compaction pipeline ---
-        // Disk spill and microcompact permanently mutate canonical
-        // this.messages. Budget creates a separate snapshot. After all
-        // three stages, messagesForApi reflects the union of all savings
-        // so the current API call benefits immediately.
-
-        // Aggregate disk-based spill runs on canonical history every turn,
-        // replacing oversized results with stubs. This is safe because disk
-        // spill is idempotent (already-replaced results are skipped via state).
-        if (this.config.toolResultStorage?.enabled && this.config.fs) {
-          const storageResult = await enforceToolResultStorageBudget(
-            this.messages,
-            this.config.toolResultStorage,
-            this.config.fs,
-            this.sessionId,
-            this.contentReplacementState,
-          );
-          if (storageResult.tokensFreed > 0) {
-            this.messages = storageResult.messages;
-            this.contentReplacementState = storageResult.state;
-            this.microcompactTokensFreed += storageResult.tokensFreed;
-          }
-        }
-
-        if (this.config.microcompact?.enabled) {
-          const mcResult = microcompactMessages(this.messages, this.config.microcompact);
-          if (mcResult.tokensFreed > 0) {
-            this.messages = mcResult.messages;
-            this.microcompactTokensFreed += mcResult.tokensFreed;
-            yield { type: "microcompact_complete", tokensFreed: mcResult.tokensFreed };
-          }
-        }
-
-        // Apply budget to a snapshot so the canonical this.messages is not mutated.
-        // Runs after microcompact so the budget sees already-cleared results.
-        let messagesForApi: ChatMessage[] = this.messages;
-        if (this.config.toolResultBudget?.enabled) {
-          const budgetResult = enforceToolResultBudget(
-            [...this.messages],
-            this.config.toolResultBudget,
-            this.budgetState,
-          );
-          messagesForApi = budgetResult.messages;
-          this.budgetState = budgetResult.state;
-          this.microcompactTokensFreed += budgetResult.tokensFreed;
-          for (const entry of budgetResult.truncatedEntries) {
-            yield {
-              type: "tool_result_truncated",
-              toolCallId: entry.toolCallId,
-              originalChars: entry.originalChars,
-              truncatedChars: entry.truncatedChars,
-            };
-          }
-        }
-
-        // Normalize the snapshot for API: dedup tool IDs, fix orphans,
-        // ensure pairing, merge same-role, guarantee valid structure.
-        messagesForApi = normalizeMessagesForAPI(messagesForApi);
-
-        if (this.config.debug) {
-          assertValidMessageSequence(messagesForApi);
-        }
+        // --- Pre-call compaction pipeline (disk spill, microcompact, budget, normalize) ---
+        const prepResult = await prepareMessagesForApi(this.messages, {
+          toolResultStorage: this.config.toolResultStorage,
+          microcompact: this.config.microcompact,
+          toolResultBudget: this.config.toolResultBudget,
+          fs: this.config.fs,
+          sessionId: this.sessionId,
+          debug: this.config.debug,
+        }, {
+          contentReplacementState: this.contentReplacementState,
+          budgetState: this.budgetState,
+          microcompactTokensFreed: this.microcompactTokensFreed,
+        });
+        this.messages = prepResult.canonicalMessages;
+        this.contentReplacementState = prepResult.state.contentReplacementState;
+        this.budgetState = prepResult.state.budgetState;
+        this.microcompactTokensFreed = prepResult.state.microcompactTokensFreed;
+        let messagesForApi = prepResult.messagesForApi;
+        for (const evt of prepResult.events) yield evt;
 
         // --- Proactive auto-compact (inside loop, before each API call) ---
         const loopAutoCompactConfig =
           this.config.autoCompact ?? createAutoCompactConfig({ model: this.model });
-        if (
-          canAutoCompact(this.autoCompactTracking) &&
-          shouldAutoCompact(
-            this.messages,
-            loopAutoCompactConfig,
-            this.lastUsage,
-            this.anchorMessageIndex,
-            this.microcompactTokensFreed,
-            this.querySource,
-          )
-        ) {
-          await runNotificationHooks(hooks, "PreCompact", {
-            event: "PreCompact",
-            sessionId: this.sessionId,
-          });
-          yield { type: "compact_start" };
-          try {
-            this.messages = await compactConversation(
-              this.config.provider,
-              this.model,
-              this.messages,
-              this.storage,
-              this.sessionId,
-              {
-                tailMessagesToKeep: loopAutoCompactConfig.tailMessagesToKeep,
-                stripBinaryContent: true,
-                signal,
-                recentlyReadFiles: this.recentlyReadFiles.size > 0 ? this.recentlyReadFiles : undefined,
-              },
-            );
-            this.recentlyReadFiles.clear();
-            this.lastUsage = undefined;
-            this.anchorMessageIndex = undefined;
-            this.microcompactTokensFreed = 0;
-            this.budgetState = createBudgetState();
-            this.contentReplacementState = createContentReplacementState();
-            this.fileStateCache?.clear();
-            this.denialTracker?.reset();
-            recordAutoCompactSuccess(this.autoCompactTracking);
-            yield { type: "compact_complete" };
-            await runNotificationHooks(hooks, "PostCompact", {
-              event: "PostCompact",
-              sessionId: this.sessionId,
-            });
-            continue;
-          } catch (compactErr) {
-            recordAutoCompactFailure(this.autoCompactTracking);
-            const error = compactErr instanceof Error
-              ? compactErr
-              : new Error(`Compaction failed: ${String(compactErr)}`);
-            await runNotificationHooks(hooks, "Error", {
-              event: "Error",
-              sessionId: this.sessionId,
-              error,
-            });
-            yield { type: "auto_compact_failed", error };
-            continue; // retry via circuit breaker, don't call provider with oversized context
-          }
+        const compactStep = await tryAutoCompactStep(
+          this.messages, loopAutoCompactConfig, this.config.provider, this.model,
+          {
+            lastUsage: this.lastUsage,
+            anchorMessageIndex: this.anchorMessageIndex,
+            microcompactTokensFreed: this.microcompactTokensFreed,
+            querySource: this.querySource,
+            autoCompactTracking: this.autoCompactTracking,
+            recentlyReadFiles: this.recentlyReadFiles,
+            signal,
+          },
+          hooks, this.sessionId, this.storage,
+        );
+        for (const evt of compactStep.events) yield evt;
+        if (compactStep.compacted) {
+          this.messages = compactStep.messages!;
+          this.recentlyReadFiles.clear();
+          this.lastUsage = undefined;
+          this.anchorMessageIndex = undefined;
+          this.microcompactTokensFreed = 0;
+          this.budgetState = createBudgetState();
+          this.contentReplacementState = createContentReplacementState();
+          this.fileStateCache?.clear();
+          this.denialTracker?.reset();
+          continue;
+        }
+        if (compactStep.events.length > 0 && !compactStep.compacted) {
+          continue;
         }
 
         // --- TurnStart notification ---
