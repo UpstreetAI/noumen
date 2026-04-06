@@ -233,6 +233,60 @@ describe("Thread", () => {
       expect(compactStart).toBeDefined();
       expect(compactComplete).toBeDefined();
     });
+
+    it("retries compaction via circuit breaker instead of calling provider with oversized context", async () => {
+      // Use a long prompt so token estimate exceeds threshold before compact,
+      // but falls below it after a short summary replaces the history.
+      const longPrompt = "x".repeat(800); // ~200 tokens
+      let compactCallIdx = 0;
+      const callContexts: string[] = [];
+      const compactProvider: AIProvider = {
+        async *chat(params: ChatParams) {
+          const isCompactCall = params.system?.includes("summariz");
+          callContexts.push(isCompactCall ? "compact" : "regular");
+          if (isCompactCall) {
+            compactCallIdx++;
+            if (compactCallIdx === 1) {
+              throw new Error("Simulated compact failure");
+            }
+            // Short summary so post-compact token count drops below threshold
+            for (const chunk of textResponse("ok")) yield chunk;
+            return;
+          }
+          for (const chunk of textResponse("Final reply.")) yield chunk;
+        },
+      };
+
+      const autoConfig: ThreadConfig = {
+        ...config,
+        provider: compactProvider,
+        autoCompact: createAutoCompactConfig({
+          enabled: true,
+          threshold: 100, // 800 chars / 4 ≈ 200 tokens > 100; post-compact ≈ 10 < 100
+        }),
+      };
+
+      const thread = new Thread(autoConfig, { sessionId: "compact-retry" });
+      const events = await collectEvents(thread.run(longPrompt));
+
+      const compactStarts = events.filter((e) => e.type === "compact_start");
+      const compactFailed = events.filter((e) => e.type === "auto_compact_failed");
+      const compactComplete = events.filter((e) => e.type === "compact_complete");
+
+      // First compact attempt failed, retried, succeeded
+      expect(compactFailed).toHaveLength(1);
+      expect(compactComplete.length).toBeGreaterThanOrEqual(1);
+      expect(compactStarts.length).toBeGreaterThanOrEqual(2);
+
+      // Both initial provider calls must be compact calls — the failed compact
+      // must NOT have fallen through to a regular API call with oversized context
+      expect(callContexts[0]).toBe("compact");
+      expect(callContexts[1]).toBe("compact");
+
+      // Eventually a regular response is produced
+      const turnComplete = events.find((e) => e.type === "turn_complete");
+      expect(turnComplete).toBeDefined();
+    });
   });
 
   describe("usage tracking", () => {

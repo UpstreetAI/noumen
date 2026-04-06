@@ -541,6 +541,7 @@ export class Thread {
               error,
             });
             yield { type: "auto_compact_failed", error };
+            continue; // retry via circuit breaker, don't call provider with oversized context
           }
         }
 
