@@ -28,7 +28,10 @@ type CacheControlBlock = {
 
 export interface AnthropicStreamClient {
   messages: {
-    stream(params: Record<string, unknown>): AsyncIterable<Record<string, unknown>>;
+    stream(
+      params: Record<string, unknown>,
+      options?: { signal?: AbortSignal },
+    ): AsyncIterable<Record<string, unknown>>;
   };
 }
 
@@ -336,13 +339,14 @@ export async function* streamAnthropicChat(
     }
   }
 
-  if (params.signal) {
-    streamParams.signal = params.signal;
-  }
+  const requestSignal = params.signal;
 
   let stream: AsyncIterable<Record<string, unknown>>;
   try {
-    stream = client.messages.stream(streamParams);
+    stream = client.messages.stream(
+      streamParams,
+      requestSignal ? { signal: requestSignal } : undefined,
+    );
   } catch (err: unknown) {
     const apiErr = err as { status?: number; headers?: Record<string, string> & { get?(k: string): string | null } };
     throw new ChatStreamError(

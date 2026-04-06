@@ -221,3 +221,120 @@ describe("SpritesSandbox", () => {
     expect(sandbox.computer).toBeInstanceOf(SpritesComputer);
   });
 });
+
+// ---------------------------------------------------------------------------
+// dispose() awaits in-flight init() — Bug 5 regression tests
+// ---------------------------------------------------------------------------
+describe("Sandbox dispose-during-init race", () => {
+  it("DockerSandbox dispose awaits init before cleanup", async () => {
+    const { DockerSandbox } = await import("../virtual/sandbox.js");
+    let containerStarted = false;
+    let containerStopped = false;
+    let containerRemoved = false;
+
+    const fakeDocker = {
+      createContainer: async () => {
+        await new Promise((r) => setTimeout(r, 50));
+        containerStarted = true;
+        return {
+          id: "test-container-id",
+          start: async () => {},
+          stop: async () => { containerStopped = true; },
+          remove: async () => { containerRemoved = true; },
+          putArchive: async () => {},
+          exec: async () => ({ start: async () => ({ output: { on: () => {} } }) }),
+        };
+      },
+      getContainer: () => { throw new Error("should not be called"); },
+    };
+
+    const mockDockerode = { default: class { constructor() { return fakeDocker; } } };
+    const { vi } = await import("vitest");
+    vi.doMock("dockerode", () => mockDockerode);
+
+    const sandbox = DockerSandbox({ image: "ubuntu:22.04" });
+
+    const initPromise = sandbox.init!();
+    await new Promise((r) => setTimeout(r, 10));
+    await sandbox.dispose!();
+
+    await initPromise.catch(() => {});
+
+    expect(containerStarted).toBe(true);
+    expect(containerStopped).toBe(true);
+    expect(containerRemoved).toBe(true);
+
+    vi.doUnmock("dockerode");
+  });
+
+  it("E2BSandbox dispose awaits init before cleanup", async () => {
+    const { E2BSandbox } = await import("../virtual/sandbox.js");
+    let sandboxCreated = false;
+    let sandboxKilled = false;
+
+    const { vi } = await import("vitest");
+    vi.doMock("e2b", () => ({
+      Sandbox: {
+        create: async () => {
+          await new Promise((r) => setTimeout(r, 50));
+          sandboxCreated = true;
+          return {
+            sandboxId: "test-sandbox-id",
+            kill: async () => { sandboxKilled = true; },
+            filesystem: { read: async () => "", write: async () => {}, list: async () => [] },
+            process: { start: async () => ({ exitCode: 0, stdout: "", stderr: "" }) },
+          };
+        },
+        connect: async () => { throw new Error("should not connect"); },
+      },
+    }));
+
+    const sandbox = E2BSandbox({ template: "base" });
+
+    const initPromise = sandbox.init!();
+    await new Promise((r) => setTimeout(r, 10));
+    await sandbox.dispose!();
+
+    await initPromise.catch(() => {});
+
+    expect(sandboxCreated).toBe(true);
+    expect(sandboxKilled).toBe(true);
+
+    vi.doUnmock("e2b");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sandbox reconnect validates remote resource — Bug 11 regression tests
+// ---------------------------------------------------------------------------
+describe("Sandbox reconnect validation", () => {
+  it("SpritesSandbox reconnect validates sprite exists", async () => {
+    const { vi } = await import("vitest");
+    let fetchCalls: string[] = [];
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = typeof url === "string" ? url : url.toString();
+      fetchCalls.push(`${init?.method ?? "GET"} ${urlStr}`);
+
+      if (urlStr.includes("/v1/sprites/existing-sprite") && init?.method === "GET") {
+        return new Response(JSON.stringify({ name: "existing-sprite" }), { status: 200 });
+      }
+      if (urlStr.includes("/v1/sprites") && init?.method === "POST") {
+        return new Response(JSON.stringify({ name: "new-sprite" }), { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      const { SpritesSandbox } = await import("../virtual/sandbox.js");
+      const sandbox = SpritesSandbox({ token: "test-token" });
+      await sandbox.init!("existing-sprite");
+
+      const healthCheck = fetchCalls.find(c => c.includes("GET") && c.includes("existing-sprite"));
+      expect(healthCheck).toBeDefined();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

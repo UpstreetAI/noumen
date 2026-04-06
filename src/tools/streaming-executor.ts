@@ -55,6 +55,7 @@ export class StreamingToolExecutor {
   private discarded = false;
   private siblingAbortController: AbortController;
   private hasErrored = false;
+  private processingQueue = false;
 
   constructor(
     private readonly getTool: (name: string) => Tool | undefined,
@@ -136,16 +137,20 @@ export class StreamingToolExecutor {
   }
 
   private async processQueue(): Promise<void> {
-    if (this.discarded) return;
+    if (this.discarded || this.processingQueue) return;
+    this.processingQueue = true;
+    try {
+      for (const tool of this.tools) {
+        if (tool.status !== "queued") continue;
 
-    for (const tool of this.tools) {
-      if (tool.status !== "queued") continue;
-
-      if (this.canExecute(tool.isConcurrencySafe)) {
-        await this.executeTool(tool);
-      } else if (!tool.isConcurrencySafe) {
-        break;
+        if (this.canExecute(tool.isConcurrencySafe)) {
+          await this.executeTool(tool);
+        } else if (!tool.isConcurrencySafe) {
+          break;
+        }
       }
+    } finally {
+      this.processingQueue = false;
     }
   }
 

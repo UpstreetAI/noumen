@@ -56,6 +56,7 @@ export class BedrockAnthropicProvider implements AIProvider {
 
       const args: Record<string, unknown> = {
         awsRegion: opts.region ?? "us-east-1",
+        maxRetries: 0,
       };
       if (opts.baseURL) args.baseURL = opts.baseURL;
       if (opts.credentials) {

@@ -24,6 +24,7 @@ export class AnthropicProvider implements AIProvider {
     this.client = new Anthropic({
       apiKey: opts.apiKey,
       baseURL: opts.baseURL,
+      maxRetries: 0,
     });
     this.defaultModel = opts.model ?? "claude-opus-4.6";
     this.cacheConfig = opts.cacheControl;

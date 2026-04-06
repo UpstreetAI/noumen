@@ -20,6 +20,7 @@ import {
   containsShellExpansion,
 } from "../permissions/rules.js";
 import { resolvePermission, isDangerousPath } from "../permissions/pipeline.js";
+import { DenialTracker } from "../permissions/denial-tracking.js";
 import { resolveToolFlag } from "../tools/registry.js";
 import { readFileTool } from "../tools/read.js";
 import { writeFileTool } from "../tools/write.js";
@@ -1366,5 +1367,181 @@ describe("interactive tool guard in auto mode", () => {
     });
     expect(decision.behavior).toBe("ask");
     expect(decision.reason).toBe("interaction");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bug 7: Read-only tools must respect checkPermissions ask
+// ---------------------------------------------------------------------------
+describe("read-only tool checkPermissions ask override", () => {
+  it("does not auto-allow a read-only tool whose checkPermissions returns ask", async () => {
+    const tool: Tool = {
+      name: "WebFetch",
+      description: "test",
+      parameters: { type: "object", properties: {} },
+      isReadOnly: true,
+      async checkPermissions() {
+        return { behavior: "ask", message: "Confirm URL before fetching." };
+      },
+      async call() {
+        return { content: "ok" };
+      },
+    };
+    const permCtx = makeContext({ mode: "default" });
+    const decision = await resolvePermission(tool, { url: "https://evil.com" }, ctx, permCtx);
+    expect(decision.behavior).toBe("ask");
+  });
+
+  it("auto-allows a read-only tool whose checkPermissions returns allow", async () => {
+    const tool: Tool = {
+      name: "ReadFile",
+      description: "test",
+      parameters: { type: "object", properties: {} },
+      isReadOnly: true,
+      async checkPermissions() {
+        return { behavior: "allow" };
+      },
+      async call() {
+        return { content: "ok" };
+      },
+    };
+    const permCtx = makeContext({ mode: "default" });
+    const decision = await resolvePermission(tool, { file_path: "/project/a.txt" }, ctx, permCtx);
+    expect(decision.behavior).toBe("allow");
+  });
+
+  it("auto-allows a read-only tool with no checkPermissions", async () => {
+    const tool: Tool = {
+      name: "Glob",
+      description: "test",
+      parameters: { type: "object", properties: {} },
+      isReadOnly: true,
+      async call() {
+        return { content: "ok" };
+      },
+    };
+    const permCtx = makeContext({ mode: "default" });
+    const decision = await resolvePermission(tool, {}, ctx, permCtx);
+    expect(decision.behavior).toBe("allow");
+    expect(decision.reason).toBe("readOnly");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bug 9: Interactive tool in auto mode must not reset denial tracker
+// ---------------------------------------------------------------------------
+describe("auto mode denial tracker with interactive tools", () => {
+  it("does not reset consecutive denials when interactive tool is asked", async () => {
+    const provider = new MockAIProvider([
+      textResponse(JSON.stringify({ shouldBlock: false, reason: "approved" })),
+    ]);
+    const denialTracker = new DenialTracker({ maxConsecutive: 3, maxTotal: 20 });
+
+    denialTracker.recordDenial();
+    denialTracker.recordDenial();
+    expect(denialTracker.getState().consecutiveDenials).toBe(2);
+
+    const tool: Tool = {
+      name: "AskUser",
+      description: "test",
+      parameters: { type: "object", properties: {} },
+      requiresUserInteraction: true,
+      async call() {
+        return { content: "ok" };
+      },
+    };
+    const permCtx = makeContext({ mode: "auto" });
+    await resolvePermission(tool, {}, ctx, permCtx, {
+      provider,
+      model: "test-model",
+      autoModeConfig: { classifierPrompt: "test" },
+      denialTracker,
+    });
+
+    expect(denialTracker.getState().consecutiveDenials).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bug 10: Bash command targeting dangerous paths must be caught
+// ---------------------------------------------------------------------------
+describe("bash command dangerous path check", () => {
+  it("asks when bash command targets .git/", async () => {
+    const tool: Tool = {
+      name: "Bash",
+      description: "test",
+      parameters: { type: "object", properties: {} },
+      async call() {
+        return { content: "ok" };
+      },
+    };
+    const permCtx = makeContext({ mode: "bypassPermissions" });
+    const decision = await resolvePermission(
+      tool,
+      { command: "echo x > .git/config" },
+      ctx,
+      permCtx,
+    );
+    expect(decision.behavior).toBe("ask");
+    expect(decision.reason).toBe("safetyCheck");
+  });
+
+  it("asks when bash command targets .ssh/", async () => {
+    const tool: Tool = {
+      name: "Bash",
+      description: "test",
+      parameters: { type: "object", properties: {} },
+      async call() {
+        return { content: "ok" };
+      },
+    };
+    const permCtx = makeContext({ mode: "bypassPermissions" });
+    const decision = await resolvePermission(
+      tool,
+      { command: "cat .ssh/id_rsa" },
+      ctx,
+      permCtx,
+    );
+    expect(decision.behavior).toBe("ask");
+    expect(decision.reason).toBe("safetyCheck");
+  });
+
+  it("allows bash command with no dangerous paths", async () => {
+    const tool: Tool = {
+      name: "Bash",
+      description: "test",
+      parameters: { type: "object", properties: {} },
+      async call() {
+        return { content: "ok" };
+      },
+    };
+    const permCtx = makeContext({ mode: "bypassPermissions" });
+    const decision = await resolvePermission(
+      tool,
+      { command: "ls -la /project" },
+      ctx,
+      permCtx,
+    );
+    expect(decision.behavior).toBe("allow");
+  });
+
+  it("asks when bash compound command includes dangerous path", async () => {
+    const tool: Tool = {
+      name: "Bash",
+      description: "test",
+      parameters: { type: "object", properties: {} },
+      async call() {
+        return { content: "ok" };
+      },
+    };
+    const permCtx = makeContext({ mode: "bypassPermissions" });
+    const decision = await resolvePermission(
+      tool,
+      { command: "echo hello && cat .env" },
+      ctx,
+      permCtx,
+    );
+    expect(decision.behavior).toBe("ask");
+    expect(decision.reason).toBe("safetyCheck");
   });
 });

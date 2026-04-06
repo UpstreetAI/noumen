@@ -11,6 +11,8 @@ export interface ToolCallExecResult {
   result: ToolResult;
   /** When true, the result came from a permission denial — not actual tool execution */
   permissionDenied?: boolean;
+  /** When true, the turn loop should stop after processing this batch */
+  preventContinuation?: boolean;
 }
 
 export type ToolCallExecutor = (

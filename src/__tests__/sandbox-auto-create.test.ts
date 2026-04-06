@@ -71,8 +71,12 @@ describe("SpritesSandbox auto-creation", () => {
     expect(createCall).toBeDefined();
   });
 
-  it("init(reconnectId) skips creation and uses provided ID", async () => {
-    globalThis.fetch = vi.fn() as unknown as typeof fetch;
+  it("init(reconnectId) validates sprite exists via GET, then uses provided ID", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      text: () => Promise.resolve("{}"),
+      json: () => Promise.resolve({ name: "existing-sprite-name" }),
+    }) as unknown as typeof fetch;
 
     const { SpritesSandbox } = await import("../virtual/sandbox.js");
 
@@ -80,7 +84,10 @@ describe("SpritesSandbox auto-creation", () => {
     await sandbox.init!("existing-sprite-name");
 
     expect(sandbox.sandboxId?.()).toBe("existing-sprite-name");
-    expect(globalThis.fetch).not.toHaveBeenCalled();
+    const calls = (globalThis.fetch as any).mock.calls;
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toContain("existing-sprite-name");
+    expect(calls[0][1]?.method).toBe("GET");
   });
 
   it("init() is idempotent (single-flight)", async () => {
@@ -126,12 +133,18 @@ describe("SpritesSandbox auto-creation", () => {
   });
 
   it("dispose() is a no-op for reconnected sandbox", async () => {
-    globalThis.fetch = vi.fn() as unknown as typeof fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      text: () => Promise.resolve("{}"),
+      json: () => Promise.resolve({ name: "user-provided" }),
+    }) as unknown as typeof fetch;
 
     const { SpritesSandbox } = await import("../virtual/sandbox.js");
 
     const sandbox = SpritesSandbox({ token: "tok" });
     await sandbox.init!("user-provided");
+
+    (globalThis.fetch as any).mockClear();
 
     await sandbox.dispose!();
     expect(globalThis.fetch).not.toHaveBeenCalled();

@@ -428,3 +428,44 @@ describe("StreamingToolExecutor sibling cancellation", () => {
     expect(results).toHaveLength(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// processQueue re-entrance guard
+// ---------------------------------------------------------------------------
+describe("StreamingToolExecutor re-entrance guard", () => {
+  it("does not double-execute unsafe tools when completions race", async () => {
+    const { StreamingToolExecutor } = await import("../tools/streaming-executor.js");
+
+    const executionCounts = new Map<string, number>();
+
+    const executor = new StreamingToolExecutor(
+      (name) => ({
+        name,
+        description: "",
+        parameters: { type: "object", properties: {} },
+        isConcurrencySafe: false,
+        call: async () => ({ content: "" }),
+      } as any),
+      async (toolCall) => {
+        const count = (executionCounts.get(toolCall.id) ?? 0) + 1;
+        executionCounts.set(toolCall.id, count);
+        await new Promise((r) => setTimeout(r, 10));
+        return { result: { content: `done-${toolCall.id}` }, events: [] };
+      },
+    );
+
+    executor.addTool({ id: "u1", type: "function" as const, function: { name: "WriteFile", arguments: '{}' } }, {});
+    executor.addTool({ id: "u2", type: "function" as const, function: { name: "WriteFile", arguments: '{}' } }, {});
+    executor.addTool({ id: "u3", type: "function" as const, function: { name: "WriteFile", arguments: '{}' } }, {});
+
+    const results: any[] = [];
+    for await (const r of executor.getRemainingResults()) {
+      results.push(r);
+    }
+
+    expect(results).toHaveLength(3);
+    expect(executionCounts.get("u1")).toBe(1);
+    expect(executionCounts.get("u2")).toBe(1);
+    expect(executionCounts.get("u3")).toBe(1);
+  });
+});

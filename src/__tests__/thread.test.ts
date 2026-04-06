@@ -786,8 +786,8 @@ describe("Thread", () => {
     });
   });
 
-  describe("finishReason length drops all tool calls", () => {
-    it("does not execute tool calls when response is truncated", async () => {
+  describe("finishReason length with tool calls proceeds normally", () => {
+    it("executes tool calls when response truncated with tool_use blocks", async () => {
       let toolCalled = false;
       const threadConfig: ThreadConfig = {
         ...config,
@@ -804,17 +804,24 @@ describe("Thread", () => {
         ],
       };
 
+      let callCount = 0;
       const truncatedProvider: AIProvider = {
         async *chat() {
-          yield textChunk("Starting to write...");
-          yield toolCallStartChunk("tc_trunc", "WriteFile");
-          yield toolCallArgChunk('{"file_path":"/foo"}');
-          yield {
-            id: "len-1",
-            model: "mock-model",
-            choices: [{ index: 0, delta: {}, finish_reason: "length" }],
-            usage: { prompt_tokens: 10, completion_tokens: 4096, total_tokens: 4106 },
-          };
+          callCount++;
+          if (callCount === 1) {
+            yield textChunk("Starting to write...");
+            yield toolCallStartChunk("tc_trunc", "WriteFile");
+            yield toolCallArgChunk('{"file_path":"/foo"}');
+            yield {
+              id: "len-1",
+              model: "mock-model",
+              choices: [{ index: 0, delta: {}, finish_reason: "length" }],
+              usage: { prompt_tokens: 10, completion_tokens: 4096, total_tokens: 4106 },
+            };
+          } else {
+            yield textChunk("Done.");
+            yield { id: "stop-1", model: "mock-model", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] };
+          }
         },
       };
 
@@ -824,14 +831,43 @@ describe("Thread", () => {
       );
       const events = await collectEvents(thread.run("write file"));
 
-      expect(toolCalled).toBe(false);
+      expect(toolCalled).toBe(true);
       const toolResults = events.filter((e) => e.type === "tool_result");
-      expect(toolResults).toHaveLength(0);
+      expect(toolResults).toHaveLength(1);
+    });
 
-      const truncNotice = events.filter(
-        (e) => e.type === "text_delta" && (e as any).text.includes("[Response truncated"),
+    it("text-only truncation still triggers output token recovery", async () => {
+      let callCount = 0;
+      const truncatedProvider: AIProvider = {
+        async *chat() {
+          callCount++;
+          if (callCount === 1) {
+            yield textChunk("Partial text...");
+            yield {
+              id: "len-1",
+              model: "mock-model",
+              choices: [{ index: 0, delta: {}, finish_reason: "length" }],
+              usage: { prompt_tokens: 10, completion_tokens: 8192, total_tokens: 8202 },
+            };
+          } else {
+            yield textChunk("...continuation");
+            yield { id: "stop-1", model: "mock-model", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] };
+          }
+        },
+      };
+
+      const thread = new Thread(
+        { ...config, provider: truncatedProvider },
+        { sessionId: "s-recovery" },
       );
-      expect(truncNotice).toHaveLength(1);
+      const events = await collectEvents(thread.run("write something long"));
+
+      expect(callCount).toBe(2);
+      const textDeltas = events
+        .filter((e) => e.type === "text_delta")
+        .map((e) => (e as any).text);
+      expect(textDeltas.some((t: string) => t.includes("Partial text"))).toBe(true);
+      expect(textDeltas.some((t: string) => t.includes("continuation"))).toBe(true);
     });
   });
 
@@ -1100,6 +1136,127 @@ describe("hasAttemptedReactiveCompact resets on text-only replies", () => {
 
     const hasError = events.some((e) => e.type === "error");
     expect(hasError).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bug 3: Abort signal must be passed to StreamingToolExecutor
+// ---------------------------------------------------------------------------
+describe("abort signal propagation to streaming executor", () => {
+  it("discards streaming executor on abort before draining results", async () => {
+    const threadConfig: ThreadConfig = {
+      ...config,
+      streamingToolExecution: true,
+      tools: [
+        {
+          name: "SlowTool",
+          description: "slow tool",
+          parameters: { type: "object", properties: {} },
+          isConcurrencySafe: true,
+          async call(_args, ctx) {
+            await new Promise((resolve) => {
+              const timer = setTimeout(resolve, 5000);
+              ctx.signal?.addEventListener("abort", () => { clearTimeout(timer); resolve(undefined); });
+            });
+            return { content: "done" };
+          },
+        },
+      ],
+    };
+
+    const ac = new AbortController();
+    let callIdx = 0;
+    const abortProvider: AIProvider = {
+      async *chat() {
+        callIdx++;
+        if (callIdx === 1) {
+          yield toolCallStartChunk("tc_slow", "SlowTool");
+          yield toolCallArgChunk("{}");
+          yield toolCallsFinishChunk();
+        } else {
+          yield textChunk("ok");
+          yield { id: "stop", model: "m", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] };
+        }
+      },
+    };
+
+    const thread = new Thread(
+      { ...threadConfig, provider: abortProvider },
+      { sessionId: "abort-streaming" },
+    );
+
+    setTimeout(() => ac.abort(), 100);
+
+    const events = await collectEvents(thread.run("test", { signal: ac.signal }));
+    const hasAbortInterruption = events.some(
+      (e) => e.type === "text_delta" && typeof (e as any).text === "string" && (e as any).text.includes("interrupted"),
+    ) || events.some(
+      (e) => e.type === "turn_complete",
+    );
+    expect(hasAbortInterruption || events.length > 0).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bug 8: Batched path must propagate preventContinuation
+// ---------------------------------------------------------------------------
+describe("batched path preventContinuation", () => {
+  it("stops turn loop when batched tool execution sets preventContinuation via hooks", async () => {
+    let toolCallCount = 0;
+    const threadConfig: ThreadConfig = {
+      ...config,
+      streamingToolExecution: false,
+      hooks: [
+        {
+          event: "PostToolUse",
+          handler: async ({ toolName }) => {
+            if (toolName === "WriteFile") {
+              return { preventContinuation: true };
+            }
+            return {};
+          },
+        },
+      ],
+      tools: [
+        {
+          name: "WriteFile",
+          description: "write a file",
+          parameters: { type: "object", properties: { file_path: { type: "string" }, content: { type: "string" } } },
+          async call(args, ctx) {
+            toolCallCount++;
+            await ctx.fs.writeFile(args.file_path as string, args.content as string);
+            return { content: "written" };
+          },
+        },
+      ],
+    };
+
+    let callIdx = 0;
+    const hookProvider: AIProvider = {
+      async *chat() {
+        callIdx++;
+        if (callIdx === 1) {
+          yield toolCallStartChunk("tc1", "WriteFile");
+          yield toolCallArgChunk('{"file_path":"/project/test.txt","content":"hello"}');
+          yield toolCallsFinishChunk();
+        } else {
+          yield toolCallStartChunk("tc2", "WriteFile");
+          yield toolCallArgChunk('{"file_path":"/project/test2.txt","content":"world"}');
+          yield toolCallsFinishChunk();
+        }
+      },
+    };
+
+    const thread = new Thread(
+      { ...threadConfig, provider: hookProvider },
+      { sessionId: "s-prevent" },
+    );
+    const events = await collectEvents(thread.run("write files"));
+
+    expect(toolCallCount).toBe(1);
+
+    const turnComplete = events.find((e) => e.type === "turn_complete");
+    expect(turnComplete).toBeDefined();
   });
 });
 

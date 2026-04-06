@@ -238,9 +238,21 @@ export function SpritesSandbox(opts: SpritesSandboxOptions): Sandbox {
   let initPromise: Promise<void> | null = null;
 
   async function doInit(reconnectId?: string): Promise<void> {
-    const name = reconnectId ?? `${opts.namePrefix ?? "noumen-"}${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    let name = reconnectId ?? `${opts.namePrefix ?? "noumen-"}${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    let needsCreate = !reconnectId;
 
-    if (!reconnectId) {
+    if (reconnectId) {
+      const check = await fetch(`${baseURL}/v1/sprites/${reconnectId}`, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${opts.token}` },
+      });
+      if (!check.ok) {
+        name = `${opts.namePrefix ?? "noumen-"}${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        needsCreate = true;
+      }
+    }
+
+    if (needsCreate) {
       const res = await fetch(`${baseURL}/v1/sprites`, {
         method: "POST",
         headers: {
@@ -277,6 +289,9 @@ export function SpritesSandbox(opts: SpritesSandboxOptions): Sandbox {
     },
 
     async dispose(): Promise<void> {
+      if (initPromise) {
+        await initPromise.catch(() => {});
+      }
       if (!autoCreated || !resolvedName) return;
       try {
         const res = await fetch(`${baseURL}/v1/sprites/${resolvedName}`, {
@@ -376,6 +391,19 @@ export function DockerSandbox(opts: DockerSandboxOptions): Sandbox {
     let container: any;
     if (reconnectId) {
       container = docker.getContainer(reconnectId);
+      try {
+        await container.inspect();
+      } catch {
+        container = await docker.createContainer({
+          Image: opts.image!,
+          Cmd: opts.cmd ?? ["sleep", "infinity"],
+          Env: opts.env,
+          Tty: false,
+          ...opts.dockerOptions,
+        });
+        await container.start();
+        autoCreated = true;
+      }
     } else {
       container = await docker.createContainer({
         Image: opts.image!,
@@ -414,6 +442,9 @@ export function DockerSandbox(opts: DockerSandboxOptions): Sandbox {
     },
 
     async dispose(): Promise<void> {
+      if (initPromise) {
+        await initPromise.catch(() => {});
+      }
       if (!autoCreated || !containerRef) return;
       try { await containerRef.stop(); } catch { /* may already be stopped */ }
       try { await containerRef.remove(); } catch { /* best-effort */ }
@@ -503,9 +534,18 @@ export function E2BSandbox(opts: E2BSandboxOptions): Sandbox {
 
     let sandbox: E2BSandboxInstance;
     if (reconnectId) {
-      sandbox = await SandboxClass.connect(reconnectId, {
-        apiKey: opts.apiKey,
-      });
+      try {
+        sandbox = await SandboxClass.connect(reconnectId, {
+          apiKey: opts.apiKey,
+        });
+      } catch {
+        sandbox = await SandboxClass.create({
+          template: opts.template ?? "base",
+          apiKey: opts.apiKey,
+          timeoutMs: opts.timeoutMs,
+        });
+        autoCreated = true;
+      }
     } else {
       sandbox = await SandboxClass.create({
         template: opts.template ?? "base",
@@ -541,6 +581,9 @@ export function E2BSandbox(opts: E2BSandboxOptions): Sandbox {
     },
 
     async dispose(): Promise<void> {
+      if (initPromise) {
+        await initPromise.catch(() => {});
+      }
       if (!autoCreated || !sandboxRef) return;
       if (typeof sandboxRef.kill === "function") {
         await sandboxRef.kill();

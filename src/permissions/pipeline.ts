@@ -151,6 +151,24 @@ export async function resolvePermission(
     };
   }
 
+  // 2d. Bash command dangerous path check (bypass-immune)
+  if (toolName === "Bash" && typeof input.command === "string") {
+    const subCommands = splitCompoundCommand(input.command);
+    for (const sub of subCommands) {
+      const tokens = sub.trim().split(/\s+/);
+      for (const token of tokens) {
+        if (token.startsWith("-")) continue;
+        if (isDangerousPath(token, ctx.cwd)) {
+          return {
+            behavior: "ask",
+            message: `Bash command references sensitive path "${token}".`,
+            reason: "safetyCheck",
+          };
+        }
+      }
+    }
+  }
+
   // 3. Tool's own checkPermissions
   let toolResult: PermissionResult | undefined;
   if (tool.checkPermissions) {
@@ -326,8 +344,6 @@ export async function resolvePermission(
       };
     }
 
-    opts?.denialTracker?.recordSuccess();
-
     if (tool.requiresUserInteraction) {
       return {
         behavior: "ask",
@@ -335,6 +351,8 @@ export async function resolvePermission(
         reason: "interaction",
       };
     }
+
+    opts?.denialTracker?.recordSuccess();
 
     return {
       behavior: "allow",
@@ -354,8 +372,9 @@ export async function resolvePermission(
   }
 
   // Read-only tools are auto-allowed in any mode (except when an ask/deny
-  // rule explicitly overrode them in steps 1-2 above).
-  if (isReadOnly) {
+  // rule explicitly overrode them in steps 1-2 above, or the tool's own
+  // checkPermissions returned "ask").
+  if (isReadOnly && toolResult?.behavior !== "ask") {
     return {
       behavior: "allow",
       updatedInput: effectiveInput,

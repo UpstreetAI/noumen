@@ -79,6 +79,7 @@ export class VertexAnthropicProvider implements AIProvider {
       const args: Record<string, unknown> = {
         region: opts.region ?? "us-east5",
         googleAuth,
+        maxRetries: 0,
       };
       if (opts.projectId) args.projectId = opts.projectId;
       if (opts.baseURL) args.baseURL = opts.baseURL;

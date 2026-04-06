@@ -567,6 +567,7 @@ export class Thread {
           streamingExec = new StreamingToolExecutor(
             (name) => this.toolRegistry.get(name),
             this.buildStreamingExecutorFn(toolCtx, hooks),
+            signal,
           );
         }
 
@@ -889,7 +890,8 @@ export class Thread {
           providerSpan.end();
           yield { type: "span_end", name: "noumen.provider.chat", spanId: providerSpanId, durationMs: Date.now() - providerStart };
 
-          // Drain any results the streaming executor already completed
+          // Stop scheduling new tools and drain already-completed results
+          streamingExec?.discard();
           const completedToolIds = new Set(streamingResults.map((r) => r.toolCall.id));
           if (streamingExec) {
             for (const result of streamingExec.getCompletedResults()) {
@@ -947,8 +949,11 @@ export class Thread {
           break;
         }
 
-        // Handle truncated responses (max output tokens reached)
-        if (finishReason === "length") {
+        // Handle truncated responses (max output tokens reached).
+        // Only enter recovery for text-only truncation; when tool calls are
+        // present they may already have had side effects so we process them
+        // normally instead of discarding and retrying.
+        if (finishReason === "length" && accumulatedToolCalls.size === 0) {
           const DEFAULT_MAX_TOKENS = 8192;
           const ESCALATED_MAX_TOKENS = 65536;
           const MAX_OUTPUT_RECOVERY_ATTEMPTS = 3;
@@ -1498,7 +1503,7 @@ export class Thread {
               }
             }
 
-            return { toolCall: tc, parsedArgs: currentArgs, result };
+            return { toolCall: tc, parsedArgs: currentArgs, result, preventContinuation };
             } catch (execErr) {
               const msg = execErr instanceof Error ? execErr.message : String(execErr);
               return { toolCall: tc, parsedArgs, result: { content: `Error executing tool: ${msg}`, isError: true } };
@@ -1519,6 +1524,10 @@ export class Thread {
             eventQueue.length = 0;
 
             const { toolCall: tc, parsedArgs: finalArgs, result, permissionDenied } = execResult;
+
+            if (execResult.preventContinuation) {
+              preventContinuation = true;
+            }
 
             if (!permissionDenied) {
               yield {

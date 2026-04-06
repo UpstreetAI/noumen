@@ -28,6 +28,7 @@ export class OpenAIProvider implements AIProvider {
       apiKey: opts.apiKey ?? "not-needed",
       baseURL: opts.baseURL,
       defaultHeaders: opts.defaultHeaders,
+      maxRetries: 0,
     });
     this.defaultModel = opts.model ?? "gpt-5.4";
     this.compatMode = opts.compatMode ?? false;

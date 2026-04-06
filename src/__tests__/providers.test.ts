@@ -933,3 +933,134 @@ describe("Anthropic thinking budget clamp", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Bug fix: AbortSignal passed in request options, not body
+// ---------------------------------------------------------------------------
+describe("Anthropic abort signal wiring", () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  it("passes signal via options arg, not in the request body", async () => {
+    let capturedParams: Record<string, unknown> = {};
+    let capturedOptions: Record<string, unknown> | undefined;
+
+    vi.doMock("@anthropic-ai/sdk", () => ({
+      default: class {
+        messages = {
+          stream: (params: Record<string, unknown>, options?: Record<string, unknown>) => {
+            capturedParams = params;
+            capturedOptions = options;
+            return (async function* () {
+              yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
+              yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ok" } };
+              yield { type: "message_stop" };
+            })();
+          },
+        };
+      },
+    }));
+
+    const { AnthropicProvider } = await import("../providers/anthropic.js");
+    const provider = new AnthropicProvider({ apiKey: "test-key" });
+    const ac = new AbortController();
+
+    for await (const _ of provider.chat({
+      model: "claude-sonnet-4",
+      messages: [{ role: "user", content: "hi" }],
+      signal: ac.signal,
+    })) {
+      // consume
+    }
+
+    expect(capturedParams.signal).toBeUndefined();
+    expect(capturedOptions?.signal).toBe(ac.signal);
+  });
+
+  it("does not pass options when no signal provided", async () => {
+    let capturedOptions: Record<string, unknown> | undefined = { sentinel: true };
+
+    vi.doMock("@anthropic-ai/sdk", () => ({
+      default: class {
+        messages = {
+          stream: (_params: Record<string, unknown>, options?: Record<string, unknown>) => {
+            capturedOptions = options;
+            return (async function* () {
+              yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
+              yield { type: "message_stop" };
+            })();
+          },
+        };
+      },
+    }));
+
+    const { AnthropicProvider } = await import("../providers/anthropic.js");
+    const provider = new AnthropicProvider({ apiKey: "test-key" });
+
+    for await (const _ of provider.chat({
+      model: "claude-sonnet-4",
+      messages: [{ role: "user", content: "hi" }],
+    })) {
+      // consume
+    }
+
+    expect(capturedOptions).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bug fix: maxRetries: 0 on SDK clients
+// ---------------------------------------------------------------------------
+describe("SDK maxRetries disabled", () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  it("AnthropicProvider passes maxRetries: 0", async () => {
+    let capturedOpts: Record<string, unknown> = {};
+
+    vi.doMock("@anthropic-ai/sdk", () => ({
+      default: class {
+        constructor(opts: Record<string, unknown>) {
+          capturedOpts = opts;
+        }
+        messages = {
+          stream: () =>
+            (async function* () {
+              yield { type: "message_stop" };
+            })(),
+        };
+      },
+    }));
+
+    const { AnthropicProvider } = await import("../providers/anthropic.js");
+    new AnthropicProvider({ apiKey: "test-key" });
+    expect(capturedOpts.maxRetries).toBe(0);
+  });
+
+  it("OpenAIProvider passes maxRetries: 0", async () => {
+    let capturedOpts: Record<string, unknown> = {};
+
+    vi.doMock("openai", () => ({
+      default: class {
+        constructor(opts: Record<string, unknown>) {
+          capturedOpts = opts;
+        }
+        chat = {
+          completions: {
+            create: vi.fn().mockResolvedValue(
+              (async function* () {
+                yield { id: "c1", model: "gpt-4o", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] };
+              })(),
+            ),
+          },
+        };
+      },
+    }));
+
+    const { OpenAIProvider } = await import("../providers/openai.js");
+    new OpenAIProvider({ apiKey: "test-key" });
+    expect(capturedOpts.maxRetries).toBe(0);
+  });
+});
