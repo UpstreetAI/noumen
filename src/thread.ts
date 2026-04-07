@@ -4,7 +4,6 @@ import type { VirtualComputer } from "./virtual/computer.js";
 import type {
   ChatMessage,
   AssistantMessage,
-  ToolCallContent,
   ContentPart,
   StreamEvent,
   RunOptions,
@@ -92,6 +91,12 @@ import {
   consumeStream,
   handleFinishReason,
 } from "./pipeline/consume-stream.js";
+import {
+  separateToolCalls,
+  buildAssistantMessage,
+  generateMalformedToolResults,
+  accumulateUsage,
+} from "./pipeline/build-assistant-response.js";
 import type { SnipConfig } from "./compact/history-snip.js";
 import { FileStateCache } from "./file-state/cache.js";
 import type { FileStateCacheConfig } from "./file-state/types.js";
@@ -805,22 +810,22 @@ export class Thread {
         if (frResult.preventContinuation) preventContinuation = true;
 
         callCount++;
-        if (accumulator.usage) {
-          turnUsage.prompt_tokens += accumulator.usage.prompt_tokens;
-          turnUsage.completion_tokens += accumulator.usage.completion_tokens;
-          turnUsage.total_tokens += accumulator.usage.total_tokens;
-          turnUsage.cache_read_tokens = (turnUsage.cache_read_tokens ?? 0) + (accumulator.usage.cache_read_tokens ?? 0);
-          turnUsage.cache_creation_tokens = (turnUsage.cache_creation_tokens ?? 0) + (accumulator.usage.cache_creation_tokens ?? 0);
-          turnUsage.thinking_tokens = (turnUsage.thinking_tokens ?? 0) + (accumulator.usage.thinking_tokens ?? 0);
-          this.lastUsage = accumulator.usage;
-          this.anchorMessageIndex = this.messages.length - 1;
+        const usageResult = accumulateUsage({
+          usage: accumulator.usage,
+          turnUsage,
+          model: this.model,
+          messagesLength: this.messages.length,
+        });
+        for (const evt of usageResult.events) yield evt;
+        if (usageResult.lastUsage) {
+          this.lastUsage = usageResult.lastUsage;
+          this.anchorMessageIndex = usageResult.anchorMessageIndex!;
           this.microcompactTokensFreed = 0;
-          yield { type: "usage", usage: accumulator.usage, model: this.model };
 
           if (this.config.costTracker) {
             const summary = this.config.costTracker.addUsage(
               this.model,
-              accumulator.usage,
+              usageResult.lastUsage,
               apiDurationMs,
             );
             yield { type: "cost_update", summary };
@@ -832,8 +837,8 @@ export class Thread {
             ).catch(() => {});
           }
 
-          providerSpan.setAttribute("tokens.input", accumulator.usage.prompt_tokens);
-          providerSpan.setAttribute("tokens.output", accumulator.usage.completion_tokens);
+          providerSpan.setAttribute("tokens.input", usageResult.lastUsage.prompt_tokens);
+          providerSpan.setAttribute("tokens.output", usageResult.lastUsage.completion_tokens);
         }
 
         if (this.config.promptCachingEnabled) {
@@ -852,70 +857,23 @@ export class Thread {
         providerSpan.end();
         yield { type: "span_end", name: "noumen.provider.chat", spanId: providerSpanId, durationMs: Date.now() - providerStart };
 
-        const textContent = accumulator.content.join("");
-        // Separate valid tool calls from ones with malformed JSON
-        const malformedToolCalls: Array<{ id: string; name: string }> = [];
-        const toolCalls: ToolCallContent[] = [];
-        for (const tc of accumulator.toolCalls.values()) {
-          let isMalformed = tc.malformedJson;
-          if (!isMalformed && !streamingExec) {
-            try { JSON.parse(tc.arguments); } catch { isMalformed = true; }
-          }
-          if (isMalformed) {
-            malformedToolCalls.push({ id: tc.id, name: tc.name });
-          } else {
-            toolCalls.push({
-              id: tc.id,
-              type: "function" as const,
-              function: { name: tc.name, arguments: tc.arguments },
-            });
-          }
-        }
+        const { valid: toolCalls, malformed: malformedToolCalls } = separateToolCalls(accumulator, !!streamingExec);
 
-        // When ALL tool calls are malformed, include them in the assistant
-        // message with empty args so the conversation structure stays valid,
-        // then generate error results and let the model retry.
-        const allToolCalls: ToolCallContent[] = [
-          ...toolCalls,
-          ...malformedToolCalls.map((m) => ({
-            id: m.id,
-            type: "function" as const,
-            function: { name: m.name, arguments: "{}" },
-          })),
-        ];
-
-        const thinkingContent = accumulator.thinking.join("") || undefined;
-        const assistantMsg: AssistantMessage = {
-          role: "assistant",
-          content: textContent || null,
-          ...(allToolCalls.length > 0 ? { tool_calls: allToolCalls } : {}),
-          ...(thinkingContent ? { thinking_content: thinkingContent } : {}),
-          ...(accumulator.thinkingSignature ? { thinking_signature: accumulator.thinkingSignature } : {}),
-          ...(accumulator.redactedThinkingData ? { redacted_thinking_data: accumulator.redactedThinkingData } : {}),
-          _turnId: `${this.sessionId}:${callCount}`,
-        };
-
+        const assistantMsg = buildAssistantMessage({
+          acc: accumulator,
+          validToolCalls: toolCalls,
+          malformedToolCalls,
+          turnId: `${this.sessionId}:${callCount}`,
+        });
         this.messages.push(assistantMsg);
         await this.storage.appendMessage(this.sessionId, assistantMsg);
 
-        // Generate error results for tool calls with malformed JSON args
-        // (outside the toolCalls.length guard so all-malformed is handled)
-        for (const malformed of malformedToolCalls) {
-          const errorResult: ChatMessage = {
-            role: "tool",
-            tool_call_id: malformed.id,
-            content: `Error: Invalid tool call arguments for ${malformed.name} (malformed JSON)`,
-            isError: true,
-          };
-          this.messages.push(errorResult);
-          await this.storage.appendMessage(this.sessionId, errorResult);
-          yield {
-            type: "tool_result",
-            toolUseId: malformed.id,
-            toolName: malformed.name,
-            result: { content: errorResult.content, isError: true },
-          };
+        const malformedResult = generateMalformedToolResults(malformedToolCalls);
+        for (const msg of malformedResult.messages) {
+          this.messages.push(msg);
+          await this.storage.appendMessage(this.sessionId, msg);
         }
+        for (const evt of malformedResult.events) yield evt;
 
         // When only malformed calls exist, continue the loop to give the
         // model another chance without entering the tool execution path.
@@ -1068,6 +1026,7 @@ export class Thread {
         }
 
         // For alongside_tools mode, emit structured_output when the model produces text
+        const textContent = accumulator.content.join("");
         if (runOutputFormat && !isFinalResponseMode && textContent) {
           try {
             const parsed = JSON.parse(textContent);
