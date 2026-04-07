@@ -832,3 +832,168 @@ describe("new dangerous path patterns", () => {
     expect(isDangerousPath("home/user/.ripgreprc", "/")).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Gap coverage: auto mode without provider
+// ---------------------------------------------------------------------------
+describe("auto mode without provider", () => {
+  it("returns ask with classifier fallback message when no provider is given", async () => {
+    const tool: Tool = {
+      name: "WriteFile",
+      description: "Write a file",
+      parameters: { type: "object" as const, properties: {} },
+      async call() { return { content: "ok" }; },
+    };
+    const permCtx: PermissionContext = {
+      mode: "auto",
+      rules: [],
+      workingDirectories: [],
+    };
+    const toolCtx = { fs: new MockFs(), computer: new MockComputer(), cwd: "/project" } as any;
+
+    const decision = await resolvePermission(
+      tool,
+      { command: "echo hi" },
+      toolCtx,
+      permCtx,
+      { autoModeConfig: { classifierModel: "m" } },
+    );
+    expect(decision.behavior).toBe("ask");
+    expect(decision.reason).toBe("classifier");
+    if (decision.behavior === "ask") {
+      expect(decision.message).toContain("Auto-mode requires an AI provider");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gap coverage: content-scoped ask rules
+// ---------------------------------------------------------------------------
+describe("content-scoped ask rules", () => {
+  it("returns ask when a rule with behavior ask and prefix ruleContent matches", async () => {
+    const tool: Tool = {
+      name: "Bash",
+      description: "Run a command",
+      parameters: { type: "object" as const, properties: { command: { type: "string" } } },
+      async call() { return { content: "ok" }; },
+    };
+    const permCtx: PermissionContext = {
+      mode: "bypassPermissions",
+      rules: [
+        { toolName: "Bash", behavior: "ask", ruleContent: "curl:*" },
+      ],
+      workingDirectories: [],
+    };
+    const toolCtx = { fs: new MockFs(), computer: new MockComputer(), cwd: "/project" } as any;
+
+    const decision = await resolvePermission(tool, { command: "curl https://example.com" }, toolCtx, permCtx);
+    expect(decision.behavior).toBe("ask");
+    expect(decision.reason).toBe("rule");
+  });
+
+  it("does not match content-scoped ask rule when command does not match ruleContent", async () => {
+    const tool: Tool = {
+      name: "Bash",
+      description: "Run a command",
+      parameters: { type: "object" as const, properties: { command: { type: "string" } } },
+      async call() { return { content: "ok" }; },
+    };
+    const permCtx: PermissionContext = {
+      mode: "bypassPermissions",
+      rules: [
+        { toolName: "Bash", behavior: "ask", ruleContent: "curl:*" },
+      ],
+      workingDirectories: [],
+    };
+    const toolCtx = { fs: new MockFs(), computer: new MockComputer(), cwd: "/project" } as any;
+
+    const decision = await resolvePermission(tool, { command: "echo hello" }, toolCtx, permCtx);
+    // Does not match the ask rule, so bypassPermissions allows it
+    expect(decision.behavior).toBe("allow");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gap coverage: bypassPermissions + requiresUserInteraction
+// ---------------------------------------------------------------------------
+describe("bypassPermissions with interactive tool", () => {
+  it("returns ask with reason interaction when tool requires user interaction", async () => {
+    const tool: Tool = {
+      name: "AskUser",
+      description: "Ask the user a question",
+      parameters: { type: "object" as const, properties: { question: { type: "string" } } },
+      requiresUserInteraction: true,
+      async call() { return { content: "yes" }; },
+    };
+    const permCtx: PermissionContext = {
+      mode: "bypassPermissions",
+      rules: [],
+      workingDirectories: [],
+    };
+    const toolCtx = { fs: new MockFs(), computer: new MockComputer(), cwd: "/project" } as any;
+
+    const decision = await resolvePermission(tool, { question: "continue?" }, toolCtx, permCtx);
+    expect(decision.behavior).toBe("ask");
+    expect(decision.reason).toBe("interaction");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gap coverage: acceptEdits + destructive Bash through full pipeline
+// ---------------------------------------------------------------------------
+describe("acceptEdits with destructive bash through pipeline", () => {
+  it("asks for destructive bash commands in acceptEdits mode", async () => {
+    const permCtx: PermissionContext = {
+      mode: "acceptEdits",
+      rules: [],
+      workingDirectories: ["/project"],
+    };
+    const toolCtx = { fs: new MockFs(), computer: new MockComputer(), cwd: "/project" } as any;
+
+    const decision = await resolvePermission(
+      bashTool,
+      { command: "rm -rf /project/src" },
+      toolCtx,
+      permCtx,
+    );
+    expect(decision.behavior).toBe("ask");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gap coverage: passthrough preserves message and suggestions
+// ---------------------------------------------------------------------------
+describe("passthrough preserves message and suggestions", () => {
+  it("surfaces message and suggestions from passthrough in ask result", async () => {
+    const tool: Tool = {
+      name: "CustomTool",
+      description: "Custom",
+      parameters: { type: "object" as const, properties: {} },
+      async checkPermissions() {
+        return {
+          behavior: "passthrough" as const,
+          message: "Custom warning message",
+          suggestions: [
+            { toolName: "CustomTool", behavior: "allow" as const },
+          ],
+        };
+      },
+      async call() { return { content: "ok" }; },
+    };
+    const permCtx: PermissionContext = {
+      mode: "default",
+      rules: [],
+      workingDirectories: [],
+    };
+    const toolCtx = { fs: new MockFs(), computer: new MockComputer(), cwd: "/project" } as any;
+
+    const decision = await resolvePermission(tool, {}, toolCtx, permCtx);
+    expect(decision.behavior).toBe("ask");
+    if (decision.behavior === "ask") {
+      expect(decision.message).toBe("Custom warning message");
+      expect(decision.suggestions).toEqual([
+        { toolName: "CustomTool", behavior: "allow" },
+      ]);
+    }
+  });
+});

@@ -501,3 +501,101 @@ describe("streamAnthropicChat — structured output format", () => {
     expect(outputConfig.format.json_schema.name).toBe("response");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Gap coverage: consecutive tool results merged into one user block
+// ---------------------------------------------------------------------------
+describe("convertAnthropicMessages — consecutive tool results", () => {
+  it("merges consecutive tool messages into a single user block with multiple tool_result entries", () => {
+    const { messages: result } = convertAnthropicMessages(
+      undefined,
+      [
+        { role: "user", content: "do things" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            { id: "tc1", type: "function", function: { name: "ReadFile", arguments: '{"file_path":"/a.txt"}' } },
+            { id: "tc2", type: "function", function: { name: "ReadFile", arguments: '{"file_path":"/b.txt"}' } },
+          ],
+        },
+        { role: "tool", tool_call_id: "tc1", content: "content of a" },
+        { role: "tool", tool_call_id: "tc2", content: "content of b" },
+      ] as any[],
+    );
+
+    const userBlocks = result.filter((m: any) => m.role === "user");
+    expect(userBlocks).toHaveLength(2);
+
+    const toolResultUser = userBlocks[1];
+    const content = toolResultUser.content as Record<string, unknown>[];
+    expect(Array.isArray(content)).toBe(true);
+    expect(content).toHaveLength(2);
+    expect(content[0]).toMatchObject({ type: "tool_result", tool_use_id: "tc1" });
+    expect(content[1]).toMatchObject({ type: "tool_result", tool_use_id: "tc2" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gap coverage: malformed tool_calls JSON fallback
+// ---------------------------------------------------------------------------
+describe("convertAnthropicMessages — malformed tool_calls JSON", () => {
+  it("falls back to empty input when tool_calls have invalid JSON arguments", () => {
+    const { messages: result } = convertAnthropicMessages(
+      undefined,
+      [
+        { role: "user", content: "test" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            { id: "tc_bad", type: "function", function: { name: "ReadFile", arguments: "not valid json {{{" } },
+          ],
+        },
+      ] as any[],
+    );
+
+    const assistant = result.find((m: any) => m.role === "assistant")!;
+    const content = assistant.content as Record<string, unknown>[];
+    const toolUse = content.find((b) => b.type === "tool_use");
+    expect(toolUse).toBeDefined();
+    expect((toolUse as any).input).toEqual({});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gap coverage: streamAnthropicChat sync throw from client
+// ---------------------------------------------------------------------------
+describe("streamAnthropicChat — sync client throw", () => {
+  it("wraps a sync throw from client.messages.stream into a ChatStreamError", async () => {
+    const client: AnthropicStreamClient = {
+      messages: {
+        stream() {
+          const err = Object.assign(new Error("rate limited"), {
+            status: 429,
+            headers: new Map([["retry-after", "5"]]),
+          });
+          throw err;
+        },
+      },
+    };
+
+    const chunks: ChatStreamChunk[] = [];
+    let caughtError: any;
+    try {
+      for await (const chunk of streamAnthropicChat(
+        client,
+        { model: "claude-test", messages: [{ role: "user", content: "hi" }] },
+        "claude-test",
+      )) {
+        chunks.push(chunk);
+      }
+    } catch (e) {
+      caughtError = e;
+    }
+
+    expect(caughtError).toBeDefined();
+    expect(caughtError.name).toBe("ChatStreamError");
+    expect(caughtError.status).toBe(429);
+  });
+});

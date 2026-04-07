@@ -1303,3 +1303,98 @@ describe("Integration: content_filter preserves completed streaming tool results
     expect(toolResults.length).toBe(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Content-replacement resume round-trip
+// ---------------------------------------------------------------------------
+
+describe("Integration: content-replacement resume", () => {
+  it("restores spilled tool results from content-replacement entries on resume", async () => {
+    const sessionId = "spill-resume";
+    const originalContent = "A".repeat(100_000);
+    const stub = "[Tool result stored on disk — see tool-result://tc_spill/ReadFile]\n\nPreview:\nAAAAA...";
+
+    // Seed JSONL with messages + content-replacement entry
+    const entries = [
+      JSON.stringify({
+        type: "message",
+        uuid: "u1",
+        parentUuid: null,
+        sessionId,
+        timestamp: new Date().toISOString(),
+        message: { role: "user", content: "read a big file" },
+      }),
+      JSON.stringify({
+        type: "message",
+        uuid: "u2",
+        parentUuid: "u1",
+        sessionId,
+        timestamp: new Date().toISOString(),
+        message: {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            { id: "tc_spill", type: "function", function: { name: "ReadFile", arguments: '{"file_path":"/big.txt"}' } },
+          ],
+        },
+      }),
+      JSON.stringify({
+        type: "message",
+        uuid: "u3",
+        parentUuid: "u2",
+        sessionId,
+        timestamp: new Date().toISOString(),
+        message: {
+          role: "tool",
+          tool_call_id: "tc_spill",
+          content: originalContent,
+        },
+      }),
+      JSON.stringify({
+        type: "message",
+        uuid: "u4",
+        parentUuid: "u3",
+        sessionId,
+        timestamp: new Date().toISOString(),
+        message: { role: "assistant", content: "Done reading the file." },
+      }),
+      JSON.stringify({
+        type: "content-replacement",
+        sessionId,
+        timestamp: new Date().toISOString(),
+        replacements: [{ toolUseId: "tc_spill", replacement: stub }],
+      }),
+    ];
+
+    fs.files.set(`/sessions/${sessionId}.jsonl`, entries.join("\n") + "\n");
+
+    // Set up a provider that responds to the follow-up
+    const resumeProvider = new MockAIProvider();
+    resumeProvider.addResponse(textResponse("Summary of the file."));
+
+    const config: ThreadConfig = {
+      ...baseConfig,
+      provider: resumeProvider,
+    };
+
+    const thread = new Thread(config, { sessionId, resume: true });
+    const events = await collectEvents(thread.run("now summarize it"));
+
+    // The tool result message should now contain the stub, not the original content
+    const msgs = await thread.getMessages();
+    const toolMsg = msgs.find((m) => m.role === "tool") as any;
+    expect(toolMsg).toBeDefined();
+    expect(toolMsg.content).toBe(stub);
+    expect(toolMsg.content).not.toBe(originalContent);
+
+    // Run should complete successfully with a final text response
+    const textDeltas = events
+      .filter((e) => e.type === "text_delta")
+      .map((e) => (e as any).text)
+      .join("");
+    expect(textDeltas).toContain("Summary of the file");
+
+    const turnComplete = events.find((e) => e.type === "turn_complete");
+    expect(turnComplete).toBeDefined();
+  });
+});

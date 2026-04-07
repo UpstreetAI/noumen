@@ -11,8 +11,12 @@ import {
   MockAIProvider,
   textChunk,
   stopChunk,
+  toolCallStartChunk,
+  toolCallArgChunk,
+  toolCallsFinishChunk,
+  textResponse,
 } from "./helpers.js";
-import type { ChatStreamChunk, ChatCompletionUsage } from "../providers/types.js";
+import type { AIProvider, ChatStreamChunk, ChatCompletionUsage, ChatParams } from "../providers/types.js";
 
 function stopWithUsage(usage: ChatCompletionUsage): ChatStreamChunk {
   return {
@@ -319,5 +323,100 @@ describe("Cost pricing — thinking token handling", () => {
     };
     const cost = calculateCost("claude-sonnet-4", usage);
     expect(cost).toBeCloseTo((1_000_000 / 1e6) * 25, 6);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Multi-turn cost tracking integration
+// ---------------------------------------------------------------------------
+describe("Multi-turn cost tracking", () => {
+  it("emits cumulative cost_update events across multiple inner-loop iterations", async () => {
+    const fs = new MockFs();
+    const computer = new MockComputer();
+
+    let callCount = 0;
+    const multiTurnProvider: AIProvider = {
+      async *chat(_params: ChatParams) {
+        callCount++;
+        if (callCount === 1) {
+          // First call: tool call with usage
+          yield toolCallStartChunk("tc_1", "ReadFile");
+          yield toolCallArgChunk('{"file_path":"/a.txt"}');
+          yield toolCallsFinishChunk({
+            prompt_tokens: 100,
+            completion_tokens: 50,
+            total_tokens: 150,
+          });
+        } else if (callCount === 2) {
+          // Second call: another tool call with usage
+          yield toolCallStartChunk("tc_2", "ReadFile");
+          yield toolCallArgChunk('{"file_path":"/b.txt"}');
+          yield toolCallsFinishChunk({
+            prompt_tokens: 200,
+            completion_tokens: 60,
+            total_tokens: 260,
+          });
+        } else {
+          // Final text response with usage
+          yield textChunk("Done reading both files.");
+          yield stopChunk({
+            prompt_tokens: 300,
+            completion_tokens: 30,
+            total_tokens: 330,
+          });
+        }
+      },
+    };
+
+    const tracker = new CostTracker();
+    const config: ThreadConfig = {
+      provider: multiTurnProvider,
+      fs,
+      computer,
+      sessionDir: "/sessions",
+      autoCompact: createAutoCompactConfig({ enabled: false }),
+      costTracker: tracker,
+      tools: [
+        {
+          name: "ReadFile",
+          description: "Read a file",
+          parameters: { type: "object", properties: { file_path: { type: "string" } } },
+          isReadOnly: true,
+          async call(args: Record<string, unknown>) {
+            return { content: `content of ${args.file_path}` };
+          },
+        },
+      ],
+    };
+
+    const thread = new Thread(config, { sessionId: "multi-cost" });
+    const events = await collectEvents(thread.run("read files"));
+
+    const costEvents = events.filter((e) => e.type === "cost_update");
+    // Should have 3 cost_update events (one per provider call)
+    expect(costEvents).toHaveLength(3);
+
+    // Each successive cost_update should have cumulative totals
+    const summaries = costEvents.map((e) => (e as any).summary);
+    expect(summaries[0].totalInputTokens).toBe(100);
+    expect(summaries[1].totalInputTokens).toBe(300); // 100 + 200
+    expect(summaries[2].totalInputTokens).toBe(600); // 300 + 300
+
+    expect(summaries[0].totalOutputTokens).toBe(50);
+    expect(summaries[1].totalOutputTokens).toBe(110); // 50 + 60
+    expect(summaries[2].totalOutputTokens).toBe(140); // 110 + 30
+
+    // Verify the tracker state is cumulative
+    const final = tracker.getSummary();
+    expect(final.totalInputTokens).toBe(600);
+    expect(final.totalOutputTokens).toBe(140);
+
+    // Verify costState is persisted in JSONL
+    const jsonl = fs.files.get("/sessions/multi-cost.jsonl")!;
+    const lines = jsonl.trim().split("\n").map((l: string) => JSON.parse(l));
+    const metadataEntries = lines.filter(
+      (e: any) => e.type === "metadata" && e.key === "costState",
+    );
+    expect(metadataEntries.length).toBeGreaterThanOrEqual(1);
   });
 });

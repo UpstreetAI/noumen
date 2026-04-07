@@ -490,4 +490,175 @@ describe("Pipeline seam integration", () => {
       expect(toolMsgs.some((m) => m.content?.toString().includes("content of /b.txt"))).toBe(true);
     });
   });
+
+  // -----------------------------------------------------------------------
+  // 8. Structured output — final_response mode
+  // -----------------------------------------------------------------------
+  describe("structured output — final_response mode", () => {
+    const schema = {
+      type: "json_schema" as const,
+      schema: {
+        type: "object",
+        properties: { answer: { type: "string" } },
+        required: ["answer"],
+      },
+      name: "result",
+      strict: true,
+    };
+
+    it("emits structured_output event and stops on StructuredOutput tool call", async () => {
+      let callCount = 0;
+      const soProvider: AIProvider = {
+        async *chat() {
+          callCount++;
+          if (callCount === 1) {
+            yield toolCallStartChunk("tc_so", "StructuredOutput");
+            yield toolCallArgChunk('{"data":{"answer":"42"}}');
+            yield toolCallsFinishChunk();
+          } else {
+            for (const c of textResponse("should not reach")) yield c;
+          }
+        },
+      };
+
+      const config: ThreadConfig = {
+        ...baseConfig,
+        provider: soProvider,
+        outputFormat: schema,
+        structuredOutputMode: "final_response",
+      };
+
+      const thread = new Thread(config, { sessionId: "so-final" });
+      const events = await collectEvents(thread.run("answer"));
+
+      const soEvents = events.filter((e) => e.type === "structured_output");
+      expect(soEvents).toHaveLength(1);
+      expect((soEvents[0] as any).data).toEqual({ answer: "42" });
+
+      const turnComplete = events.find((e) => e.type === "turn_complete");
+      expect(turnComplete).toBeDefined();
+
+      expect(callCount).toBe(1);
+    });
+
+    it("emits structured_output with raw args when inner data parse succeeds but has no data key", async () => {
+      const soProvider: AIProvider = {
+        async *chat() {
+          yield toolCallStartChunk("tc_so2", "StructuredOutput");
+          yield toolCallArgChunk('{"answer":"direct"}');
+          yield toolCallsFinishChunk();
+        },
+      };
+
+      const config: ThreadConfig = {
+        ...baseConfig,
+        provider: soProvider,
+        outputFormat: schema,
+        structuredOutputMode: "final_response",
+      };
+
+      const thread = new Thread(config, { sessionId: "so-no-data-key" });
+      const events = await collectEvents(thread.run("answer"));
+
+      const soEvents = events.filter((e) => e.type === "structured_output");
+      expect(soEvents).toHaveLength(1);
+      // When no `data` key, falls back to the entire parsed object
+      expect((soEvents[0] as any).data).toEqual({ answer: "direct" });
+    });
+
+    it("treats malformed-JSON StructuredOutput args as a malformed tool call", async () => {
+      let callCount = 0;
+      const soProvider: AIProvider = {
+        async *chat() {
+          callCount++;
+          if (callCount === 1) {
+            yield toolCallStartChunk("tc_so3", "StructuredOutput");
+            yield toolCallArgChunk("not valid json");
+            yield toolCallsFinishChunk();
+          } else {
+            for (const c of textResponse("gave up")) yield c;
+          }
+        },
+      };
+
+      const config: ThreadConfig = {
+        ...baseConfig,
+        provider: soProvider,
+        outputFormat: schema,
+        structuredOutputMode: "final_response",
+      };
+
+      const thread = new Thread(config, { sessionId: "so-malformed" });
+      const events = await collectEvents(thread.run("answer", { maxTurns: 2 }));
+
+      // The malformed tool call triggers a retry, not a structured_output
+      const soEvents = events.filter((e) => e.type === "structured_output");
+      expect(soEvents).toHaveLength(0);
+      expect(callCount).toBe(2);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // 9. Structured output — alongside_tools mode
+  // -----------------------------------------------------------------------
+  describe("structured output — alongside_tools mode", () => {
+    const schema = {
+      type: "json_schema" as const,
+      schema: {
+        type: "object",
+        properties: { result: { type: "number" } },
+        required: ["result"],
+      },
+      name: "calc_result",
+    };
+
+    it("emits structured_output when model text is valid JSON", async () => {
+      const jsonProvider: AIProvider = {
+        async *chat() {
+          yield textChunk('{"result": 99}');
+          yield stopChunk();
+        },
+      };
+
+      const config: ThreadConfig = {
+        ...baseConfig,
+        provider: jsonProvider,
+        outputFormat: schema,
+      };
+
+      const thread = new Thread(config, { sessionId: "so-alongside-ok" });
+      const events = await collectEvents(thread.run("calculate"));
+
+      const soEvents = events.filter((e) => e.type === "structured_output");
+      expect(soEvents).toHaveLength(1);
+      expect((soEvents[0] as any).data).toEqual({ result: 99 });
+
+      const msgComplete = events.find((e) => e.type === "message_complete");
+      expect(msgComplete).toBeDefined();
+    });
+
+    it("does not emit structured_output when model text is not valid JSON", async () => {
+      const plainProvider: AIProvider = {
+        async *chat() {
+          yield textChunk("This is plain text, not JSON");
+          yield stopChunk();
+        },
+      };
+
+      const config: ThreadConfig = {
+        ...baseConfig,
+        provider: plainProvider,
+        outputFormat: schema,
+      };
+
+      const thread = new Thread(config, { sessionId: "so-alongside-nojson" });
+      const events = await collectEvents(thread.run("describe"));
+
+      const soEvents = events.filter((e) => e.type === "structured_output");
+      expect(soEvents).toHaveLength(0);
+
+      const msgComplete = events.find((e) => e.type === "message_complete");
+      expect(msgComplete).toBeDefined();
+    });
+  });
 });

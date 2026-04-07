@@ -427,8 +427,8 @@ describe("NoumenServer", () => {
       expect(idMatches!.length).toBeGreaterThanOrEqual(1);
     });
 
-    it("respects Last-Event-ID on reconnect", async () => {
-      provider.addResponse(textResponse("hello"));
+    it("respects Last-Event-ID on reconnect — replays only events after the given seq", async () => {
+      provider.addResponse(textResponse("hello world"));
 
       code = makeCode();
       ({ server, baseUrl } = await startServer(code));
@@ -436,16 +436,33 @@ describe("NoumenServer", () => {
       const createRes = await post(`${baseUrl}/sessions`, { prompt: "hi" });
       const { sessionId } = await createRes.json() as any;
 
-      await new Promise((r) => setTimeout(r, 300));
+      // Wait for the run to complete so events are buffered
+      await new Promise((r) => setTimeout(r, 500));
 
-      // First: read all events and note the total count
-      const allEvents = await readSseEvents(`${baseUrl}/sessions/${sessionId}/events`, { untilType: "turn_complete" });
-      expect(allEvents.length).toBeGreaterThan(0);
+      // Access the internal session state to inspect buffered events
+      const sessions = (server as any).sessions as Map<string, any>;
+      const session = sessions.get(sessionId);
+      expect(session).toBeDefined();
 
-      // All events should have been consumed from the buffer now.
-      // There's nothing to replay, so a second read with Last-Event-ID
-      // of a very high number should return no buffered events.
-      // (The turn is already complete, no new events will arrive.)
+      // Capture the total event count and a midpoint seq
+      const totalBuffered = session.eventBuffer.length;
+      expect(totalBuffered).toBeGreaterThan(2);
+
+      const midpointSeq = session.eventBuffer[1].seq;
+      const expectedReplayCount = session.eventBuffer.filter(
+        (e: any) => e.seq > midpointSeq,
+      ).length;
+      expect(expectedReplayCount).toBeGreaterThan(0);
+      expect(expectedReplayCount).toBeLessThan(totalBuffered);
+
+      // Connect with Last-Event-ID set to the midpoint — should skip events up to midpoint
+      const events = await readSseEvents(
+        `${baseUrl}/sessions/${sessionId}/events`,
+        { headers: { "Last-Event-ID": String(midpointSeq) }, timeoutMs: 1000 },
+      );
+
+      // Should receive only events after the midpoint
+      expect(events.length).toBe(expectedReplayCount);
     });
   });
 

@@ -337,4 +337,196 @@ describe("Sandbox reconnect validation", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it("SpritesSandbox falls back to POST create when reconnect GET returns 404", async () => {
+    const { vi } = await import("vitest");
+    let fetchCalls: string[] = [];
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = typeof url === "string" ? url : url.toString();
+      fetchCalls.push(`${init?.method ?? "GET"} ${urlStr}`);
+
+      if (init?.method === "GET" && urlStr.includes("/v1/sprites/gone-sprite")) {
+        return new Response("not found", { status: 404 });
+      }
+      if (init?.method === "POST" && urlStr.includes("/v1/sprites")) {
+        return new Response(JSON.stringify({ name: "new-sprite" }), { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    }) as typeof fetch;
+
+    try {
+      const { SpritesSandbox } = await import("../virtual/sandbox.js");
+      const sandbox = SpritesSandbox({ token: "test-token" });
+      await sandbox.init!("gone-sprite");
+
+      // GET should have been tried first
+      const getCalls = fetchCalls.filter(c => c.startsWith("GET") && c.includes("gone-sprite"));
+      expect(getCalls.length).toBeGreaterThanOrEqual(1);
+
+      // POST should have been called to create a new sprite
+      const postCalls = fetchCalls.filter(c => c.startsWith("POST") && c.includes("/v1/sprites"));
+      expect(postCalls.length).toBe(1);
+
+      // sandboxId should be set (to the new generated name, not "gone-sprite")
+      expect(sandbox.sandboxId!()).toBeDefined();
+      expect(sandbox.sandboxId!()).not.toBe("gone-sprite");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Docker reconnect paths
+// ---------------------------------------------------------------------------
+describe("DockerSandbox reconnect", () => {
+  it("reuses existing container when reconnect inspect succeeds", async () => {
+    const { vi } = await import("vitest");
+    let inspectCalled = false;
+    let createCalled = false;
+
+    vi.doMock("dockerode", () => ({
+      default: class MockDocker {
+        getContainer(id: string) {
+          return {
+            id,
+            async inspect() {
+              inspectCalled = true;
+              return { Id: id, State: { Running: true } };
+            },
+            async exec(options: Record<string, unknown>) {
+              const { Readable } = await import("node:stream");
+              const stream = new Readable({ read() { this.push(null); } });
+              return { async start() { return stream; }, async inspect() { return { ExitCode: 0 }; } };
+            },
+          };
+        }
+        async createContainer() {
+          createCalled = true;
+          return {};
+        }
+      },
+    }));
+
+    const { DockerSandbox } = await import("../virtual/sandbox.js");
+    const sandbox = DockerSandbox({ image: "ubuntu:latest" });
+    await sandbox.init!("existing-container-id");
+
+    expect(inspectCalled).toBe(true);
+    expect(createCalled).toBe(false);
+    expect(sandbox.sandboxId!()).toBe("existing-container-id");
+
+    vi.doUnmock("dockerode");
+  });
+
+  it("creates a new container when reconnect inspect throws", async () => {
+    const { vi } = await import("vitest");
+    let createCalled = false;
+    const createdId = "new-container-123";
+
+    vi.doMock("dockerode", () => ({
+      default: class MockDocker {
+        getContainer() {
+          return {
+            async inspect() {
+              throw new Error("container not found");
+            },
+          };
+        }
+        async createContainer() {
+          createCalled = true;
+          return {
+            id: createdId,
+            async start() {},
+            async inspect() { return { Id: createdId, State: { Running: true } }; },
+            async exec(options: Record<string, unknown>) {
+              const { Readable } = await import("node:stream");
+              const stream = new Readable({ read() { this.push(null); } });
+              return { async start() { return stream; }, async inspect() { return { ExitCode: 0 }; } };
+            },
+          };
+        }
+      },
+    }));
+
+    const { DockerSandbox } = await import("../virtual/sandbox.js");
+    const sandbox = DockerSandbox({ image: "ubuntu:latest" });
+    await sandbox.init!("nonexistent-container");
+
+    expect(createCalled).toBe(true);
+
+    vi.doUnmock("dockerode");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// E2B reconnect paths
+// ---------------------------------------------------------------------------
+describe("E2BSandbox reconnect", () => {
+  it("reconnects to existing sandbox when connect succeeds", async () => {
+    const { vi } = await import("vitest");
+    let connectCalled = false;
+    let createCalled = false;
+
+    vi.doMock("e2b", () => ({
+      Sandbox: {
+        async connect(id: string) {
+          connectCalled = true;
+          return {
+            commands: { run: vi.fn().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }) },
+            files: {
+              read: vi.fn(), write: vi.fn(), remove: vi.fn(),
+              makeDir: vi.fn(), list: vi.fn(), exists: vi.fn(), getInfo: vi.fn(),
+            },
+          };
+        },
+        async create() {
+          createCalled = true;
+          return {};
+        },
+      },
+    }));
+
+    const { E2BSandbox } = await import("../virtual/sandbox.js");
+    const sandbox = E2BSandbox({ template: "base" });
+    await sandbox.init!("existing-sandbox-id");
+
+    expect(connectCalled).toBe(true);
+    expect(createCalled).toBe(false);
+
+    vi.doUnmock("e2b");
+  });
+
+  it("falls back to create when connect throws", async () => {
+    const { vi } = await import("vitest");
+    let createCalled = false;
+
+    vi.doMock("e2b", () => ({
+      Sandbox: {
+        async connect() {
+          throw new Error("sandbox expired");
+        },
+        async create() {
+          createCalled = true;
+          return {
+            commands: { run: vi.fn().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }) },
+            files: {
+              read: vi.fn(), write: vi.fn(), remove: vi.fn(),
+              makeDir: vi.fn(), list: vi.fn(), exists: vi.fn(), getInfo: vi.fn(),
+            },
+          };
+        },
+      },
+    }));
+
+    const { E2BSandbox } = await import("../virtual/sandbox.js");
+    const sandbox = E2BSandbox({ template: "base" });
+    await sandbox.init!("expired-sandbox-id");
+
+    expect(createCalled).toBe(true);
+
+    vi.doUnmock("e2b");
+  });
 });

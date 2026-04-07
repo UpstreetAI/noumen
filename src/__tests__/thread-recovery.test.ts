@@ -525,6 +525,40 @@ describe("model switch clears accumulated state", () => {
     expect(switchEvent).toBeDefined();
   });
 
+  it("mid-stream error persists partial text and tool calls as partial assistant", async () => {
+    const midStreamErrorProvider: AIProvider = {
+      async *chat() {
+        yield textChunk("Partial answer so far... ");
+        yield toolCallStartChunk("tc_partial", "ReadFile");
+        yield toolCallArgChunk('{"file_path":"/x.txt"}');
+        throw Object.assign(new Error("Server Error"), { status: 500 });
+      },
+    };
+
+    const cfg: ThreadConfig = {
+      ...config,
+      provider: midStreamErrorProvider,
+      retry: { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 10 },
+    };
+
+    const thread = new Thread(cfg, { sessionId: "midstream-partial" });
+    const events = await collectEvents(thread.run("test mid-stream error"));
+
+    // Should have an error event
+    const errorEvents = events.filter((e) => e.type === "error");
+    expect(errorEvents.length).toBeGreaterThanOrEqual(1);
+
+    // The partial assistant message should be persisted with accumulated text
+    const messages = await thread.getMessages();
+    const assistants = messages.filter((m) => m.role === "assistant") as import("../session/types.js").AssistantMessage[];
+    expect(assistants.length).toBe(1);
+    expect(assistants[0].content).toContain("Partial answer so far");
+
+    // Partial tool calls should also be persisted (with synthetic error results)
+    const toolResults = messages.filter((m) => m.role === "tool");
+    expect(toolResults.length).toBeGreaterThanOrEqual(1);
+  });
+
   it("retries and succeeds after transient errors", async () => {
     let callCount = 0;
     const retryProvider: AIProvider = {
