@@ -195,6 +195,64 @@ function generateRandomMessages(rng: SeededRng): ChatMessage[] {
       } else {
         messages.push({ role: "user", content: `first ${i}` });
       }
+    } else if (roll < 0.93) {
+      // Whitespace content + thinking_content — the adversarial shape that
+      // interacts with both filterWhitespaceOnlyAssistants and
+      // stripTrailingThinkingOnlyAssistant
+      const ws = rng.pick(["\n\n", "  \n", "\t\n", " "]);
+      messages.push({
+        role: "assistant",
+        content: ws,
+        thinking_content: `ws_think ${i}`,
+        ...(rng.bool(0.4) ? { thinking_signature: `ws_sig_${i}` } : {}),
+      } as AssistantMessage);
+    } else if (roll < 0.95) {
+      // tool_result referencing a much-earlier assistant's tool_call_id,
+      // simulating compaction-displaced results
+      const earlyAssts = messages.filter(
+        (m, idx) =>
+          m.role === "assistant" &&
+          (m as AssistantMessage).tool_calls?.length &&
+          idx < messages.length - 3,
+      );
+      if (earlyAssts.length > 0) {
+        const earlyAsst = rng.pick(earlyAssts) as AssistantMessage;
+        const earlyTc = earlyAsst.tool_calls![0];
+        emittedToolResultIds.push(earlyTc.id);
+        messages.push({
+          role: "tool",
+          tool_call_id: earlyTc.id,
+          content: `displaced_early_result ${i}`,
+        } as ToolResultMessage);
+      } else {
+        messages.push({ role: "user", content: `filler ${i}` });
+      }
+    } else if (roll < 0.97) {
+      // Assistant with tool_calls + thinking_content but null content,
+      // partially resolved (not all tool results follow)
+      const numCalls = rng.int(1, 3);
+      const calls: ToolCallContent[] = [];
+      for (let j = 0; j < numCalls; j++) {
+        const id = freshId();
+        calls.push(makeTc(id, rng.pick(TOOL_NAMES)));
+        emittedToolUseIds.push(id);
+      }
+      messages.push({
+        role: "assistant",
+        content: null,
+        tool_calls: calls,
+        thinking_content: `think_tool ${i}`,
+        ...(rng.bool(0.3) ? { thinking_signature: `ts_${i}` } : {}),
+      } as AssistantMessage);
+      const resolveCount = rng.int(0, numCalls - 1);
+      for (let j = 0; j < resolveCount; j++) {
+        emittedToolResultIds.push(calls[j].id);
+        messages.push({
+          role: "tool",
+          tool_call_id: calls[j].id,
+          content: `partial_result ${i}_${j}`,
+        } as ToolResultMessage);
+      }
     } else {
       messages.push({
         role: "assistant",
