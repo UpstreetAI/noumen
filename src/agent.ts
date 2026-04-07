@@ -48,6 +48,15 @@ import { buildUserContext } from "./prompt/context.js";
 import { DEFAULT_RETRY_CONFIG } from "./retry/types.js";
 import type { ContextFile, ProjectContextConfig } from "./context/types.js";
 import { loadProjectContext } from "./context/loader.js";
+import {
+  checkProviderHealth,
+  checkVirtualFs,
+  checkVirtualComputer,
+  checkSandboxRuntime,
+  summarizeMcpStatus,
+  summarizeLspStatus,
+} from "./diagnostics.js";
+import { resolveAgentConfig } from "./agent-config.js";
 
 export interface DiagnoseCheckResult {
   ok: boolean;
@@ -235,8 +244,16 @@ export class Agent {
       this.resolvedProvider = opts.provider;
     }
 
-    const effectiveCwd = opts.cwd ?? opts.options?.cwd ?? process.cwd();
-    const resolvedSandbox = opts.sandbox ?? UnsandboxedLocal({ cwd: effectiveCwd });
+    const resolved = resolveAgentConfig({
+      cwd: opts.cwd,
+      optionsCwd: opts.options?.cwd,
+      retry: opts.options?.retry,
+      projectContext: opts.options?.projectContext,
+      mcpServers: opts.options?.mcpServers,
+      lsp: opts.options?.lsp,
+    });
+
+    const resolvedSandbox = opts.sandbox ?? UnsandboxedLocal({ cwd: resolved.effectiveCwd });
 
     this.sandbox = resolvedSandbox;
     this.fs = resolvedSandbox.fs;
@@ -250,7 +267,7 @@ export class Agent {
     this.maxTokens = opts.options?.maxTokens;
     this.autoCompactEnabled = opts.options?.autoCompact ?? true;
     this.autoCompactThreshold = opts.options?.autoCompactThreshold;
-    this.cwd = effectiveCwd;
+    this.cwd = resolved.effectiveCwd;
     this.storage = new SessionStorage(this.fs, this.sessionDir);
     this.permissions = opts.options?.permissions;
     this.hooks = opts.options?.hooks ?? [];
@@ -262,28 +279,21 @@ export class Agent {
     }
     this.enablePlanMode = opts.options?.enablePlanMode ?? false;
     this.enableWorktrees = opts.options?.enableWorktrees ?? false;
-    if (opts.options?.lsp && Object.keys(opts.options.lsp).length > 0) {
-      this.lspConfigs = opts.options.lsp;
-    }
+    this.lspConfigs = resolved.lspConfigs as Record<string, LspServerConfig> | undefined;
     this.streamingToolExecution = opts.options?.streamingToolExecution ?? false;
     this.webSearchConfig = opts.options?.webSearch;
     this.userInputHandler = opts.options?.userInputHandler;
     this.thinkingConfig = opts.options?.thinking;
-
-    if (opts.options?.retry === true) {
-      this.retryConfig = DEFAULT_RETRY_CONFIG;
-    } else if (typeof opts.options?.retry === "object") {
-      this.retryConfig = opts.options.retry;
-    }
+    this.retryConfig = resolved.retryConfig;
 
     if (opts.options?.costTracking?.enabled) {
       this.costTracker = new CostTracker(opts.options.costTracking.pricing);
     }
 
-    if (opts.options?.mcpServers && Object.keys(opts.options.mcpServers).length > 0) {
-      this.mcpServerConfigs = opts.options.mcpServers;
-      this.mcpTokenStorage = opts.options.mcpTokenStorage;
-      this.mcpOnAuthorizationUrl = opts.options.mcpOnAuthorizationUrl;
+    if (resolved.mcpServerConfigs) {
+      this.mcpServerConfigs = resolved.mcpServerConfigs as Record<string, McpServerConfig>;
+      this.mcpTokenStorage = opts.options?.mcpTokenStorage;
+      this.mcpOnAuthorizationUrl = opts.options?.mcpOnAuthorizationUrl;
     }
 
     this.tracer = opts.options?.tracing?.tracer;
@@ -297,13 +307,7 @@ export class Agent {
     this.toolResultBudgetConfig = opts.options?.toolResultBudget;
     this.reactiveCompactConfig = opts.options?.reactiveCompact;
     this.toolSearchEnabled = opts.options?.toolSearch ?? false;
-
-    if (opts.options?.projectContext === true) {
-      this.projectContextConfig = { cwd: this.cwd };
-    } else if (typeof opts.options?.projectContext === "object") {
-      this.projectContextConfig = opts.options.projectContext;
-    }
-
+    this.projectContextConfig = resolved.projectContextConfig;
     this.promptCachingConfig = opts.options?.promptCaching;
     this.fileStateCacheConfig = opts.options?.fileStateCache;
     this.toolResultStorageConfig = opts.options?.toolResultStorage;
@@ -673,132 +677,18 @@ export class Agent {
    * @param timeoutMs Per-check timeout in milliseconds (default 10 000).
    */
   async diagnose(timeoutMs = 10_000): Promise<DiagnoseResult> {
-    const timedCheck = async <T>(
-      fn: () => Promise<T>,
-    ): Promise<{ value: T; latencyMs: number }> => {
-      const start = performance.now();
-      const value = await Promise.race([
-        fn(),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`Timed out after ${timeoutMs}ms`)), timeoutMs),
-        ),
-      ]);
-      return { value, latencyMs: Math.round(performance.now() - start) };
-    };
+    const providerCheck = await checkProviderHealth(this.getProvider(), this.model, timeoutMs);
+    const fsCheck = await checkVirtualFs(this.fs, timeoutMs);
+    const computerCheck = await checkVirtualComputer(this.computer, timeoutMs);
+    const sandboxRuntimeCheck = await checkSandboxRuntime();
 
-    const fail = (err: unknown): string =>
-      err instanceof Error ? err.message : String(err);
+    const mcpResults = this.mcpManager
+      ? summarizeMcpStatus(this.mcpManager.getConnectionStatus())
+      : {};
 
-    // --- Provider ----------------------------------------------------------
-    let providerCheck: DiagnoseResult["provider"];
-    try {
-      const { latencyMs } = await timedCheck(async () => {
-        const stream = this.getProvider().chat({
-          model: this.model as string,
-          messages: [{ role: "user", content: "Say ok" }],
-          tools: [],
-          system: "",
-        });
-        for await (const _ of stream) { break; }
-      });
-      providerCheck = { ok: true, latencyMs, model: this.model };
-    } catch (err) {
-      providerCheck = { ok: false, latencyMs: 0, error: fail(err), model: this.model };
-    }
-
-    // --- Sandbox FS --------------------------------------------------------
-    let fsCheck: DiagnoseCheckResult;
-    try {
-      const { latencyMs } = await timedCheck(async () => this.fs.exists("/"));
-      fsCheck = { ok: true, latencyMs };
-    } catch (err) {
-      fsCheck = { ok: false, latencyMs: 0, error: fail(err) };
-    }
-
-    // --- Sandbox Computer --------------------------------------------------
-    let computerCheck: DiagnoseCheckResult;
-    try {
-      const { value: cmd, latencyMs } = await timedCheck(
-        async () => this.computer.executeCommand("echo ok"),
-      );
-      if (cmd.exitCode === 0) {
-        computerCheck = { ok: true, latencyMs };
-      } else {
-        computerCheck = { ok: false, latencyMs, warning: "Shell returned non-zero" };
-      }
-    } catch (err) {
-      computerCheck = { ok: false, latencyMs: 0, error: fail(err) };
-    }
-
-    // --- Sandbox Runtime (OS-level sandboxing) ------------------------------
-    let sandboxRuntimeCheck: DiagnoseResult["sandboxRuntime"];
-    try {
-      const { SandboxManager } = await import("@anthropic-ai/sandbox-runtime");
-      const supported = SandboxManager.isSupportedPlatform();
-      const deps = SandboxManager.checkDependencies();
-      const hasErrors = deps.errors.length > 0;
-      if (supported && !hasErrors) {
-        sandboxRuntimeCheck = {
-          ok: true,
-          latencyMs: 0,
-          platform: process.platform,
-          ...(deps.warnings.length > 0 && { warning: deps.warnings.join("; ") }),
-        };
-      } else {
-        const reasons: string[] = [];
-        if (!supported) reasons.push(`platform ${process.platform} not supported`);
-        reasons.push(...deps.errors);
-        sandboxRuntimeCheck = {
-          ok: false,
-          latencyMs: 0,
-          warning: reasons.join("; "),
-          platform: process.platform,
-        };
-      }
-    } catch (err) {
-      sandboxRuntimeCheck = {
-        ok: false,
-        latencyMs: 0,
-        warning: `@anthropic-ai/sandbox-runtime not available: ${err instanceof Error ? err.message : String(err)}`,
-        platform: process.platform,
-      };
-    }
-
-    // --- MCP servers -------------------------------------------------------
-    const mcpResults: DiagnoseResult["mcp"] = {};
-    if (this.mcpManager) {
-      const statuses = this.mcpManager.getConnectionStatus();
-      for (const s of statuses) {
-        const ok = s.status === "connected";
-        mcpResults[s.name] = {
-          ok,
-          latencyMs: 0,
-          status: s.status,
-          toolCount: s.toolCount,
-          ...(!ok && s.status === "needs-auth"
-            ? { warning: "Requires OAuth authentication" }
-            : {}),
-          ...(!ok && s.status === "failed"
-            ? { error: "Connection failed" }
-            : {}),
-        };
-      }
-    }
-
-    // --- LSP servers -------------------------------------------------------
-    const lspResults: DiagnoseResult["lsp"] = {};
-    if (this.lspManager) {
-      for (const s of this.lspManager.getServerStatus()) {
-        lspResults[s.name] = {
-          ok: s.state === "running",
-          latencyMs: 0,
-          state: s.state,
-          ...(s.state !== "running" && s.state !== "idle"
-            ? { warning: `Server state: ${s.state}` }
-            : {}),
-        };
-      }
-    }
+    const lspResults = this.lspManager
+      ? summarizeLspStatus(this.lspManager.getServerStatus())
+      : {};
 
     const overall = providerCheck.ok && fsCheck.ok && computerCheck.ok;
 

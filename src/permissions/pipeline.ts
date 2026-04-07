@@ -13,11 +13,12 @@ import { getMatchingRules, isPathInWorkingDirectories } from "./rules.js";
 import { resolveToolFlag } from "../tools/registry.js";
 import { classifyPermission } from "./classifier.js";
 import type { DenialTracker } from "./denial-tracking.js";
-import { extractCommandName, splitCompoundCommand } from "../tools/shell-safety/command-classification.js";
-
-const ACCEPT_EDITS_BASH_ALLOWLIST = new Set([
-  "mkdir", "touch", "mv", "cp", "sed", "chmod",
-]);
+import { splitCompoundCommand } from "../tools/shell-safety/command-classification.js";
+import {
+  extractContentHint,
+  resolveAcceptEditsDecision,
+  resolveAutoModeDecision,
+} from "./helpers.js";
 
 const DANGEROUS_PATH_PATTERNS = [
   /(?:^|\/)\.git(?:\/|$)/,
@@ -251,69 +252,14 @@ export async function resolvePermission(
   }
 
   if (permCtx.mode === "acceptEdits") {
-    if (isDestructive) {
-      return {
-        behavior: "ask",
-        message: `Tool "${toolName}" is destructive and requires approval in acceptEdits mode.`,
-        reason: "mode",
-      };
-    }
-    if (toolName === "Bash") {
-      const cmd = typeof input.command === "string" ? input.command : "";
-      const subCommands = splitCompoundCommand(cmd);
-      for (const sub of subCommands) {
-        const baseName = extractCommandName(sub);
-        if (!ACCEPT_EDITS_BASH_ALLOWLIST.has(baseName)) {
-          return {
-            behavior: "ask",
-            message: `Tool "${toolName}" (${baseName}) is not in the acceptEdits allowlist.`,
-            reason: "mode",
-          };
-        }
-      }
-      if (permCtx.workingDirectories.length > 0) {
-        for (const sub of subCommands) {
-          const tokens = sub.trim().split(/\s+/).slice(1);
-          for (const token of tokens) {
-            if (token.startsWith("-")) continue;
-            if (path.isAbsolute(token) && !isPathInWorkingDirectories(token, permCtx.workingDirectories)) {
-              return {
-                behavior: "ask",
-                message: `Bash command references path "${token}" outside working directories.`,
-                reason: "workingDirectory",
-              };
-            }
-          }
-        }
-      }
-    }
-    if (permCtx.workingDirectories.length > 0) {
-      const filePath =
-        typeof input.file_path === "string" ? input.file_path
-        : typeof input.path === "string" ? input.path
-        : undefined;
-      if (filePath && !isPathInWorkingDirectories(filePath, permCtx.workingDirectories)) {
-        return {
-          behavior: "ask",
-          message: `Path "${filePath}" is outside working directories in acceptEdits mode.`,
-          reason: "workingDirectory",
-        };
-      }
-    }
-    // Non-file, non-bash, non-read-only tools require approval in acceptEdits
-    const hasFilePath = typeof input.file_path === "string" || typeof input.path === "string";
-    if (!isReadOnly && !hasFilePath && toolName !== "Bash") {
-      return {
-        behavior: "ask",
-        message: `Tool "${toolName}" requires approval in acceptEdits mode.`,
-        reason: "mode",
-      };
-    }
-    return {
-      behavior: "allow",
-      updatedInput: effectiveInput,
-      reason: "mode",
-    };
+    return resolveAcceptEditsDecision({
+      toolName,
+      input,
+      effectiveInput,
+      isReadOnly,
+      isDestructive,
+      workingDirectories: permCtx.workingDirectories,
+    });
   }
 
   // Auto mode: use classifier to decide
@@ -326,7 +272,7 @@ export async function resolvePermission(
       };
     }
 
-    const result = await classifyPermission(
+    const classifierResult = await classifyPermission(
       toolName,
       input,
       opts.recentMessages ?? [],
@@ -339,48 +285,13 @@ export async function resolvePermission(
       },
     );
 
-    if (result.shouldBlock) {
-      if (opts.denialTracker) {
-        opts.denialTracker.recordDenial();
-        const fallback = opts.denialTracker.shouldFallback();
-        if (fallback.triggered) {
-          if (fallback.reason === "repeated_consecutive") {
-            return {
-              behavior: "deny",
-              message: `Auto-mode classifier denied too many actions without user approval. Aborting.`,
-              reason: "denial_limit",
-            };
-          }
-          opts.denialTracker.resetAfterFallback(fallback.reason as "consecutive" | "total");
-          return {
-            behavior: "ask",
-            message: `Auto-mode classifier denied too many consecutive actions. Falling back to user prompt.`,
-            reason: "denial_limit",
-          };
-        }
-      }
-      return {
-        behavior: "deny",
-        message: `Auto-mode classifier flagged this call: ${result.reason}`,
-        reason: "classifier",
-      };
-    }
-
-    if (tool.requiresUserInteraction) {
-      return {
-        behavior: "ask",
-        message: `Tool "${toolName}" requires user interaction.`,
-        reason: "interaction",
-      };
-    }
-
-    opts?.denialTracker?.recordSuccess();
-
-    return {
-      behavior: "allow",
-      updatedInput: effectiveInput,
-      reason: "classifier",
-    };
+    return resolveAutoModeDecision({
+      toolName,
+      effectiveInput,
+      classifierResult,
+      denialTracker: opts.denialTracker,
+      requiresUserInteraction: !!tool.requiresUserInteraction,
+    });
   }
 
   // Tool's checkPermissions explicitly approved this call and no mode
@@ -499,21 +410,7 @@ export async function resolvePermission(
   return finalAsk;
 }
 
-/**
- * Extract a content string from tool input for rule matching.
- *
- * For file tools this is the `file_path`; for bash it's the `command`.
- * Returns `undefined` if no meaningful content is available.
- */
-function extractContentHint(
-  tool: Tool,
-  input: Record<string, unknown>,
-): string | undefined {
-  if (typeof input.file_path === "string") return input.file_path;
-  if (typeof input.command === "string") return input.command;
-  if (typeof input.path === "string") return input.path;
-  return undefined;
-}
+// extractContentHint is now imported from ./helpers.js
 
 /**
  * Check whether a file path targets a sensitive location that should always

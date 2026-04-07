@@ -244,7 +244,7 @@ export function convertAnthropicMessages(
   };
 }
 
-function makeChunk(
+export function makeChunk(
   id: string,
   model: string,
   delta: Record<string, unknown>,
@@ -262,16 +262,20 @@ function makeChunk(
   };
 }
 
-/**
- * Stream an Anthropic-compatible chat call and yield OpenAI-shaped ChatStreamChunks.
- * Works with Anthropic, AnthropicBedrock, and AnthropicVertex clients.
- */
-export async function* streamAnthropicChat(
-  client: AnthropicStreamClient,
+// ---------------------------------------------------------------------------
+// buildAnthropicRequestParams — pure param construction
+// ---------------------------------------------------------------------------
+
+export interface AnthropicRequestParamsResult {
+  streamParams: Record<string, unknown>;
+  model: string;
+}
+
+export function buildAnthropicRequestParams(
   params: ChatParams,
   defaultModel: string,
   cacheConfig?: CacheControlConfig,
-): AsyncIterable<ChatStreamChunk> {
+): AnthropicRequestParamsResult {
   const { system, messages: inputMessages } = convertAnthropicMessages(
     params.system,
     params.messages,
@@ -333,8 +337,6 @@ export async function* streamAnthropicChat(
     }
     streamParams.betas = betas;
   } else if (params.outputFormat?.type === "json_object") {
-    // Anthropic has no native json_object mode. Prepend a system-level hint
-    // so the model knows to produce valid JSON.
     const hint = "\n\nYou MUST respond with valid JSON only. No markdown, no explanation — just a single JSON object.";
     if (typeof streamParams.system === "string") {
       streamParams.system = streamParams.system + hint;
@@ -351,6 +353,216 @@ export async function* streamAnthropicChat(
     }
   }
 
+  return { streamParams, model };
+}
+
+// ---------------------------------------------------------------------------
+// mapAnthropicStopReason — pure stop_reason -> finish_reason mapping
+// ---------------------------------------------------------------------------
+
+export function mapAnthropicStopReason(
+  stopReason: string | undefined,
+  hasToolCalls: boolean,
+): string {
+  switch (stopReason) {
+    case "end_turn": return "stop";
+    case "tool_use": return "tool_calls";
+    case "max_tokens": return "length";
+    case "model_context_window_exceeded": return "length";
+    case "stop_sequence": return "stop";
+    case "refusal": return "content_filter";
+    default: return hasToolCalls ? "tool_calls" : "stop";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// AnthropicStreamState + processAnthropicStreamEvent — reducer pattern
+// ---------------------------------------------------------------------------
+
+export interface AnthropicStreamState {
+  chunkIndex: number;
+  toolIndexMap: Map<string, number>;
+  blockIndexToToolId: Map<number, string>;
+  blockIndexToType: Map<number, string>;
+  nextToolIndex: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  thinkingTokens: number;
+  stopReason: string | undefined;
+  receivedMessageStop: boolean;
+}
+
+export function createAnthropicStreamState(): AnthropicStreamState {
+  return {
+    chunkIndex: 0,
+    toolIndexMap: new Map(),
+    blockIndexToToolId: new Map(),
+    blockIndexToType: new Map(),
+    nextToolIndex: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    thinkingTokens: 0,
+    stopReason: undefined,
+    receivedMessageStop: false,
+  };
+}
+
+export function processAnthropicStreamEvent(
+  ev: Record<string, unknown>,
+  state: AnthropicStreamState,
+  model: string,
+): ChatStreamChunk[] {
+  const chunks: ChatStreamChunk[] = [];
+  const chunkId = `chatcmpl-${state.chunkIndex++}`;
+
+  if (ev.type === "message_start") {
+    const msg = (ev.message as Record<string, unknown>) ?? {};
+    const usage = msg.usage as Record<string, unknown> | undefined;
+    if (usage) {
+      state.inputTokens = (usage.input_tokens as number) ?? 0;
+      state.outputTokens = (usage.output_tokens as number) ?? 0;
+      state.cacheReadTokens = (usage.cache_read_input_tokens as number) ?? 0;
+      state.cacheCreationTokens = (usage.cache_creation_input_tokens as number) ?? 0;
+      if (usage.thinking_tokens) state.thinkingTokens = usage.thinking_tokens as number;
+    }
+    return chunks;
+  }
+
+  if (ev.type === "message_delta") {
+    const delta = ev.delta as Record<string, unknown> | undefined;
+    if (delta?.stop_reason) {
+      state.stopReason = delta.stop_reason as string;
+    }
+    const usage = ev.usage as Record<string, unknown> | undefined;
+    if (usage?.output_tokens != null) {
+      state.outputTokens = usage.output_tokens as number;
+    }
+    if (usage?.thinking_tokens != null) {
+      state.thinkingTokens = usage.thinking_tokens as number;
+    }
+    return chunks;
+  }
+
+  if (ev.type === "content_block_start") {
+    const block = (ev.content_block as Record<string, unknown>) ?? {};
+    const blockIndex = ev.index as number | undefined;
+    if (blockIndex !== undefined) {
+      state.blockIndexToType.set(blockIndex, block.type as string);
+    }
+
+    if (block.type === "thinking") {
+      chunks.push(makeChunk(chunkId, model, { thinking_content: "" }));
+    } else if (block.type === "redacted_thinking") {
+      const redactedData = block.data as string | undefined;
+      chunks.push(makeChunk(chunkId, model, { redacted_thinking_data: redactedData ?? "" }));
+    } else if (block.type === "text") {
+      chunks.push(makeChunk(chunkId, model, { content: "" }));
+    } else if (block.type === "tool_use") {
+      const toolBlock = block as unknown as AnthropicToolUseBlock;
+      const idx = state.nextToolIndex++;
+      state.toolIndexMap.set(toolBlock.id, idx);
+      if (blockIndex !== undefined) {
+        state.blockIndexToToolId.set(blockIndex, toolBlock.id);
+      }
+      chunks.push(makeChunk(chunkId, model, {
+        tool_calls: [
+          {
+            index: idx,
+            id: toolBlock.id,
+            type: "function",
+            function: { name: toolBlock.name, arguments: "" },
+          },
+        ],
+      }));
+    }
+    return chunks;
+  }
+
+  if (ev.type === "content_block_delta") {
+    const delta = ev.delta as Record<string, unknown>;
+    const deltaType = delta.type;
+    const blockIndex = ev.index as number | undefined;
+
+    if (deltaType === "thinking_delta") {
+      chunks.push(makeChunk(chunkId, model, {
+        thinking_content: delta.thinking as string,
+      }));
+    } else if (deltaType === "text_delta") {
+      chunks.push(makeChunk(chunkId, model, {
+        content: delta.text as string,
+      }));
+    } else if (deltaType === "signature_delta") {
+      if (blockIndex !== undefined && state.blockIndexToType.get(blockIndex) === "thinking") {
+        chunks.push(makeChunk(chunkId, model, {
+          thinking_signature: delta.signature as string,
+        }));
+      }
+    } else if (deltaType === "input_json_delta") {
+      let toolId: string | undefined;
+      if (blockIndex !== undefined) {
+        toolId = state.blockIndexToToolId.get(blockIndex);
+      }
+      if (!toolId) {
+        toolId = Array.from(state.toolIndexMap.keys()).pop();
+      }
+      if (toolId) {
+        const idx = state.toolIndexMap.get(toolId)!;
+        chunks.push(makeChunk(chunkId, model, {
+          tool_calls: [
+            {
+              index: idx,
+              function: { arguments: delta.partial_json as string },
+            },
+          ],
+        }));
+      }
+    }
+    return chunks;
+  }
+
+  if (ev.type === "message_stop") {
+    state.receivedMessageStop = true;
+    const finishReason = mapAnthropicStopReason(state.stopReason, state.toolIndexMap.size > 0);
+    chunks.push({
+      id: chunkId,
+      model,
+      choices: [
+        {
+          index: 0,
+          delta: {},
+          finish_reason: finishReason,
+        },
+      ],
+      usage: {
+        prompt_tokens: state.inputTokens,
+        completion_tokens: state.outputTokens,
+        total_tokens: state.inputTokens + state.outputTokens,
+        cache_read_tokens: state.cacheReadTokens || undefined,
+        cache_creation_tokens: state.cacheCreationTokens || undefined,
+        thinking_tokens: state.thinkingTokens || undefined,
+      },
+    });
+    return chunks;
+  }
+
+  return chunks;
+}
+
+/**
+ * Stream an Anthropic-compatible chat call and yield OpenAI-shaped ChatStreamChunks.
+ * Works with Anthropic, AnthropicBedrock, and AnthropicVertex clients.
+ */
+export async function* streamAnthropicChat(
+  client: AnthropicStreamClient,
+  params: ChatParams,
+  defaultModel: string,
+  cacheConfig?: CacheControlConfig,
+): AsyncIterable<ChatStreamChunk> {
+  const { streamParams, model } = buildAnthropicRequestParams(params, defaultModel, cacheConfig);
   const requestSignal = params.signal;
 
   let stream: AsyncIterable<Record<string, unknown>>;
@@ -371,165 +583,22 @@ export async function* streamAnthropicChat(
     );
   }
 
-  let chunkIndex = 0;
-  const toolIndexMap = new Map<string, number>();
-  const blockIndexToToolId = new Map<number, string>();
-  const blockIndexToType = new Map<number, string>();
-  let nextToolIndex = 0;
-  let inputTokens = 0;
-  let outputTokens = 0;
-  let cacheReadTokens = 0;
-  let cacheCreationTokens = 0;
-  let thinkingTokens = 0;
-  let stopReason: string | undefined;
-  let receivedMessageStop = false;
+  const state = createAnthropicStreamState();
 
   try {
-  for await (const event of stream) {
-    const ev = event as Record<string, unknown>;
-    const chunkId = `chatcmpl-${chunkIndex++}`;
-
-    if (ev.type === "message_start") {
-      const msg = (ev.message as Record<string, unknown>) ?? {};
-      const usage = msg.usage as Record<string, unknown> | undefined;
-      if (usage) {
-        inputTokens = (usage.input_tokens as number) ?? 0;
-        outputTokens = (usage.output_tokens as number) ?? 0;
-        cacheReadTokens = (usage.cache_read_input_tokens as number) ?? 0;
-        cacheCreationTokens = (usage.cache_creation_input_tokens as number) ?? 0;
-        if (usage.thinking_tokens) thinkingTokens = usage.thinking_tokens as number;
+    for await (const event of stream) {
+      const ev = event as Record<string, unknown>;
+      for (const chunk of processAnthropicStreamEvent(ev, state, model)) {
+        yield chunk;
       }
-      continue;
     }
 
-    if (ev.type === "message_delta") {
-      const delta = (ev as Record<string, unknown>).delta as Record<string, unknown> | undefined;
-      if (delta?.stop_reason) {
-        stopReason = delta.stop_reason as string;
-      }
-      const usage = (ev as Record<string, unknown>).usage as
-        | Record<string, unknown>
-        | undefined;
-      if (usage?.output_tokens != null) {
-        outputTokens = usage.output_tokens as number;
-      }
-      if (usage?.thinking_tokens != null) {
-        thinkingTokens = usage.thinking_tokens as number;
-      }
-      continue;
+    if (!state.receivedMessageStop && state.chunkIndex > 0) {
+      throw new ChatStreamError(
+        "Stream ended without receiving message_stop event",
+        { cause: new Error("incomplete_stream") },
+      );
     }
-
-    if (ev.type === "content_block_start") {
-      const block = (ev.content_block as Record<string, unknown>) ?? {};
-      const blockIndex = ev.index as number | undefined;
-      if (blockIndex !== undefined) {
-        blockIndexToType.set(blockIndex, block.type as string);
-      }
-
-      if (block.type === "thinking") {
-        yield makeChunk(chunkId, model, { thinking_content: "" });
-      } else if (block.type === "redacted_thinking") {
-        const redactedData = (block as Record<string, unknown>).data as string | undefined;
-        yield makeChunk(chunkId, model, { redacted_thinking_data: redactedData ?? "" });
-      } else if (block.type === "text") {
-        yield makeChunk(chunkId, model, { content: "" });
-      } else if (block.type === "tool_use") {
-        const toolBlock = block as unknown as AnthropicToolUseBlock;
-        const idx = nextToolIndex++;
-        toolIndexMap.set(toolBlock.id, idx);
-        if (blockIndex !== undefined) {
-          blockIndexToToolId.set(blockIndex, toolBlock.id);
-        }
-        yield makeChunk(chunkId, model, {
-          tool_calls: [
-            {
-              index: idx,
-              id: toolBlock.id,
-              type: "function",
-              function: { name: toolBlock.name, arguments: "" },
-            },
-          ],
-        });
-      }
-    } else if (ev.type === "content_block_delta") {
-      const delta = ev.delta as Record<string, unknown>;
-      const deltaType = delta.type;
-      const blockIndex = ev.index as number | undefined;
-
-      if (deltaType === "thinking_delta") {
-        yield makeChunk(chunkId, model, {
-          thinking_content: delta.thinking as string,
-        });
-      } else if (deltaType === "text_delta") {
-        yield makeChunk(chunkId, model, {
-          content: delta.text as string,
-        });
-      } else if (deltaType === "signature_delta") {
-        if (blockIndex !== undefined && blockIndexToType.get(blockIndex) === "thinking") {
-          yield makeChunk(chunkId, model, {
-            thinking_signature: delta.signature as string,
-          });
-        }
-      } else if (deltaType === "input_json_delta") {
-        let toolId: string | undefined;
-        if (blockIndex !== undefined) {
-          toolId = blockIndexToToolId.get(blockIndex);
-        }
-        if (!toolId) {
-          toolId = Array.from(toolIndexMap.keys()).pop();
-        }
-        if (toolId) {
-          const idx = toolIndexMap.get(toolId)!;
-          yield makeChunk(chunkId, model, {
-            tool_calls: [
-              {
-                index: idx,
-                function: { arguments: delta.partial_json as string },
-              },
-            ],
-          });
-        }
-      }
-    } else if (ev.type === "message_stop") {
-      receivedMessageStop = true;
-      let finishReason: string;
-      switch (stopReason) {
-        case "end_turn": finishReason = "stop"; break;
-        case "tool_use": finishReason = "tool_calls"; break;
-        case "max_tokens": finishReason = "length"; break;
-        case "model_context_window_exceeded": finishReason = "length"; break;
-        case "stop_sequence": finishReason = "stop"; break;
-        case "refusal": finishReason = "content_filter"; break;
-        default: finishReason = toolIndexMap.size > 0 ? "tool_calls" : "stop"; break;
-      }
-      yield {
-        id: chunkId,
-        model,
-        choices: [
-          {
-            index: 0,
-            delta: {},
-            finish_reason: finishReason,
-          },
-        ],
-        usage: {
-          prompt_tokens: inputTokens,
-          completion_tokens: outputTokens,
-          total_tokens: inputTokens + outputTokens,
-          cache_read_tokens: cacheReadTokens || undefined,
-          cache_creation_tokens: cacheCreationTokens || undefined,
-          thinking_tokens: thinkingTokens || undefined,
-        },
-      };
-    }
-  }
-
-  if (!receivedMessageStop && chunkIndex > 0) {
-    throw new ChatStreamError(
-      "Stream ended without receiving message_stop event",
-      { cause: new Error("incomplete_stream") },
-    );
-  }
   } catch (err: unknown) {
     if (err instanceof ChatStreamError) throw err;
     const apiErr = err as { status?: number; headers?: Record<string, string> & { get?(k: string): string | null } };
