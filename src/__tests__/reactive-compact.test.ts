@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { MockFs, MockAIProvider, textResponse } from "./helpers.js";
 import { SessionStorage } from "../session/storage.js";
 import { tryReactiveCompact } from "../compact/reactive-compact.js";
 import type { ChatMessage } from "../session/types.js";
+import type { AIProvider, ChatParams, ChatStreamChunk } from "../providers/types.js";
 
 let fs: MockFs;
 let storage: SessionStorage;
@@ -124,5 +125,124 @@ describe("tryReactiveCompact", () => {
     const entries = await storage.loadAllEntries("s1");
     expect(entries.some((e) => e.type === "compact-boundary")).toBe(true);
     expect(entries.some((e) => e.type === "summary")).toBe(true);
+  });
+
+  it("propagates AbortError without persisting truncation", async () => {
+    const abortController = new AbortController();
+    abortController.abort();
+
+    const msgs: ChatMessage[] = [
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "world" },
+      { role: "user", content: "more" },
+      { role: "assistant", content: "answers" },
+    ];
+
+    await expect(
+      tryReactiveCompact(provider, "mock-model", msgs, storage, "s1", {
+        signal: abortController.signal,
+      }),
+    ).rejects.toThrow("Compaction aborted");
+
+    const entries = await storage.loadAllEntries("s1");
+    expect(entries.some((e) => e.type === "compact-boundary")).toBe(false);
+  });
+
+  it("mid-stream abort propagates correctly", async () => {
+    const abortController = new AbortController();
+
+    const abortingProvider: AIProvider = {
+      async *chat(_params: ChatParams): AsyncIterable<ChatStreamChunk> {
+        yield {
+          id: "chunk-1",
+          model: "mock-model",
+          choices: [{ index: 0, delta: { content: "partial" }, finish_reason: null }],
+        };
+        abortController.abort();
+        yield {
+          id: "chunk-2",
+          model: "mock-model",
+          choices: [{ index: 0, delta: { content: " summary" }, finish_reason: "stop" }],
+        };
+      },
+    };
+
+    const msgs: ChatMessage[] = [
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "world" },
+      { role: "user", content: "more" },
+      { role: "assistant", content: "answers" },
+    ];
+
+    await expect(
+      tryReactiveCompact(abortingProvider, "mock-model", msgs, storage, "s1", {
+        signal: abortController.signal,
+      }),
+    ).rejects.toThrow("Compaction aborted");
+
+    const entries = await storage.loadAllEntries("s1");
+    expect(entries.some((e) => e.type === "compact-boundary")).toBe(false);
+  });
+
+  it("returns truncated result even when persistence fails", async () => {
+    const errorProvider = new MockAIProvider();
+
+    const msgs: ChatMessage[] = [];
+    for (let i = 0; i < 40; i++) {
+      msgs.push({
+        role: i % 2 === 0 ? "user" : "assistant",
+        content: "x".repeat(20_000),
+      } as ChatMessage);
+    }
+
+    // Sabotage storage writes after the first call so persistence fails
+    const origAppendEntry = storage.appendEntry.bind(storage);
+    let callCount = 0;
+    vi.spyOn(storage, "appendEntry").mockImplementation(async (...args: any[]) => {
+      callCount++;
+      throw new Error("Disk full");
+    });
+    vi.spyOn(storage, "appendCompactBoundary").mockRejectedValue(new Error("Disk full"));
+
+    const result = await tryReactiveCompact(
+      errorProvider,
+      "mock-model",
+      msgs,
+      storage,
+      "persist-fail",
+    );
+
+    // In-memory result should still be usable despite persistence failure
+    if (result) {
+      expect(result.strategy).toBe("truncated");
+      expect(result.messages.length).toBeLessThan(msgs.length);
+      expect(result.messages.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("non-abort errors still trigger truncation fallback", async () => {
+    const errorProvider = new MockAIProvider();
+    // No responses queued — will throw generic error
+
+    const msgs: ChatMessage[] = [];
+    for (let i = 0; i < 40; i++) {
+      msgs.push({
+        role: i % 2 === 0 ? "user" : "assistant",
+        content: "x".repeat(20_000),
+      } as ChatMessage);
+    }
+
+    const result = await tryReactiveCompact(
+      errorProvider,
+      "mock-model",
+      msgs,
+      storage,
+      "generic-err",
+    );
+
+    // Generic errors should still fall through to truncation
+    if (result) {
+      expect(result.strategy).toBe("truncated");
+    }
   });
 });

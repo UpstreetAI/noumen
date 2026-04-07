@@ -33,6 +33,9 @@ export async function tryReactiveCompact(
   opts?: { signal?: AbortSignal },
 ): Promise<ReactiveCompactResult | null> {
   if (messages.length < 2) return null;
+  if (opts?.signal?.aborted) {
+    throw new DOMException("Compaction aborted", "AbortError");
+  }
 
   try {
     const tailKeep = Math.min(6, messages.length - 1);
@@ -46,6 +49,7 @@ export async function tryReactiveCompact(
     );
     return { messages: compacted, strategy: "compacted" };
   } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") throw err;
     console.warn("[reactive-compact] compaction failed, falling back to head truncation:", err);
     const targetTokens = getEffectiveContextWindow(model);
     const truncated = truncateHeadForPTLRetry(messages, targetTokens);
