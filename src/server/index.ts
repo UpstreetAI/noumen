@@ -1,8 +1,37 @@
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { randomUUID } from "node:crypto";
 import type { Agent } from "../agent.js";
 import type { StreamEvent } from "../session/types.js";
 import type { PermissionResponse } from "../permissions/types.js";
+
+import {
+  type SessionState,
+  type ConnectionOverrides,
+  DEFAULT_PENDING_TIMEOUT_MS,
+  createSessionState,
+  destroySession,
+  reapIdleSessions,
+  bridgePermission,
+  bridgeUserInput,
+  clearPendingPermissionTimer,
+  clearPendingInputTimer,
+  clearSseKeepalive,
+} from "./session-state.js";
+
+import {
+  MAX_EVENT_BUFFER,
+  serializeEvent,
+  pushEvent,
+  getBufferedEventsAfter,
+  writeSseEventRaw,
+} from "./event-buffer.js";
+
+import {
+  type WsWebSocket,
+  type WsDispatchCallbacks,
+  handleWsMessage as dispatchWsMessage,
+  parseWsMessage,
+  wsSend,
+} from "./ws-dispatch.js";
 
 type MaybePromise<T> = T | Promise<T>;
 
@@ -12,10 +41,8 @@ type MaybePromise<T> = T | Promise<T>;
 
 const SSE_KEEPALIVE_INTERVAL_MS = 15_000;
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
-const MAX_EVENT_BUFFER = 1000;
-const DEFAULT_PENDING_TIMEOUT_MS = 120_000; // 2 minutes
-const WS_PING_INTERVAL_MS = 30_000;
 const SHUTDOWN_DRAIN_MS = 500;
+const WS_PING_INTERVAL_MS = 30_000;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -67,46 +94,8 @@ export interface ConnectionInfo {
   remoteAddress?: string;
 }
 
-export interface ConnectionOverrides {
-  cwd?: string;
-}
-
-interface PromiseResolver<T> {
-  resolve: (value: T) => void;
-  reject: (err: Error) => void;
-}
-
-interface BufferedEvent {
-  seq: number;
-  event: StreamEvent;
-}
-
-interface SessionState {
-  id: string;
-  abortController: AbortController;
-  pendingPermission: PromiseResolver<PermissionResponse> | null;
-  pendingInput: PromiseResolver<string> | null;
-  pendingPermissionTimer: ReturnType<typeof setTimeout> | null;
-  pendingInputTimer: ReturnType<typeof setTimeout> | null;
-  lastActivity: number;
-  sseResponse: ServerResponse | null;
-  sseKeepaliveTimer: ReturnType<typeof setInterval> | null;
-  eventBuffer: BufferedEvent[];
-  sequenceNum: number;
-  done: boolean;
-  cwd?: string;
-}
-
-type WsWebSocket = {
-  on(event: "message", cb: (data: Buffer | string) => void): void;
-  on(event: "close", cb: () => void): void;
-  on(event: "error", cb: (err: Error) => void): void;
-  on(event: "pong", cb: () => void): void;
-  send(data: string): void;
-  ping(): void;
-  close(): void;
-  readyState: number;
-};
+// Re-export types that consumers might need
+export type { ConnectionOverrides, SessionState, BufferedEvent, PromiseResolver } from "./session-state.js";
 
 type WsServer = {
   on(event: "connection", cb: (ws: WsWebSocket, req: IncomingMessage) => void): void;
@@ -152,14 +141,13 @@ export class NoumenServer {
       this.idleTimer = null;
     }
 
-    // Signal all sessions to stop, then give a brief drain period
     for (const session of this.sessions.values()) {
       session.abortController.abort();
     }
     await new Promise<void>((resolve) => setTimeout(resolve, SHUTDOWN_DRAIN_MS));
 
     for (const session of this.sessions.values()) {
-      this.destroySession(session);
+      destroySession(this.sessions, session);
     }
 
     if (this.wss) {
@@ -230,7 +218,7 @@ export class NoumenServer {
     if (this.idleReaperStarted || !this.options.idleTimeoutMs) return;
     this.idleReaperStarted = true;
     const interval = Math.max(this.options.idleTimeoutMs / 2, 1000);
-    this.idleTimer = setInterval(() => this.reapIdleSessions(), interval);
+    this.idleTimer = setInterval(() => reapIdleSessions(this.sessions, this.options.idleTimeoutMs), interval);
     this.idleTimer.unref();
   }
 
@@ -324,7 +312,7 @@ export class NoumenServer {
     }
 
     const overrides = await this.resolveConnectionOverrides(req);
-    const session = this.createSessionState(requestedId, overrides);
+    const session = createSessionState(this.sessions, requestedId, overrides);
 
     this.runAgentSse(session, prompt, false);
 
@@ -347,12 +335,11 @@ export class NoumenServer {
     const session = this.sessions.get(sessionId);
     if (!session) return jsonResponse(res, 404, { error: "Session not found" });
 
-    // Handle subscriber conflict: notify the old listener before replacing
     if (session.sseResponse) {
       const oldRes = session.sseResponse;
       writeSseEventRaw(oldRes, session.sequenceNum + 1, { type: "subscriber_replaced" });
       oldRes.end();
-      this.clearSseKeepalive(session);
+      clearSseKeepalive(session);
       session.sseResponse = null;
     }
 
@@ -363,23 +350,21 @@ export class NoumenServer {
       "X-Accel-Buffering": "no",
     });
 
-    // Support Last-Event-ID for resumption after reconnect
     const lastEventId = req.headers["last-event-id"] as string | undefined;
     const resumeAfterSeq = lastEventId ? parseInt(lastEventId, 10) : 0;
 
-    for (const buffered of session.eventBuffer) {
-      if (resumeAfterSeq && buffered.seq <= resumeAfterSeq) continue;
+    const eventsToReplay = getBufferedEventsAfter(session.eventBuffer, resumeAfterSeq);
+    for (const buffered of eventsToReplay) {
       writeSseEventRaw(res, buffered.seq, serializeEvent(buffered.event));
     }
     session.eventBuffer = [];
     session.sseResponse = res;
 
-    // Start keepalive interval
     this.startSseKeepalive(session);
 
     res.on("close", () => {
       if (session.sseResponse === res) {
-        this.clearSseKeepalive(session);
+        clearSseKeepalive(session);
         session.sseResponse = null;
       }
     });
@@ -395,7 +380,7 @@ export class NoumenServer {
     if (!session.pendingPermission) return jsonResponse(res, 409, { error: "No pending permission request" });
 
     const body = (await readBody(req)) as PermissionResponse;
-    this.clearPendingPermissionTimer(session);
+    clearPendingPermissionTimer(session);
     session.pendingPermission.resolve(body);
     session.pendingPermission = null;
     jsonResponse(res, 200, { ok: true });
@@ -415,7 +400,7 @@ export class NoumenServer {
       return jsonResponse(res, 400, { error: "Missing required field: answer" });
     }
 
-    this.clearPendingInputTimer(session);
+    clearPendingInputTimer(session);
     session.pendingInput.resolve(body.answer);
     session.pendingInput = null;
     jsonResponse(res, 200, { ok: true });
@@ -444,7 +429,7 @@ export class NoumenServer {
   private handleDeleteSession(sessionId: string, res: ServerResponse): void {
     const session = this.sessions.get(sessionId);
     if (!session) return jsonResponse(res, 404, { error: "Session not found" });
-    this.destroySession(session);
+    destroySession(this.sessions, session);
     jsonResponse(res, 200, { ok: true });
   }
 
@@ -472,7 +457,6 @@ export class NoumenServer {
 
     const wsSessions = new Set<string>();
 
-    // Ping/pong health check
     let pongReceived = true;
     const pingTimer = setInterval(() => {
       if (!pongReceived) {
@@ -485,10 +469,55 @@ export class NoumenServer {
 
     ws.on("pong", () => { pongReceived = true; });
 
+    const callbacks: WsDispatchCallbacks = {
+      onRun: async (prompt, requestedSessionId) => {
+        const overrides = await this.resolveConnectionOverrides(req);
+        const session = createSessionState(this.sessions, requestedSessionId, overrides);
+        wsSessions.add(session.id);
+        this.runAgentWs(session, prompt, ws, false);
+        return session.id;
+      },
+      onMessage: (sessionId, prompt) => {
+        const session = this.sessions.get(sessionId);
+        if (!session) { wsSend(ws, { type: "error", error: "Session not found" }); return; }
+        if (!session.done) { wsSend(ws, { type: "error", error: "Session is still running" }); return; }
+        session.done = false;
+        session.abortController = new AbortController();
+        this.runAgentWs(session, prompt, ws, true);
+      },
+      onPermissionResponse: (sessionId, response) => {
+        const session = this.sessions.get(sessionId);
+        if (!session?.pendingPermission) return;
+        clearPendingPermissionTimer(session);
+        session.pendingPermission.resolve(response);
+        session.pendingPermission = null;
+      },
+      onInputResponse: (sessionId, answer) => {
+        const session = this.sessions.get(sessionId);
+        if (!session?.pendingInput) return;
+        clearPendingInputTimer(session);
+        session.pendingInput.resolve(answer);
+        session.pendingInput = null;
+      },
+      onAbort: (sessionId) => {
+        const session = this.sessions.get(sessionId);
+        if (session) destroySession(this.sessions, session);
+      },
+    };
+
     ws.on("message", async (raw) => {
       try {
-        const msg = JSON.parse(typeof raw === "string" ? raw : raw.toString());
-        await this.handleWsMessage(ws, msg, wsSessions, req);
+        const msg = parseWsMessage(raw);
+        if (!msg) { wsSend(ws, { type: "error", error: "Invalid JSON" }); return; }
+        const result = await dispatchWsMessage(msg, {
+          maxSessions: this.options.maxSessions,
+          currentSessionCount: this.sessions.size,
+        }, callbacks);
+        if (result.type === "error") {
+          wsSend(ws, { type: "error", error: result.error });
+        } else if (result.type === "session_created") {
+          wsSend(ws, { type: "session_created", sessionId: result.sessionId });
+        }
       } catch (err) {
         wsSend(ws, { type: "error", error: String(err) });
       }
@@ -498,7 +527,7 @@ export class NoumenServer {
       clearInterval(pingTimer);
       for (const sid of wsSessions) {
         const session = this.sessions.get(sid);
-        if (session) this.destroySession(session);
+        if (session) destroySession(this.sessions, session);
       }
     });
 
@@ -507,116 +536,18 @@ export class NoumenServer {
     });
   }
 
-  private async handleWsMessage(
-    ws: WsWebSocket,
-    msg: Record<string, unknown>,
-    wsSessions: Set<string>,
-    req: IncomingMessage,
-  ): Promise<void> {
-    const msgType = msg.type as string;
-
-    if (msgType === "run") {
-      if (this.options.maxSessions && this.sessions.size >= this.options.maxSessions) {
-        wsSend(ws, { type: "error", error: "Maximum sessions reached" });
-        return;
-      }
-      if (typeof msg.prompt !== "string" || !msg.prompt.trim()) {
-        wsSend(ws, { type: "error", error: "Missing or empty prompt" });
-        return;
-      }
-      let session: SessionState;
-      try {
-        const overrides = await this.resolveConnectionOverrides(req);
-        session = this.createSessionState(msg.sessionId as string | undefined, overrides);
-      } catch (err) {
-        wsSend(ws, { type: "error", error: err instanceof Error ? err.message : String(err) });
-        return;
-      }
-      wsSessions.add(session.id);
-      wsSend(ws, { type: "session_created", sessionId: session.id });
-      this.runAgentWs(session, msg.prompt, ws, false);
-      return;
-    }
-
-    if (msgType === "message") {
-      const session = this.sessions.get(msg.sessionId as string);
-      if (!session) { wsSend(ws, { type: "error", error: "Session not found" }); return; }
-      if (!session.done) { wsSend(ws, { type: "error", error: "Session is still running" }); return; }
-      if (typeof msg.prompt !== "string" || !msg.prompt.trim()) {
-        wsSend(ws, { type: "error", error: "Missing or empty prompt" });
-        return;
-      }
-      session.done = false;
-      session.abortController = new AbortController();
-      this.runAgentWs(session, msg.prompt, ws, true);
-      return;
-    }
-
-    if (msgType === "permission_response") {
-      const session = this.sessions.get(msg.sessionId as string);
-      if (!session?.pendingPermission) return;
-      this.clearPendingPermissionTimer(session);
-      const { sessionId: _sid, type: _type, ...response } = msg;
-      session.pendingPermission.resolve(response as unknown as PermissionResponse);
-      session.pendingPermission = null;
-      return;
-    }
-
-    if (msgType === "input_response") {
-      const session = this.sessions.get(msg.sessionId as string);
-      if (!session?.pendingInput) return;
-      this.clearPendingInputTimer(session);
-      session.pendingInput.resolve((msg.answer as string) ?? "");
-      session.pendingInput = null;
-      return;
-    }
-
-    if (msgType === "abort") {
-      const session = this.sessions.get(msg.sessionId as string);
-      if (session) this.destroySession(session);
-    }
-  }
-
   // -------------------------------------------------------------------------
-  // Session management
+  // Agent runners
   // -------------------------------------------------------------------------
-
-  private createSessionState(
-    requestedId: string | undefined,
-    overrides: ConnectionOverrides,
-  ): SessionState {
-    if (requestedId && this.sessions.has(requestedId)) {
-      throw new Error(`Session ${requestedId} already exists`);
-    }
-    const sessionId = requestedId ?? randomUUID();
-
-    const session: SessionState = {
-      id: sessionId,
-      abortController: new AbortController(),
-      pendingPermission: null,
-      pendingInput: null,
-      pendingPermissionTimer: null,
-      pendingInputTimer: null,
-      lastActivity: Date.now(),
-      sseResponse: null,
-      sseKeepaliveTimer: null,
-      eventBuffer: [],
-      sequenceNum: 0,
-      done: false,
-      cwd: overrides.cwd,
-    };
-
-    this.sessions.set(sessionId, session);
-    return session;
-  }
 
   private async makeThread(session: SessionState, resume: boolean) {
+    const timeoutMs = this.options.pendingTimeoutMs ?? DEFAULT_PENDING_TIMEOUT_MS;
     const handlers = {
       cwd: session.cwd,
-      permissionHandler: (req: import("../permissions/types.js").PermissionRequest) =>
-        this.bridgePermission(session.id, req),
-      userInputHandler: (q: string) =>
-        this.bridgeUserInput(session.id, q),
+      permissionHandler: (_req: import("../permissions/types.js").PermissionRequest) =>
+        bridgePermission(this.sessions, session.id, timeoutMs),
+      userInputHandler: (_q: string) =>
+        bridgeUserInput(this.sessions, session.id, timeoutMs),
     };
 
     return resume
@@ -629,12 +560,12 @@ export class NoumenServer {
       try {
         const thread = await this.makeThread(session, resume);
         for await (const event of thread.run(prompt, { signal: session.abortController.signal })) {
-          this.emitSseEvent(session, event);
+          pushEvent(session, event);
           session.lastActivity = Date.now();
         }
       } catch (err) {
         if ((err as Error).name !== "AbortError") {
-          this.emitSseEvent(session, {
+          pushEvent(session, {
             type: "error",
             error: err instanceof Error ? err : new Error(String(err)),
           });
@@ -666,115 +597,14 @@ export class NoumenServer {
     run().catch((err) => this.options.onError?.(err instanceof Error ? err : new Error(String(err))));
   }
 
-  private emitSseEvent(session: SessionState, event: StreamEvent): void {
-    session.sequenceNum++;
-    const seq = session.sequenceNum;
-
-    if (session.eventBuffer.length >= MAX_EVENT_BUFFER) {
-      session.eventBuffer.shift();
-    }
-    session.eventBuffer.push({ seq, event });
-
-    if (session.sseResponse) {
-      writeSseEventRaw(session.sseResponse, seq, serializeEvent(event));
-    }
-  }
-
-  private bridgePermission(
-    sessionId: string,
-    _request: import("../permissions/types.js").PermissionRequest,
-  ): Promise<PermissionResponse> {
-    const session = this.sessions.get(sessionId);
-    if (!session) return Promise.reject(new Error("Session not found"));
-    const timeoutMs = this.options.pendingTimeoutMs ?? DEFAULT_PENDING_TIMEOUT_MS;
-    return new Promise<PermissionResponse>((resolve, reject) => {
-      session.pendingPermission = { resolve, reject };
-      session.pendingPermissionTimer = setTimeout(() => {
-        session.pendingPermissionTimer = null;
-        if (session.pendingPermission) {
-          session.pendingPermission.reject(new Error("Permission request timed out"));
-          session.pendingPermission = null;
-        }
-      }, timeoutMs);
-    });
-  }
-
-  private bridgeUserInput(sessionId: string, _question: string): Promise<string> {
-    const session = this.sessions.get(sessionId);
-    if (!session) return Promise.reject(new Error("Session not found"));
-    const timeoutMs = this.options.pendingTimeoutMs ?? DEFAULT_PENDING_TIMEOUT_MS;
-    return new Promise<string>((resolve, reject) => {
-      session.pendingInput = { resolve, reject };
-      session.pendingInputTimer = setTimeout(() => {
-        session.pendingInputTimer = null;
-        if (session.pendingInput) {
-          session.pendingInput.reject(new Error("User input request timed out"));
-          session.pendingInput = null;
-        }
-      }, timeoutMs);
-    });
-  }
-
   private startSseKeepalive(session: SessionState): void {
-    this.clearSseKeepalive(session);
+    clearSseKeepalive(session);
     session.sseKeepaliveTimer = setInterval(() => {
       if (session.sseResponse && !session.sseResponse.destroyed) {
         session.sseResponse.write(":keepalive\n\n");
       }
     }, SSE_KEEPALIVE_INTERVAL_MS);
     session.sseKeepaliveTimer.unref();
-  }
-
-  private clearSseKeepalive(session: SessionState): void {
-    if (session.sseKeepaliveTimer) {
-      clearInterval(session.sseKeepaliveTimer);
-      session.sseKeepaliveTimer = null;
-    }
-  }
-
-  private clearPendingPermissionTimer(session: SessionState): void {
-    if (session.pendingPermissionTimer) {
-      clearTimeout(session.pendingPermissionTimer);
-      session.pendingPermissionTimer = null;
-    }
-  }
-
-  private clearPendingInputTimer(session: SessionState): void {
-    if (session.pendingInputTimer) {
-      clearTimeout(session.pendingInputTimer);
-      session.pendingInputTimer = null;
-    }
-  }
-
-  private destroySession(session: SessionState): void {
-    session.abortController.abort();
-    this.clearSseKeepalive(session);
-    this.clearPendingPermissionTimer(session);
-    this.clearPendingInputTimer(session);
-    if (session.pendingPermission) {
-      session.pendingPermission.reject(new Error("Session aborted"));
-      session.pendingPermission = null;
-    }
-    if (session.pendingInput) {
-      session.pendingInput.reject(new Error("Session aborted"));
-      session.pendingInput = null;
-    }
-    if (session.sseResponse) {
-      session.sseResponse.end();
-      session.sseResponse = null;
-    }
-    this.sessions.delete(session.id);
-  }
-
-  private reapIdleSessions(): void {
-    const timeout = this.options.idleTimeoutMs;
-    if (!timeout) return;
-    const now = Date.now();
-    for (const session of this.sessions.values()) {
-      if (now - session.lastActivity > timeout) {
-        this.destroySession(session);
-      }
-    }
   }
 
   private async resolveConnectionOverrides(req: IncomingMessage): Promise<ConnectionOverrides> {
@@ -832,28 +662,6 @@ function jsonResponse(res: ServerResponse, status: number, body: unknown): void 
   res.end(json);
 }
 
-/**
- * Serialize a StreamEvent to a JSON-safe object. Error instances are
- * converted to `{ message, name }` since `JSON.stringify(new Error())`
- * produces `{}`.
- */
-function serializeEvent(event: StreamEvent): Record<string, unknown> {
-  if (event.type === "error") {
-    return { type: "error", error: { message: event.error.message, name: event.error.name } };
-  }
-  if (event.type === "retry_exhausted") {
-    return { ...event, error: { message: event.error.message, name: event.error.name } };
-  }
-  if (event.type === "retry_attempt") {
-    return { ...event, error: { message: event.error.message, name: event.error.name } };
-  }
-  return event as unknown as Record<string, unknown>;
-}
-
-function writeSseEventRaw(res: ServerResponse, seq: number, data: Record<string, unknown>): void {
-  res.write(`id: ${seq}\ndata: ${JSON.stringify(data)}\n\n`);
-}
-
 function readBody(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     let totalBytes = 0;
@@ -883,8 +691,4 @@ function readBody(req: IncomingMessage): Promise<unknown> {
       if (!rejected) reject(err);
     });
   });
-}
-
-function wsSend(ws: WsWebSocket, data: unknown): void {
-  if (ws.readyState === 1) ws.send(JSON.stringify(data));
 }
