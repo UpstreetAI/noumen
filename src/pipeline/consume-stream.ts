@@ -1,6 +1,9 @@
 import type { ChatStreamChunk, ChatCompletionUsage } from "../providers/types.js";
+import { ChatStreamError } from "../providers/types.js";
 import type { StreamEvent, ChatMessage, AssistantMessage } from "../session/types.js";
 import type { StreamingToolExecutor, StreamingExecResult } from "../tools/streaming-executor.js";
+
+const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 120_000;
 
 // ---------------------------------------------------------------------------
 // StreamAccumulator — mutable state populated by consumeStream
@@ -57,9 +60,45 @@ export async function* consumeStream(
   streamingExec: StreamingToolExecutor | null,
   streamingResults: StreamingExecResult[],
   signal: AbortSignal,
+  idleTimeoutMs?: number,
 ): AsyncGenerator<StreamEvent> {
-  for await (const chunk of stream) {
+  const timeout = idleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS;
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  let idleReject: ((err: Error) => void) | undefined;
+
+  function resetIdleTimer(): void {
+    if (idleTimer !== undefined) clearTimeout(idleTimer);
+    if (timeout <= 0) return;
+    idleTimer = setTimeout(() => {
+      idleReject?.(
+        new ChatStreamError(
+          `Stream idle timeout — no chunks received for ${timeout}ms`,
+          { cause: new Error("idle_timeout") },
+        ),
+      );
+    }, timeout);
+  }
+
+  function clearIdleTimer(): void {
+    if (idleTimer !== undefined) {
+      clearTimeout(idleTimer);
+      idleTimer = undefined;
+    }
+  }
+
+  const idlePromise = new Promise<never>((_, reject) => { idleReject = reject; });
+
+  try {
+  resetIdleTimer();
+
+  const iterator = (stream as AsyncIterable<ChatStreamChunk>)[Symbol.asyncIterator]();
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
     if (signal.aborted) break;
+    const result = await Promise.race([iterator.next(), idlePromise]);
+    if (result.done) break;
+    const chunk = result.value;
+    resetIdleTimer();
 
     if (chunk.usage) {
       acc.usage = chunk.usage;
@@ -111,17 +150,18 @@ export async function* consumeStream(
             }
 
             if (streamingExec && tc.index > 0) {
-              const prevTc = acc.toolCalls.get(tc.index - 1);
-              if (prevTc && !prevTc.complete) {
-                prevTc.complete = true;
+              for (const [idx, prev] of acc.toolCalls) {
+                if (idx >= tc.index) continue;
+                if (prev.complete) continue;
+                prev.complete = true;
                 try {
-                  const parsedArgs = JSON.parse(prevTc.arguments);
+                  const parsedArgs = JSON.parse(prev.arguments);
                   streamingExec.addTool(
-                    { id: prevTc.id, type: "function", function: { name: prevTc.name, arguments: prevTc.arguments } },
+                    { id: prev.id, type: "function", function: { name: prev.name, arguments: prev.arguments } },
                     parsedArgs,
                   );
                 } catch {
-                  prevTc.malformedJson = true;
+                  prev.malformedJson = true;
                 }
               }
             }
@@ -146,6 +186,9 @@ export async function* consumeStream(
         streamingResults.push(result);
       }
     }
+  }
+  } finally {
+    clearIdleTimer();
   }
 }
 

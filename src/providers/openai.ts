@@ -97,10 +97,16 @@ export class OpenAIProvider implements AIProvider {
         };
       }
 
+      const choices = chunk.choices ?? [];
+      if (choices.length === 0 && mappedUsage) {
+        yield { id: chunk.id, model: chunk.model, choices: [], usage: mappedUsage };
+        continue;
+      }
+
       yield {
         id: chunk.id,
         model: chunk.model,
-        choices: chunk.choices.map((c) => ({
+        choices: choices.map((c) => ({
           index: c.index,
           delta: {
             role: c.delta.role as "assistant" | undefined,

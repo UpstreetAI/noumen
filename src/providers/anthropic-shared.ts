@@ -438,17 +438,18 @@ export function processAnthropicStreamEvent(
       state.stopReason = delta.stop_reason as string;
     }
     const usage = ev.usage as Record<string, unknown> | undefined;
-    if (usage?.output_tokens != null) {
+    if (usage?.output_tokens != null && (usage.output_tokens as number) > 0) {
       state.outputTokens = usage.output_tokens as number;
     }
-    if (usage?.thinking_tokens != null) {
+    if (usage?.thinking_tokens != null && (usage.thinking_tokens as number) > 0) {
       state.thinkingTokens = usage.thinking_tokens as number;
     }
     return chunks;
   }
 
   if (ev.type === "content_block_start") {
-    const block = (ev.content_block as Record<string, unknown>) ?? {};
+    // Shallow-copy to guard against SDK mutating the original object
+    const block = { ...((ev.content_block as Record<string, unknown>) ?? {}) };
     const blockIndex = ev.index as number | undefined;
     if (blockIndex !== undefined) {
       state.blockIndexToType.set(blockIndex, block.type as string);
@@ -463,6 +464,7 @@ export function processAnthropicStreamEvent(
       chunks.push(makeChunk(chunkId, model, { content: "" }));
     } else if (block.type === "tool_use") {
       const toolBlock = block as unknown as AnthropicToolUseBlock;
+      if (!toolBlock.id || !toolBlock.name) return chunks;
       const idx = state.nextToolIndex++;
       state.toolIndexMap.set(toolBlock.id, idx);
       if (blockIndex !== undefined) {
@@ -483,6 +485,7 @@ export function processAnthropicStreamEvent(
   }
 
   if (ev.type === "content_block_delta") {
+    if (!ev.delta) return chunks;
     const delta = ev.delta as Record<string, unknown>;
     const deltaType = delta.type;
     const blockIndex = ev.index as number | undefined;
@@ -502,6 +505,8 @@ export function processAnthropicStreamEvent(
         }));
       }
     } else if (deltaType === "input_json_delta") {
+      const partialJson = (delta.partial_json as string) ?? "";
+      if (!partialJson) return chunks;
       let toolId: string | undefined;
       if (blockIndex !== undefined) {
         toolId = state.blockIndexToToolId.get(blockIndex);
@@ -515,7 +520,7 @@ export function processAnthropicStreamEvent(
           tool_calls: [
             {
               index: idx,
-              function: { arguments: delta.partial_json as string },
+              function: { arguments: partialJson },
             },
           ],
         }));
@@ -597,6 +602,11 @@ export async function* streamAnthropicChat(
       throw new ChatStreamError(
         "Stream ended without receiving message_stop event",
         { cause: new Error("incomplete_stream") },
+      );
+    } else if (state.chunkIndex === 0) {
+      throw new ChatStreamError(
+        "Stream returned no events",
+        { cause: new Error("empty_stream") },
       );
     }
   } catch (err: unknown) {

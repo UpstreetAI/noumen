@@ -369,3 +369,144 @@ describe("handleFinishReason", () => {
     expect(result.messagesToPersist).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Edge case tests for consume-stream
+// ---------------------------------------------------------------------------
+
+describe("consumeStream edge cases", () => {
+  it("handles non-contiguous tool indices (index 0, then index 2)", async () => {
+    const mockExec = {
+      addTool: vi.fn(),
+      getCompletedResults: vi.fn().mockReturnValue([]),
+      discard: vi.fn(),
+    };
+
+    const stream = asyncFrom([
+      makeDeltaChunk({
+        tool_calls: [{
+          index: 0, id: "tc0", type: "function",
+          function: { name: "ReadFile", arguments: '{"path":"a.ts"}' },
+        }],
+      }),
+      makeDeltaChunk({
+        tool_calls: [{
+          index: 2, id: "tc2", type: "function",
+          function: { name: "WriteFile", arguments: '{"path":"b.ts"}' },
+        }],
+      }),
+    ]) as unknown as AsyncIterable<ChatStreamChunk>;
+
+    const acc = createAccumulator();
+    await collectEvents(consumeStream(stream, acc, mockExec as any, [], new AbortController().signal, 0));
+
+    // Tool at index 0 should have been force-completed when index 2 arrived
+    expect(acc.toolCalls.get(0)?.complete).toBe(true);
+    expect(mockExec.addTool).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "tc0" }),
+      expect.objectContaining({ path: "a.ts" }),
+    );
+  });
+
+  it("finish_reason before last tool args complete causes flush with partial JSON", async () => {
+    const stream = asyncFrom([
+      makeDeltaChunk({
+        tool_calls: [{
+          index: 0, id: "tc0", type: "function",
+          function: { name: "Bash", arguments: '{"comman' },
+        }],
+      }),
+      makeDeltaChunk({}, "tool_calls"),
+    ]) as unknown as AsyncIterable<ChatStreamChunk>;
+
+    const acc = createAccumulator();
+    await collectEvents(consumeStream(stream, acc, null, [], new AbortController().signal, 0));
+
+    expect(acc.finishReason).toBe("tool_calls");
+    expect(acc.toolCalls.get(0)?.arguments).toBe('{"comman');
+  });
+
+  it("empty string content delta is not accumulated", async () => {
+    const stream = asyncFrom([
+      makeDeltaChunk({ content: "" }),
+      makeDeltaChunk({ content: "real text" }),
+    ]) as unknown as AsyncIterable<ChatStreamChunk>;
+
+    const acc = createAccumulator();
+    const events = await collectEvents(consumeStream(stream, acc, null, [], new AbortController().signal, 0));
+
+    // Empty string is falsy, so it should not be pushed to acc.content
+    expect(acc.content).toEqual(["real text"]);
+    const textEvents = events.filter(e => e.type === "text_delta");
+    expect(textEvents).toHaveLength(1);
+  });
+
+  it("tool delta with arguments but no id/name on first chunk (deferred start)", async () => {
+    const stream = asyncFrom([
+      makeDeltaChunk({
+        tool_calls: [{ index: 0, function: { arguments: '{"pa' } }],
+      }),
+      makeDeltaChunk({
+        tool_calls: [{ index: 0, id: "tc0", function: { name: "ReadFile", arguments: 'th":"x"}' } }],
+      }),
+    ]) as unknown as AsyncIterable<ChatStreamChunk>;
+
+    const acc = createAccumulator();
+    const events = await collectEvents(consumeStream(stream, acc, null, [], new AbortController().signal, 0));
+
+    const tc = acc.toolCalls.get(0)!;
+    expect(tc.id).toBe("tc0");
+    expect(tc.name).toBe("ReadFile");
+    expect(tc.arguments).toBe('{"path":"x"}');
+
+    const startEvents = events.filter(e => e.type === "tool_use_start");
+    expect(startEvents).toHaveLength(1);
+    expect((startEvents[0] as any).toolName).toBe("ReadFile");
+  });
+
+  it("multiple choices in one chunk — last finish_reason wins", async () => {
+    const stream = asyncFrom([
+      makeChunk({
+        choices: [
+          { index: 0, delta: { content: "A" }, finish_reason: null },
+          { index: 1, delta: { content: "B" }, finish_reason: "stop" },
+        ],
+      }),
+    ]) as unknown as AsyncIterable<ChatStreamChunk>;
+
+    const acc = createAccumulator();
+    await collectEvents(consumeStream(stream, acc, null, [], new AbortController().signal, 0));
+
+    expect(acc.finishReason).toBe("stop");
+    expect(acc.content).toEqual(["A", "B"]);
+  });
+
+  it("idle timeout triggers when stream stalls", async () => {
+    async function* stallStream(): AsyncGenerator<ChatStreamChunk> {
+      yield makeDeltaChunk({ content: "start" });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+
+    const acc = createAccumulator();
+    const events: StreamEvent[] = [];
+    try {
+      for await (const evt of consumeStream(
+        stallStream() as AsyncIterable<ChatStreamChunk>,
+        acc,
+        null,
+        [],
+        new AbortController().signal,
+        50,
+      )) {
+        events.push(evt);
+      }
+      expect.fail("Should have thrown");
+    } catch (err: unknown) {
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toMatch(/idle timeout/i);
+    }
+
+    expect(events).toHaveLength(1);
+    expect(acc.content).toEqual(["start"]);
+  });
+});
