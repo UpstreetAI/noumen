@@ -11,7 +11,7 @@ import type {
 import type { SkillDefinition } from "./skills/types.js";
 import type { ContextFile } from "./context/types.js";
 import { buildProjectContextSection } from "./context/prompts.js";
-import { activateContextForPaths, filterActiveContextFiles } from "./context/loader.js";
+import { filterActiveContextFiles } from "./context/loader.js";
 import type { Tool, ToolContext, SubagentConfig, SubagentRun } from "./tools/types.js";
 import { createToolSearchTool, TOOL_SEARCH_NAME } from "./tools/tool-search.js";
 import type { TaskStore } from "./tasks/store.js";
@@ -30,20 +30,13 @@ import { SpanStatusCode } from "./tracing/types.js";
 import { NoopTracer } from "./tracing/noop.js";
 import type { MemoryConfig } from "./memory/types.js";
 import { buildMemorySystemPromptSection } from "./memory/prompts.js";
-import { extractMemories } from "./memory/extraction.js";
 import type { FileCheckpointManager } from "./checkpoint/manager.js";
-import { sortToolDefinitionsForCache } from "./providers/cache.js";
-import { saveCacheSafeParams, createCacheSafeParams } from "./providers/cache-safe-params.js";
 import { restoreSession } from "./session/resume.js";
 import { generateMissingToolResults } from "./session/recovery.js";
 import {
   runNotificationHooks,
 } from "./hooks/runner.js";
 import { ToolRegistry } from "./tools/registry.js";
-import {
-  StreamingToolExecutor,
-  type StreamingExecResult,
-} from "./tools/streaming-executor.js";
 import {
   executeToolCall,
   type ToolExecutionContext,
@@ -53,7 +46,6 @@ import { buildSystemPrompt } from "./prompt/system.js";
 import { compactConversation } from "./compact/compact.js";
 import {
   createAutoCompactConfig,
-  recordAutoCompactSuccess,
   createAutoCompactTracking,
   type AutoCompactConfig,
   type AutoCompactTrackingState,
@@ -81,36 +73,22 @@ import {
 import { prepareMessagesForApi } from "./pipeline/prepare-messages.js";
 import { tryAutoCompactStep } from "./pipeline/auto-compact-step.js";
 import { executeToolsStep } from "./pipeline/execute-tools-step.js";
-import {
-  buildPartialResults,
-  tryReactiveCompactRecovery as tryReactiveCompactRecoveryFn,
-} from "./pipeline/error-recovery.js";
-import {
-  createAccumulator,
-  resetAccumulator,
-  consumeStream,
-  handleFinishReason,
-} from "./pipeline/consume-stream.js";
-import {
-  separateToolCalls,
-  buildAssistantMessage,
-  generateMalformedToolResults,
-  accumulateUsage,
-} from "./pipeline/build-assistant-response.js";
 import type { SnipConfig } from "./compact/history-snip.js";
 import { FileStateCache } from "./file-state/cache.js";
 import type { FileStateCacheConfig } from "./file-state/types.js";
 import { generateUUID } from "./utils/uuid.js";
-import { activateSkillsForPaths, getActiveSkills } from "./skills/activation.js";
+import { getActiveSkills } from "./skills/activation.js";
 import { createSkillTool } from "./tools/skill.js";
 import type { ResolvePermissionOptions } from "./permissions/pipeline.js";
 import { DenialTracker } from "./permissions/denial-tracking.js";
-import { withRetry, CannotRetryError } from "./retry/engine.js";
-import { classifyError } from "./retry/classify.js";
 import {
   createStructuredOutputTool,
   STRUCTURED_OUTPUT_TOOL_NAME,
 } from "./tools/structured-output.js";
+import { initializeSession } from "./pipeline/initialize-session.js";
+import { executeProviderRound, stripThinkingSignatures } from "./pipeline/provider-round.js";
+import { postToolStep } from "./pipeline/post-tool-step.js";
+import { finalizeLoopExit, finalizeTurn } from "./pipeline/finalize-turn.js";
 
 export interface ThreadOptions {
   sessionId?: string;
@@ -297,89 +275,27 @@ export class Thread {
     const isResumeRun = this.resumeRequested;
 
     try {
-      if (!this.loaded) {
-        if (this.resumeRequested) {
-          const payload = await restoreSession(this.storage, this.sessionId);
-          this.messages = payload.messages;
-
-          if (this.config.checkpointManager && payload.checkpointSnapshots.length > 0) {
-            this.config.checkpointManager.restoreStateFromEntries(payload.checkpointSnapshots);
-          }
-
-          if (this.config.costTracker && payload.costState) {
-            this.config.costTracker.restore(payload.costState);
-          }
-
-          // Reconstruct content replacement state and re-apply spilled stubs
-          if (payload.contentReplacements.length > 0) {
-            this.contentReplacementState = reconstructContentReplacementState(
-              payload.contentReplacements,
-              this.messages,
-            );
-            this.messages = applyPersistedReplacements(
-              this.messages,
-              this.contentReplacementState,
-            );
-          }
-
-          if (this.config.toolResultStorage?.enabled && this.config.fs) {
-            const storageResult = await enforceToolResultStorageBudget(
-              this.messages,
-              this.config.toolResultStorage,
-              this.config.fs,
-              this.sessionId,
-              this.contentReplacementState,
-            );
-            this.messages = storageResult.messages;
-            this.contentReplacementState = storageResult.state;
-          }
-
-          // Emit recovery diagnostics
-          for (const [filterName, count] of Object.entries(payload.recoveryRemovals)) {
-            if (count > 0) {
-              yield { type: "recovery_filtered", filterName, removedCount: count };
-            }
-          }
-
-          if (payload.interruption.kind !== "none") {
-            yield {
-              type: "interrupted_turn_detected",
-              kind: payload.interruption.kind,
-            };
-          }
-
-          this.resumeRequested = false;
-          yield { type: "session_resumed", sessionId: this.sessionId, messageCount: this.messages.length };
-        } else {
-          this.messages = await this.storage.loadMessages(this.sessionId);
-        }
-        this.loaded = true;
-      }
-
-      const userMessage: ChatMessage = { role: "user", content: prompt };
-      this.messages.push(userMessage);
-      await this.storage.appendMessage(this.sessionId, userMessage);
-
-      const turnMessageId = generateUUID();
-
-      if (this.config.checkpointManager) {
-        await this.config.checkpointManager.makeSnapshot(turnMessageId, this.sessionId);
-        await this.storage.appendCheckpointEntry(
-          this.sessionId,
-          turnMessageId,
-          this.config.checkpointManager.getState().snapshots.at(-1)!,
-          false,
-        );
-        yield { type: "checkpoint_snapshot", messageId: turnMessageId };
-      }
-
-      // --- SessionStart hook ---
-      await runNotificationHooks(this.hooks, "SessionStart", {
-        event: "SessionStart",
+      const initResult = await initializeSession({
+        storage: this.storage,
         sessionId: this.sessionId,
+        hooks: this.hooks,
         prompt,
-        isResume: isResumeRun,
-      } as import("./hooks/types.js").SessionStartHookInput);
+        resumeRequested: this.resumeRequested,
+        loaded: this.loaded,
+        messages: this.messages,
+        contentReplacementState: this.contentReplacementState,
+        isResumeRun,
+        checkpointManager: this.config.checkpointManager,
+        costTracker: this.config.costTracker,
+        toolResultStorage: this.config.toolResultStorage,
+        fs: this.config.fs,
+      });
+      this.messages = initResult.messages;
+      this.contentReplacementState = initResult.contentReplacementState;
+      this.loaded = initResult.loaded;
+      this.resumeRequested = initResult.resumeRequested;
+      const turnMessageId = initResult.turnMessageId;
+      for (const evt of initResult.events) yield evt;
 
       const allSkills = this.config.skills ?? [];
       let systemPrompt = await this.buildCurrentSystemPromptAsync(allSkills);
@@ -531,373 +447,80 @@ export class Thread {
           continue;
         }
 
-        // --- TurnStart notification ---
-        await runNotificationHooks(hooks, "TurnStart", {
-          event: "TurnStart",
-          sessionId: this.sessionId,
+        // --- Provider round ---
+        const roundGen = executeProviderRound({
           messages: this.messages,
-        });
-
-        const accumulator = createAccumulator();
-
-        let streamingExec: StreamingToolExecutor | null = null;
-        const streamingResults: StreamingExecResult[] = [];
-
-        if (useStreamingExec) {
-          streamingExec = new StreamingToolExecutor(
-            (name) => this.toolRegistry.get(name),
-            this.buildStreamingExecutorFn(execCtx),
-            signal,
-          );
-        }
-
-        const sortedToolDefs = this.config.promptCachingEnabled
-          ? sortToolDefinitionsForCache(toolDefs, this.config.mcpToolNames)
-          : toolDefs;
-
-        const chatParams = {
+          storage: this.storage,
+          sessionId: this.sessionId,
+          provider: this.config.provider,
           model: this.model,
-          messages: messagesForApi,
-          tools: sortedToolDefs,
-          system: systemPrompt,
-          max_tokens: currentMaxTokens,
+          messagesForApi,
+          systemPrompt,
+          toolDefs,
+          maxTokens: currentMaxTokens,
           thinking: this.config.thinking,
+          retryConfig,
+          promptCachingEnabled: this.config.promptCachingEnabled ?? false,
           skipCacheWrite: this.config.skipCacheWrite,
+          outputFormat: runOutputFormat,
+          isFinalResponseMode,
+          useStreamingExec,
           signal,
-          ...(runOutputFormat && !isFinalResponseMode ? { outputFormat: runOutputFormat } : {}),
-        };
-
-        let stream: AsyncIterable<import("./providers/types.js").ChatStreamChunk>;
-
-        const providerSpanId = generateUUID();
-        const providerSpan = this.tracer.startSpan("noumen.provider.chat", {
-          parent: interactionSpan,
-          attributes: {
-            "model": this.model,
-            "messages.count": this.messages.length,
-            "tools.count": toolDefs.length,
-          },
-        });
-        yield { type: "span_start", name: "noumen.provider.chat", spanId: providerSpanId };
-        const providerStart = Date.now();
-
-        try {
-        if (retryConfig) {
-          const retryGen = withRetry(
-            (ctx) => {
-              const params = { ...chatParams };
-              if (ctx.maxTokensOverride !== undefined) {
-                params.max_tokens = ctx.maxTokensOverride;
-              }
-              if (ctx.model !== chatParams.model) {
-                params.model = ctx.model;
-              }
-              return this.config.provider.chat(params);
-            },
-            {
-              ...retryConfig,
-              model: this.model,
-              thinkingBudget:
-                this.config.thinking?.type === "enabled"
-                  ? this.config.thinking.budgetTokens
-                  : undefined,
-              signal,
-            },
-          );
-
-          let retryResult = await retryGen.next();
-          while (!retryResult.done) {
-            const event = retryResult.value;
-            if (event.type === "model_switch") {
-              const sw = event as { type: "model_switch"; from: string; to: string };
-              this.model = sw.to;
-              stripThinkingSignatures(this.messages);
-              resetAccumulator(accumulator);
-              if (streamingExec) {
-                streamingExec.discard();
-                streamingExec = new StreamingToolExecutor(
-                  (name) => this.toolRegistry.get(name),
-                  this.buildStreamingExecutorFn(execCtx),
-                  signal,
-                );
-              }
-              streamingResults.length = 0;
-              if (hooks.length > 0) {
-                await runNotificationHooks(hooks, "ModelSwitch", {
-                  event: "ModelSwitch",
-                  sessionId: this.sessionId,
-                  previousModel: sw.from,
-                  newModel: sw.to,
-                } as import("./hooks/types.js").ModelSwitchHookInput);
-              }
-            }
-            if (event.type === "retry_attempt" && hooks.length > 0) {
-              const re = event as { attempt: number; maxRetries: number; delayMs: number; error: Error };
-              await runNotificationHooks(hooks, "RetryAttempt", {
-                event: "RetryAttempt",
-                sessionId: this.sessionId,
-                attempt: re.attempt,
-                maxAttempts: re.maxRetries,
-                error: re.error.message,
-                delay: re.delayMs,
-              } as import("./hooks/types.js").RetryAttemptHookInput);
-            }
-            yield event;
-            retryResult = await retryGen.next();
-          }
-
-          stream = retryResult.value;
-        } else {
-          stream = this.config.provider.chat(chatParams);
-        }
-        } catch (providerErr) {
-          // Collect any already-completed streaming results before discarding.
-          // These tools ran successfully with real side effects so their results
-          // must be preserved rather than replaced with fabricated errors.
-          const completedBeforeError: StreamingExecResult[] = [];
-          if (streamingExec) {
-            for (const result of streamingExec.getCompletedResults()) {
-              completedBeforeError.push(result);
-            }
-            streamingExec.discard();
-          }
-
-          // Reactive compact: recover from context overflow by compacting
-          const isOverflow =
-            (providerErr instanceof CannotRetryError &&
-              classifyError(providerErr.originalError).isContextOverflow) ||
-            (!retryConfig && classifyError(providerErr).isContextOverflow);
-
-          if (
-            isOverflow &&
-            this.config.reactiveCompact?.enabled &&
-            !this.hasAttemptedReactiveCompact
-          ) {
-            this.hasAttemptedReactiveCompact = true;
-            providerSpan.setStatus(SpanStatusCode.ERROR, "context overflow — reactive compact");
-            providerSpan.end();
-            yield { type: "span_end", name: "noumen.provider.chat", spanId: providerSpanId, durationMs: Date.now() - providerStart, error: "context overflow" };
-
-            const recovery = await tryReactiveCompactRecoveryFn({
-              provider: this.config.provider,
-              model: this.model,
-              messages: this.messages,
-              storage: this.storage,
-              sessionId: this.sessionId,
-              signal,
-              hooks,
-            });
-            for (const evt of recovery.events) yield evt;
-            if (recovery.recovered) {
-              this.messages = recovery.messages!;
-              this.lastUsage = undefined;
-              this.anchorMessageIndex = undefined;
-              this.microcompactTokensFreed = 0;
-              this.budgetState = createBudgetState();
-              this.contentReplacementState = createContentReplacementState();
-              this.fileStateCache?.clear();
-              this.denialTracker?.reset();
-              recordAutoCompactSuccess(this.autoCompactTracking);
-              continue;
-            }
-          }
-
-          const errorReason = `Provider error: ${providerErr instanceof Error ? providerErr.message : String(providerErr)}`;
-          const partial = buildPartialResults({
-            accumulatedToolCalls: accumulator.toolCalls,
-            accumulatedContent: accumulator.content,
-            completedStreamingResults: completedBeforeError,
-            reason: errorReason,
-            existingMessages: this.messages,
-          });
-          for (const msg of partial.messages) {
-            this.messages.push(msg);
-            await this.storage.appendMessage(this.sessionId, msg);
-          }
-
-          providerSpan.setStatus(SpanStatusCode.ERROR, providerErr instanceof Error ? providerErr.message : String(providerErr));
-          providerSpan.end();
-          yield { type: "span_end", name: "noumen.provider.chat", spanId: providerSpanId, durationMs: Date.now() - providerStart, error: String(providerErr) };
-
-          throw providerErr;
-        }
-
-        const apiStartTime = Date.now();
-
-        try {
-        for await (const evt of consumeStream(stream, accumulator, streamingExec, streamingResults, signal)) {
-          yield evt;
-        }
-        } catch (streamErr) {
-          const streamCompletedResults: StreamingExecResult[] = [];
-          if (streamingExec) {
-            for (const result of streamingExec.getCompletedResults()) {
-              streamCompletedResults.push(result);
-            }
-            streamingExec.discard();
-          }
-          const streamErrReason = `Stream error: ${streamErr instanceof Error ? streamErr.message : String(streamErr)}`;
-          const partial = buildPartialResults({
-            accumulatedToolCalls: accumulator.toolCalls,
-            accumulatedContent: accumulator.content,
-            completedStreamingResults: streamCompletedResults,
-            reason: streamErrReason,
-          });
-          for (const msg of partial.messages) {
-            this.messages.push(msg);
-            await this.storage.appendMessage(this.sessionId, msg);
-          }
-          throw streamErr;
-        }
-
-        const apiDurationMs = Date.now() - apiStartTime;
-
-        // Check abort before processing finish reason — no events after abort
-        if (signal.aborted) {
-          providerSpan.setStatus(SpanStatusCode.OK);
-          providerSpan.end();
-          yield { type: "span_end", name: "noumen.provider.chat", spanId: providerSpanId, durationMs: Date.now() - providerStart };
-
-          // Discard stops scheduling new tools; getRemainingResults() then
-          // yields completed results and synthesizes errors for the rest.
-          if (streamingExec) {
-            streamingExec.discard();
-            for await (const result of streamingExec.getRemainingResults()) {
-              streamingResults.push(result);
-            }
-          }
-
-          const abortPartial = buildPartialResults({
-            accumulatedToolCalls: accumulator.toolCalls,
-            accumulatedContent: accumulator.content,
-            completedStreamingResults: streamingResults,
-            reason: "abort",
-            includeInterruptionTag: false,
-          });
-          for (const msg of abortPartial.messages) {
-            this.messages.push(msg);
-            await this.storage.appendMessage(this.sessionId, msg).catch((err) => {
-              console.warn("[noumen/thread] Failed to persist abort message:", err);
-            });
-          }
-
-          const interruptionMsg: ChatMessage = {
-            role: "user",
-            content: "[Session interrupted by user. Continue from where you left off if resumed.]",
-          };
-          this.messages.push(interruptionMsg);
-          await this.storage.appendMessage(this.sessionId, interruptionMsg).catch(() => {});
-
-          break;
-        }
-
-        const frResult = handleFinishReason(
-          accumulator, streamingExec, streamingResults,
-          currentMaxTokens, outputTokenRecoveryAttempts, signal,
-        );
-        for (const evt of frResult.events) yield evt;
-        for (const msg of frResult.messagesToPersist) {
-          this.messages.push(msg);
-          await this.storage.appendMessage(this.sessionId, msg).catch(() => {});
-        }
-        if (frResult.escalateMaxTokens !== undefined) currentMaxTokens = frResult.escalateMaxTokens;
-        if (frResult.shouldContinue) {
-          outputTokenRecoveryAttempts++;
-          streamingExec?.discard();
-          accumulator.toolCalls.clear();
-          continue;
-        }
-        if (frResult.preventContinuation) preventContinuation = true;
-
-        callCount++;
-        const usageResult = accumulateUsage({
-          usage: accumulator.usage,
+          tracer: this.tracer,
+          parentSpan: interactionSpan,
+          hooks,
+          toolRegistryLookup: (name) => this.toolRegistry.get(name),
+          buildStreamingExecutorFn: this.buildStreamingExecutorFn(execCtx),
+          reactiveCompact: this.config.reactiveCompact,
+          hasAttemptedReactiveCompact: this.hasAttemptedReactiveCompact,
+          autoCompactTracking: this.autoCompactTracking,
+          mcpToolNames: this.config.mcpToolNames,
+          costTracker: this.config.costTracker,
           turnUsage,
-          model: this.model,
-          messagesLength: this.messages.length,
+          callCount,
+          consecutiveMalformedIterations,
+          preventContinuation,
+          currentMaxTokens,
+          outputTokenRecoveryAttempts,
+          maxTurns: opts?.maxTurns,
         });
-        for (const evt of usageResult.events) yield evt;
-        if (usageResult.lastUsage) {
-          this.lastUsage = usageResult.lastUsage;
-          this.anchorMessageIndex = usageResult.anchorMessageIndex!;
+        let roundStep = await roundGen.next();
+        while (!roundStep.done) {
+          yield roundStep.value;
+          roundStep = await roundGen.next();
+        }
+        const roundResult = roundStep.value;
+
+        // Apply state updates from the provider round
+        this.model = roundResult.model;
+        callCount = roundResult.callCount;
+        consecutiveMalformedIterations = roundResult.consecutiveMalformedIterations;
+        preventContinuation = roundResult.preventContinuation;
+        currentMaxTokens = roundResult.currentMaxTokens;
+        outputTokenRecoveryAttempts = roundResult.outputTokenRecoveryAttempts;
+        this.hasAttemptedReactiveCompact = roundResult.hasAttemptedReactiveCompact;
+        if (roundResult.lastUsage) {
+          this.lastUsage = roundResult.lastUsage;
+          this.anchorMessageIndex = roundResult.anchorMessageIndex;
+          this.microcompactTokensFreed = roundResult.microcompactTokensFreed;
+        }
+
+        if (roundResult.compactRecovered && roundResult.recoveredMessages) {
+          this.messages = roundResult.recoveredMessages;
+          this.lastUsage = undefined;
+          this.anchorMessageIndex = undefined;
           this.microcompactTokensFreed = 0;
-
-          if (this.config.costTracker) {
-            const summary = this.config.costTracker.addUsage(
-              this.model,
-              usageResult.lastUsage,
-              apiDurationMs,
-            );
-            yield { type: "cost_update", summary };
-
-            await this.storage.appendMetadata(
-              this.sessionId,
-              "costState",
-              this.config.costTracker.getState(),
-            ).catch(() => {});
-          }
-
-          providerSpan.setAttribute("tokens.input", usageResult.lastUsage.prompt_tokens);
-          providerSpan.setAttribute("tokens.output", usageResult.lastUsage.completion_tokens);
+          this.budgetState = createBudgetState();
+          this.contentReplacementState = createContentReplacementState();
+          this.fileStateCache?.clear();
+          this.denialTracker?.reset();
         }
 
-        if (this.config.promptCachingEnabled) {
-          saveCacheSafeParams(
-            createCacheSafeParams({
-              systemPrompt,
-              model: this.model,
-              tools: sortedToolDefs,
-              thinking: this.config.thinking,
-            }),
-            this.sessionId,
-          );
-        }
+        if (roundResult.shouldContinueOuterLoop) continue;
+        if (roundResult.shouldBreakOuterLoop) break;
 
-        providerSpan.setStatus(SpanStatusCode.OK);
-        providerSpan.end();
-        yield { type: "span_end", name: "noumen.provider.chat", spanId: providerSpanId, durationMs: Date.now() - providerStart };
-
-        const { valid: toolCalls, malformed: malformedToolCalls } = separateToolCalls(accumulator, !!streamingExec);
-
-        const assistantMsg = buildAssistantMessage({
-          acc: accumulator,
-          validToolCalls: toolCalls,
-          malformedToolCalls,
-          turnId: `${this.sessionId}:${callCount}`,
-        });
-        this.messages.push(assistantMsg);
-        await this.storage.appendMessage(this.sessionId, assistantMsg);
-
-        const malformedResult = generateMalformedToolResults(malformedToolCalls);
-        for (const msg of malformedResult.messages) {
-          this.messages.push(msg);
-          await this.storage.appendMessage(this.sessionId, msg);
-        }
-        for (const evt of malformedResult.events) yield evt;
-
-        // When only malformed calls exist, continue the loop to give the
-        // model another chance without entering the tool execution path.
-        if (toolCalls.length === 0 && malformedToolCalls.length > 0) {
-          consecutiveMalformedIterations++;
-          if (consecutiveMalformedIterations >= MAX_CONSECUTIVE_MALFORMED) {
-            yield { type: "error", error: new Error(`Exceeded ${MAX_CONSECUTIVE_MALFORMED} consecutive malformed tool call attempts`) };
-            break;
-          }
-          if (opts?.maxTurns !== undefined && callCount >= opts.maxTurns) {
-            await runNotificationHooks(hooks, "TurnEnd", {
-              event: "TurnEnd",
-              sessionId: this.sessionId,
-            });
-            yield { type: "turn_complete", usage: turnUsage, model: this.model, callCount };
-            yield { type: "max_turns_reached", maxTurns: opts.maxTurns, turnCount: callCount };
-            break;
-          }
-          await runNotificationHooks(hooks, "TurnEnd", {
-            event: "TurnEnd",
-            sessionId: this.sessionId,
-          });
-          continue;
-        }
+        const { toolCalls, malformedToolCalls, assistantMsg: assistantMsgOrNull, accumulator, streamingExec, streamingResults } = roundResult;
+        const assistantMsg = assistantMsgOrNull!;
 
         if (toolCalls.length > 0) {
           consecutiveMalformedIterations = 0;
@@ -917,223 +540,75 @@ export class Thread {
           for (const evt of stepResult.events) yield evt;
           if (stepResult.preventContinuation) preventContinuation = true;
 
-          if (stepResult.spilledRecords.length > 0) {
-            await this.storage.appendContentReplacement(this.sessionId, stepResult.spilledRecords);
-          }
-
-          const touchedFilePaths = stepResult.touchedFilePaths;
-
-          if (signal.aborted) {
-            const interruptionMsg: ChatMessage = {
-              role: "user",
-              content: "[Session interrupted by user. Continue from where you left off if resumed.]",
-            };
-            this.messages.push(interruptionMsg);
-            await this.storage.appendMessage(this.sessionId, interruptionMsg).catch(() => {});
-            break;
-          }
-
-          if (touchedFilePaths.length > 0) {
-            let needsRebuild = false;
-
-            if (allSkills.length > 0) {
-              const newlyActivated = activateSkillsForPaths(
-                allSkills,
-                touchedFilePaths,
-                this.cwd,
-                this.activatedSkills,
-              );
-              if (newlyActivated.length > 0) needsRebuild = true;
-            }
-
-            if (this.config.projectContext?.length) {
-              const newCtx = activateContextForPaths(
-                this.config.projectContext,
-                touchedFilePaths,
-                this.cwd,
-                this.activatedContextRules,
-              );
-              if (newCtx.length > 0) needsRebuild = true;
-            }
-
-            if (needsRebuild) {
-              systemPrompt = await this.buildCurrentSystemPromptAsync(allSkills);
-            }
-          }
-
-          if (this.config.toolSearchEnabled) {
-            toolDefs = this.toolRegistry.getActiveToolDefinitions();
-          }
-
-          // Detect StructuredOutput tool call in final_response mode
-          if (isFinalResponseMode) {
-            for (const tc of toolCalls) {
-              if (tc.function.name === STRUCTURED_OUTPUT_TOOL_NAME) {
-                try {
-                  const parsed = JSON.parse(tc.function.arguments);
-                  yield {
-                    type: "structured_output",
-                    data: parsed.data ?? parsed,
-                    schema: runOutputFormat,
-                  };
-                } catch {
-                  yield {
-                    type: "structured_output",
-                    data: tc.function.arguments,
-                    schema: runOutputFormat,
-                  };
-                }
-                preventContinuation = true;
-                break;
-              }
-            }
-          }
-
-          if (preventContinuation) {
-            await runNotificationHooks(hooks, "TurnEnd", {
-              event: "TurnEnd",
-              sessionId: this.sessionId,
-            });
-            yield {
-              type: "turn_complete",
-              usage: turnUsage,
-              model: this.model,
-              callCount,
-            };
-            break;
-          }
-
-          if (opts?.maxTurns !== undefined && callCount >= opts.maxTurns) {
-            await runNotificationHooks(hooks, "TurnEnd", {
-              event: "TurnEnd",
-              sessionId: this.sessionId,
-            });
-            yield {
-              type: "turn_complete",
-              usage: turnUsage,
-              model: this.model,
-              callCount,
-            };
-            yield { type: "max_turns_reached", maxTurns: opts.maxTurns, turnCount: callCount };
-            break;
-          }
-          this.hasAttemptedReactiveCompact = false;
-          await runNotificationHooks(hooks, "TurnEnd", {
-            event: "TurnEnd",
+          const postResult = await postToolStep({
+            touchedFilePaths: stepResult.touchedFilePaths,
+            toolCalls,
+            spilledRecords: stepResult.spilledRecords,
+            signal,
             sessionId: this.sessionId,
+            storage: this.storage,
+            messages: this.messages,
+            hooks,
+            allSkills,
+            activatedSkills: this.activatedSkills,
+            projectContext: this.config.projectContext,
+            activatedContextRules: this.activatedContextRules,
+            cwd: this.cwd,
+            isFinalResponseMode,
+            outputFormat: runOutputFormat,
+            maxTurns: opts?.maxTurns,
+            callCount,
+            preventContinuation,
+            turnUsage,
+            model: this.model,
+            toolSearchEnabled: this.config.toolSearchEnabled ?? false,
+            getActiveToolDefinitions: () => this.toolRegistry.getActiveToolDefinitions(),
+            buildSystemPrompt: () => this.buildCurrentSystemPromptAsync(allSkills),
           });
-          continue;
+          for (const evt of postResult.events) yield evt;
+          preventContinuation = postResult.preventContinuation;
+          if (postResult.systemPrompt) systemPrompt = postResult.systemPrompt;
+          if (postResult.toolDefs) toolDefs = postResult.toolDefs;
+          if (postResult.hasAttemptedReactiveCompactReset) this.hasAttemptedReactiveCompact = false;
+          if (postResult.shouldBreak) break;
+          if (postResult.shouldContinue) continue;
         }
 
-        // For alongside_tools mode, emit structured_output when the model produces text
-        const textContent = accumulator.content.join("");
-        if (runOutputFormat && !isFinalResponseMode && textContent) {
-          try {
-            const parsed = JSON.parse(textContent);
-            yield {
-              type: "structured_output",
-              data: parsed,
-              schema: runOutputFormat,
-            };
-          } catch {
-            // Model text wasn't valid JSON — still emit message_complete below
-          }
-        }
-
-        yield { type: "message_complete", message: assistantMsg };
-
+        // No tool calls — finalize the loop iteration
         this.hasAttemptedReactiveCompact = false;
-        await runNotificationHooks(hooks, "TurnEnd", {
-          event: "TurnEnd",
-          sessionId: this.sessionId,
-        });
-
-        yield {
-          type: "turn_complete",
-          usage: turnUsage,
+        const loopExitResult = await finalizeLoopExit({
+          accumulator,
+          assistantMsg,
+          outputFormat: runOutputFormat,
+          isFinalResponseMode,
+          turnUsage,
           model: this.model,
           callCount,
-        };
-
-        // Persist cost state so it survives resume
-        if (this.config.costTracker) {
-          await this.storage.appendMetadata(
-            this.sessionId,
-            "costState",
-            this.config.costTracker.getState(),
-          );
-        }
-
+          sessionId: this.sessionId,
+          costTracker: this.config.costTracker,
+          hooks: this.hooks,
+          storage: this.storage,
+        });
+        for (const evt of loopExitResult.events) yield evt;
         break;
       }
 
-      // --- Memory extraction (skip on abort) ---
-      if (signal.aborted) {
-        await runNotificationHooks(hooks, "TurnEnd", {
-          event: "TurnEnd",
-          sessionId: this.sessionId,
-        });
-        yield { type: "turn_complete", usage: turnUsage, model: this.model, callCount };
-        interactionSpan.setStatus(SpanStatusCode.OK);
-        interactionSpan.end();
-        yield { type: "span_end", name: "noumen.interaction", spanId: this.sessionId, durationMs: Date.now() - interactionStart };
-        await runNotificationHooks(this.hooks, "SessionEnd", {
-          event: "SessionEnd",
-          sessionId: this.sessionId,
-          reason: "abort",
-        } as import("./hooks/types.js").SessionEndHookInput);
-        return;
-      }
-      const memCfg = this.config.memory;
-      if (memCfg && memCfg.autoExtract && memCfg.provider) {
-        try {
-          const extractResult = await extractMemories(
-            this.config.provider,
-            this.model,
-            this.messages,
-            memCfg.provider,
-          );
-          const hasChanges = extractResult.created.length > 0
-            || extractResult.updated.length > 0
-            || extractResult.deleted.length > 0;
-          if (hasChanges) {
-            yield {
-              type: "memory_update",
-              created: extractResult.created,
-              updated: extractResult.updated,
-              deleted: extractResult.deleted,
-            };
-            const allEntries = [
-              ...extractResult.created.map((e) => ({ type: "created", content: e.content })),
-              ...extractResult.updated.map((e) => ({ type: "updated", content: e.content })),
-              ...extractResult.deleted.map((id) => ({ type: "deleted", content: id })),
-            ];
-            await runNotificationHooks(this.hooks, "MemoryUpdate", {
-              event: "MemoryUpdate",
-              sessionId: this.sessionId,
-              entries: allEntries,
-            } as import("./hooks/types.js").MemoryUpdateHookInput);
-          }
-        } catch {
-          // Memory extraction is best-effort; don't fail the turn.
-        }
-      }
-
-      interactionSpan.setStatus(SpanStatusCode.OK);
-      interactionSpan.end();
-      yield { type: "span_end", name: "noumen.interaction", spanId: this.sessionId, durationMs: Date.now() - interactionStart };
-
-      // Determine session end reason
-      const endReason: "complete" | "abort" | "maxTurns" = signal.aborted
-        ? "abort"
-        : (opts?.maxTurns !== undefined && callCount >= opts.maxTurns)
-          ? "maxTurns"
-          : "complete";
-      await runNotificationHooks(this.hooks, "SessionEnd", {
-        event: "SessionEnd",
+      // --- Post-loop teardown: memory extraction + span close + SessionEnd ---
+      const teardownResult = await finalizeTurn({
+        signal,
+        memoryConfig: this.config.memory,
+        provider: this.config.provider,
+        model: this.model,
+        messages: this.messages,
         sessionId: this.sessionId,
-        reason: endReason,
-      } as import("./hooks/types.js").SessionEndHookInput);
+        callCount,
+        maxTurns: opts?.maxTurns,
+        hooks: this.hooks,
+        interactionSpan,
+        interactionStart,
+      });
+      for (const evt of teardownResult.events) yield evt;
+      if (teardownResult.earlyReturn) return;
     } catch (err) {
       if (!signal.aborted) {
         const error = err instanceof Error ? err : new Error(String(err));
@@ -1414,19 +889,5 @@ export class Thread {
 
   abort(): void {
     this.abortController?.abort();
-  }
-}
-
-/**
- * Remove thinking_signature and redacted_thinking_data from assistant
- * messages. These fields are model-bound — replaying them to a different
- * model (after a fallback) causes a 400 error.
- */
-function stripThinkingSignatures(messages: ChatMessage[]): void {
-  for (const msg of messages) {
-    if (msg.role !== "assistant") continue;
-    const asst = msg as AssistantMessage;
-    if (asst.thinking_signature) delete asst.thinking_signature;
-    if (asst.redacted_thinking_data) delete asst.redacted_thinking_data;
   }
 }
