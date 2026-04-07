@@ -530,3 +530,203 @@ describe("E2BSandbox reconnect", () => {
     vi.doUnmock("e2b");
   });
 });
+
+// ---------------------------------------------------------------------------
+// FreestyleSandbox (explicit mode)
+// ---------------------------------------------------------------------------
+describe("FreestyleSandbox", () => {
+  it("returns a Sandbox with FreestyleFs and FreestyleComputer when vm is provided", async () => {
+    const { FreestyleSandbox } = await import("../virtual/sandbox.js");
+    const { FreestyleFs } = await import("../virtual/freestyle-fs.js");
+    const { FreestyleComputer } = await import("../virtual/freestyle-computer.js");
+
+    const mockVm = {
+      exec: async () => ({ statusCode: 0, stdout: "", stderr: "" }),
+      fs: {
+        readTextFile: async () => "",
+        writeTextFile: async () => {},
+        readDir: async () => [],
+      },
+      suspend: async () => {},
+      start: async () => {},
+    };
+
+    const sandbox = FreestyleSandbox({ vm: mockVm, cwd: "/workspace" });
+    expect(sandbox.fs).toBeInstanceOf(FreestyleFs);
+    expect(sandbox.computer).toBeInstanceOf(FreestyleComputer);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Freestyle dispose-during-init race
+// ---------------------------------------------------------------------------
+describe("FreestyleSandbox dispose-during-init race", () => {
+  it("FreestyleSandbox dispose awaits init before cleanup", async () => {
+    const { vi } = await import("vitest");
+    let vmCreated = false;
+    let vmSuspended = false;
+
+    const mockVm = {
+      exec: async () => ({ statusCode: 0, stdout: "", stderr: "" }),
+      fs: {
+        readTextFile: async () => "",
+        writeTextFile: async () => {},
+        readDir: async () => [],
+      },
+      suspend: async () => { vmSuspended = true; },
+      start: async () => {},
+    };
+
+    vi.doMock("freestyle-sandboxes", () => ({
+      freestyle: {
+        vms: {
+          async create() {
+            await new Promise((r) => setTimeout(r, 50));
+            vmCreated = true;
+            return { vmId: "test-vm-id", vm: mockVm };
+          },
+          async get() { throw new Error("should not be called"); },
+          async delete() {},
+        },
+      },
+    }));
+
+    const { FreestyleSandbox } = await import("../virtual/sandbox.js");
+    const sandbox = FreestyleSandbox({ cwd: "/workspace" });
+
+    const initPromise = sandbox.init!();
+    await new Promise((r) => setTimeout(r, 10));
+    await sandbox.dispose!();
+
+    await initPromise.catch(() => {});
+
+    expect(vmCreated).toBe(true);
+    expect(vmSuspended).toBe(true);
+
+    vi.doUnmock("freestyle-sandboxes");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Freestyle reconnect paths
+// ---------------------------------------------------------------------------
+describe("FreestyleSandbox reconnect", () => {
+  it("reconnects to existing VM when get succeeds", async () => {
+    const { vi } = await import("vitest");
+    let getCalled = false;
+    let createCalled = false;
+
+    const mockVm = {
+      exec: async () => ({ statusCode: 0, stdout: "", stderr: "" }),
+      fs: {
+        readTextFile: async () => "",
+        writeTextFile: async () => {},
+        readDir: async () => [],
+      },
+      suspend: async () => {},
+      start: async () => {},
+    };
+
+    vi.doMock("freestyle-sandboxes", () => ({
+      freestyle: {
+        vms: {
+          async get({ vmId }: { vmId: string }) {
+            getCalled = true;
+            return { vm: mockVm };
+          },
+          async create() {
+            createCalled = true;
+            return { vmId: "new-vm", vm: mockVm };
+          },
+        },
+      },
+    }));
+
+    const { FreestyleSandbox } = await import("../virtual/sandbox.js");
+    const sandbox = FreestyleSandbox({ cwd: "/workspace" });
+    await sandbox.init!("existing-vm-id");
+
+    expect(getCalled).toBe(true);
+    expect(createCalled).toBe(false);
+    expect(sandbox.sandboxId!()).toBe("existing-vm-id");
+
+    vi.doUnmock("freestyle-sandboxes");
+  });
+
+  it("falls back to create when get throws", async () => {
+    const { vi } = await import("vitest");
+    let createCalled = false;
+
+    const mockVm = {
+      exec: async () => ({ statusCode: 0, stdout: "", stderr: "" }),
+      fs: {
+        readTextFile: async () => "",
+        writeTextFile: async () => {},
+        readDir: async () => [],
+      },
+      suspend: async () => {},
+      start: async () => {},
+    };
+
+    vi.doMock("freestyle-sandboxes", () => ({
+      freestyle: {
+        vms: {
+          async get() {
+            throw new Error("VM not found");
+          },
+          async create() {
+            createCalled = true;
+            return { vmId: "new-vm-id", vm: mockVm };
+          },
+        },
+      },
+    }));
+
+    const { FreestyleSandbox } = await import("../virtual/sandbox.js");
+    const sandbox = FreestyleSandbox({ cwd: "/workspace" });
+    await sandbox.init!("gone-vm-id");
+
+    expect(createCalled).toBe(true);
+
+    vi.doUnmock("freestyle-sandboxes");
+  });
+
+  it("uses delete strategy when configured", async () => {
+    const { vi } = await import("vitest");
+    let deleteCalled = false;
+
+    const mockVm = {
+      exec: async () => ({ statusCode: 0, stdout: "", stderr: "" }),
+      fs: {
+        readTextFile: async () => "",
+        writeTextFile: async () => {},
+        readDir: async () => [],
+      },
+      suspend: async () => {},
+      start: async () => {},
+    };
+
+    vi.doMock("freestyle-sandboxes", () => ({
+      freestyle: {
+        vms: {
+          async create() {
+            return { vmId: "test-vm-id", vm: mockVm };
+          },
+          async delete({ vmId }: { vmId: string }) {
+            deleteCalled = true;
+            expect(vmId).toBe("test-vm-id");
+          },
+        },
+      },
+    }));
+
+    const { FreestyleSandbox } = await import("../virtual/sandbox.js");
+    const sandbox = FreestyleSandbox({ cwd: "/workspace", disposeStrategy: "delete" });
+    await sandbox.init!();
+    await sandbox.dispose!();
+
+    expect(deleteCalled).toBe(true);
+
+    vi.doUnmock("freestyle-sandboxes");
+  });
+});

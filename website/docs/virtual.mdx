@@ -15,7 +15,7 @@ interface Sandbox {
 }
 ```
 
-noumen ships five sandbox factories. The three remote backends (Sprites, Docker, E2B) support **auto-creation** — omit the container/instance ID and the resource is provisioned on first use, persisted across sessions, and disposed automatically. You can also implement your own.
+noumen ships six sandbox factories. The four remote backends (Sprites, Docker, E2B, Freestyle) support **auto-creation** — omit the container/instance ID and the resource is provisioned on first use, persisted across sessions, and disposed automatically. You can also implement your own.
 
 ## LocalSandbox — OS-level sandboxing
 
@@ -224,9 +224,68 @@ await e2b.close();
 | `cwd` | `string` | — | Working directory inside the sandbox |
 | `defaultTimeout` | `number` | `30000` | Command timeout in milliseconds |
 
+## FreestyleSandbox — cloud VMs
+
+Run the agent inside a [Freestyle](https://freestyle.sh) VM — full Linux machines with sub-second startup, instant pause/resume, and optional forking. Requires `freestyle-sandboxes` as an optional peer dependency:
+
+```bash
+pnpm add freestyle-sandboxes
+```
+
+**Auto-create** — omit `vm` and a Freestyle VM is provisioned on first use:
+
+```typescript
+import { FreestyleSandbox } from "noumen";
+
+const sandbox = FreestyleSandbox({ cwd: "/workspace" });
+const agent = new Agent({ provider, sandbox });
+
+// VM suspended on close — resumes instantly on next session:
+await agent.close();
+```
+
+**From a snapshot** — start from a pre-cached environment for fast startup:
+
+```typescript
+const sandbox = FreestyleSandbox({
+  snapshotId: "abc123",
+  cwd: "/workspace",
+});
+```
+
+**Explicit** — pass a pre-existing VM instance (lifecycle is yours):
+
+```typescript
+import { freestyle } from "freestyle-sandboxes";
+import { FreestyleSandbox } from "noumen";
+
+const { vm } = await freestyle.vms.create({ workdir: "/workspace" });
+const sandbox = FreestyleSandbox({ vm, cwd: "/workspace" });
+const agent = new Agent({ provider, sandbox });
+```
+
+### Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `vm` | `FreestyleVmInstance` | — | Attach to this VM. When omitted, auto-created |
+| `apiKey` | `string` | `$FREESTYLE_API_KEY` | Freestyle API key (falls back to env var) |
+| `snapshotId` | `string` | — | Create VM from this snapshot |
+| `spec` | `VmSpec` | — | Configuration spec for auto-creation |
+| `idleTimeoutSeconds` | `number` | `600` | Auto-suspend after this many seconds of inactivity |
+| `cwd` | `string` | — | Working directory inside the VM |
+| `defaultTimeout` | `number` | `30000` | Command timeout in milliseconds |
+| `additionalFiles` | `Record<string, {content, encoding?}>` | — | Files to provision at creation time |
+| `gitRepos` | `Array<{repo, path, rev?}>` | — | Git repos to clone at creation time |
+| `disposeStrategy` | `"suspend" \| "delete"` | `"suspend"` | What to do on `dispose()` — suspend preserves memory state |
+
+<Callout type="info" title="Suspend vs Delete">
+  By default, `dispose()` **suspends** the VM rather than deleting it. Suspended VMs preserve full memory state and resume in under 100ms — no reboot, no lost state. Storage-only billing applies while suspended. Set `disposeStrategy: "delete"` for full cleanup.
+</Callout>
+
 ## Sandbox auto-creation lifecycle
 
-All three remote backends support on-demand provisioning when you omit the explicit resource handle. Here is how the lifecycle works:
+All four remote backends support on-demand provisioning when you omit the explicit resource handle. Here is how the lifecycle works:
 
 1. **Provisioning** — the first call to `Agent.createThread()` triggers `sandbox.init()`. For auto-create factories this provisions the remote resource (creates a sprite, starts a Docker container, or creates an E2B sandbox).
 
@@ -234,7 +293,7 @@ All three remote backends support on-demand provisioning when you omit the expli
 
 3. **Reconnection** — when you call `agent.resumeThread(sessionId)`, the agent reads the local index, finds the stored sandbox ID, and passes it to `sandbox.init(storedId)` so the sandbox reconnects to the same resource instead of creating a new one.
 
-4. **Disposal** — `Agent.close()` calls `sandbox.dispose()`. For auto-created resources this tears down the remote resource (deletes the sprite, stops and removes the Docker container, or kills the E2B sandbox). Resources created by the user (explicit IDs) are never torn down.
+4. **Disposal** — `Agent.close()` calls `sandbox.dispose()`. For auto-created resources this tears down the remote resource (deletes the sprite, stops and removes the Docker container, kills the E2B sandbox, or suspends the Freestyle VM). Resources created by the user (explicit IDs) are never torn down.
 
 5. **Idempotency** — `init()` uses a single-flight promise. Calling `createThread()` multiple times reuses the same provisioned resource.
 

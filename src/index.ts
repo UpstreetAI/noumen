@@ -52,12 +52,14 @@ export {
   SpritesSandbox,
   DockerSandbox,
   E2BSandbox,
+  FreestyleSandbox,
   type Sandbox,
   type LocalSandboxOptions,
   type UnsandboxedLocalOptions,
   type SpritesSandboxOptions,
   type DockerSandboxOptions,
   type E2BSandboxOptions,
+  type FreestyleSandboxOptions,
   type SandboxConfig,
 } from "./virtual/sandbox.js";
 
@@ -101,6 +103,12 @@ export {
   type E2BComputerOptions,
   type E2BSandboxInstance,
 } from "./virtual/e2b-computer.js";
+export { FreestyleFs, type FreestyleFsOptions } from "./virtual/freestyle-fs.js";
+export {
+  FreestyleComputer,
+  type FreestyleComputerOptions,
+  type FreestyleVmInstance,
+} from "./virtual/freestyle-computer.js";
 
 // File State Cache
 export type { FileState, FileStateCacheConfig } from "./file-state/types.js";

@@ -53,6 +53,41 @@ describe("sandbox path traversal prevention", () => {
     expect(() => (sfs as any).resolvePath("../../etc/passwd")).toThrow("escapes working directory");
   });
 
+  it("freestyle-fs resolvePath blocks relative ../", async () => {
+    const { FreestyleFs } = await import("../virtual/freestyle-fs.js");
+    const mockVm = {} as any;
+    const ffs = new FreestyleFs({ vm: mockVm, workingDir: "/home/user" });
+    expect(() => (ffs as any).resolvePath("../../etc/passwd")).toThrow("escapes working directory");
+  });
+
+  it("freestyle-fs resolvePath allows paths within workingDir", async () => {
+    const { FreestyleFs } = await import("../virtual/freestyle-fs.js");
+    const mockVm = {} as any;
+    const ffs = new FreestyleFs({ vm: mockVm, workingDir: "/home/user" });
+    expect((ffs as any).resolvePath("subdir/file.txt")).toBe("/home/user/subdir/file.txt");
+  });
+
+  it("freestyle-fs resolvePath blocks absolute paths outside workingDir", async () => {
+    const { FreestyleFs } = await import("../virtual/freestyle-fs.js");
+    const mockVm = {} as any;
+    const ffs = new FreestyleFs({ vm: mockVm, workingDir: "/workspace" });
+    expect(() => (ffs as any).resolvePath("/etc/passwd")).toThrow("outside working directory");
+  });
+
+  it("freestyle-fs resolvePath blocks null bytes in paths", async () => {
+    const { FreestyleFs } = await import("../virtual/freestyle-fs.js");
+    const mockVm = {} as any;
+    const ffs = new FreestyleFs({ vm: mockVm, workingDir: "/workspace" });
+    expect(() => (ffs as any).resolvePath("test\0.txt")).toThrow("null bytes");
+  });
+
+  it("freestyle-fs resolvePath normalizes absolute paths within workingDir", async () => {
+    const { FreestyleFs } = await import("../virtual/freestyle-fs.js");
+    const mockVm = {} as any;
+    const ffs = new FreestyleFs({ vm: mockVm, workingDir: "/workspace" });
+    expect((ffs as any).resolvePath("/workspace/sub/../file.txt")).toBe("/workspace/file.txt");
+  });
+
   it("absolute paths within workingDir are allowed in remote FS backends", async () => {
     const { DockerFs } = await import("../virtual/docker-fs.js");
     const mockContainer = {} as any;

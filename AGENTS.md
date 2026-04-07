@@ -40,7 +40,7 @@ Run this checklist **every time** you modify any of the files listed below:
 ### If you add/remove/rename a sandbox factory (`src/virtual/sandbox.ts`)
 - Update `README.md` Sandboxes section
 - Update `website/docs/virtual/index.mdx`
-- Update `website/src/app/page.tsx` FEATURES array (sandbox count in "Four sandbox backends")
+- Update `website/src/app/page.tsx` FEATURES array (sandbox count in "Six sandbox backends")
 
 ### If you change RunOptions (`src/session/types.ts`)
 - Update `website/docs/stream-events/index.mdx` RunOptions table
@@ -110,7 +110,7 @@ These numeric claims appear in multiple places. Grep for them when changing the 
 
 - **Provider count** — currently 7 (OpenAI, Anthropic, Gemini, OpenRouter, Bedrock, Vertex, Ollama)
 - **Core tool count** — currently 9 (ReadFile, WriteFile, EditFile, Bash, Glob, Grep, WebFetch, NotebookEdit, AskUser)
-- **Sandbox backend count** — currently 5 (LocalSandbox, UnsandboxedLocal, Sprites, Docker, E2B)
+- **Sandbox backend count** — currently 6 (LocalSandbox, UnsandboxedLocal, Sprites, Docker, E2B, Freestyle)
 - **Hook event count** — currently 18 (PreToolUse, PostToolUse, PostToolUseFailure, TurnStart, TurnEnd, SessionStart, SessionEnd, SubagentStart, SubagentStop, PreCompact, PostCompact, PermissionRequest, PermissionDenied, FileWrite, ModelSwitch, RetryAttempt, MemoryUpdate, Error)
 - **Permission mode count** — currently 6 (default, plan, acceptEdits, auto, bypassPermissions, dontAsk)
 

@@ -45,9 +45,9 @@ const FEATURES = [
   },
   {
     icon: "💻",
-    title: "Five sandbox backends",
+    title: "Six sandbox backends",
     description:
-      "LocalSandbox (OS-level), UnsandboxedLocal, sprites.dev, Docker, or E2B cloud. Remote backends auto-provision on first use and reconnect on session resume. Swap one line to change the isolation boundary.",
+      "LocalSandbox (OS-level), UnsandboxedLocal, sprites.dev, Docker, E2B cloud, or Freestyle VMs. Remote backends auto-provision on first use and reconnect on session resume. Swap one line to change the isolation boundary.",
   },
   {
     icon: "🛠️",

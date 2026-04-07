@@ -509,9 +509,49 @@ const agent = new Agent({ provider, sandbox });
 await e2b.close();
 ```
 
+### Freestyle — cloud VMs
+
+Run the agent inside a [Freestyle](https://freestyle.sh) VM. Full Linux VMs with sub-second startup, instant pause/resume, and optional forking. Requires `freestyle-sandboxes` as an optional peer dependency:
+
+```bash
+pnpm add freestyle-sandboxes
+```
+
+**Auto-create** — omit `vm` and a Freestyle VM is provisioned on first use. `Agent.close()` **suspends** (not deletes) the VM so it can resume instantly later:
+
+```typescript
+import { FreestyleSandbox } from "noumen";
+
+const sandbox = FreestyleSandbox({ cwd: "/workspace" });
+const agent = new Agent({ provider, sandbox });
+
+await agent.close(); // suspends the VM (preserves full memory state)
+```
+
+**From a snapshot** — start from a cached environment:
+
+```typescript
+const sandbox = FreestyleSandbox({
+  snapshotId: "abc123",
+  cwd: "/workspace",
+});
+```
+
+**Explicit** — pass a pre-existing VM instance. The caller owns its lifecycle:
+
+```typescript
+import { freestyle } from "freestyle-sandboxes";
+import { FreestyleSandbox } from "noumen";
+
+const { vm } = await freestyle.vms.create({ workdir: "/workspace" });
+
+const sandbox = FreestyleSandbox({ vm, cwd: "/workspace" });
+const agent = new Agent({ provider, sandbox });
+```
+
 ### Sandbox auto-creation lifecycle
 
-All three remote backends (Sprites, Docker, E2B) support on-demand provisioning. When you omit the container/instance and let the factory auto-create:
+All four remote backends (Sprites, Docker, E2B, Freestyle) support on-demand provisioning. When you omit the container/instance and let the factory auto-create:
 
 1. **First `createThread()`** calls `sandbox.init()` which provisions the resource
 2. The sandbox ID is persisted locally (`.noumen/sessions/.sandbox-index.json`) so `resumeThread()` can reconnect to the same resource
