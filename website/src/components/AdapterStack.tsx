@@ -141,15 +141,15 @@ export function AdapterStack() {
         {ROWS.map((row, rowIdx) => (
             <div
             key={row.field}
-            className="flex flex-col gap-2 rounded-lg border border-[var(--color-border-default)] bg-[var(--color-base-surface)] px-3 py-2 sm:flex-row sm:items-start sm:gap-3"
+            className="flex flex-col gap-1.5 rounded-lg border border-[var(--color-border-default)] bg-[var(--color-base-surface)] px-2.5 py-1.5 sm:flex-row sm:items-center sm:gap-2"
           >
-            <div className="flex items-center gap-1.5 text-[var(--color-text-tertiary)] shrink-0">
+            <div className="flex items-center gap-1.5 text-[var(--color-text-tertiary)] shrink-0 sm:min-w-28 sm:border-r sm:border-[var(--color-border-default)] sm:pr-2">
               {ICONS[row.label]}
-              <span className="text-[10px] font-medium uppercase tracking-wider sm:min-w-[5rem]">
+              <span className="text-[10px] font-medium uppercase tracking-wider">
                 {row.label}
               </span>
             </div>
-            <div className="flex flex-wrap gap-1 pt-0.5">
+            <div className="flex flex-wrap gap-1">
               {row.options.map((opt, optIdx) => {
                 const isActive = selected[rowIdx] === optIdx;
                 return (
