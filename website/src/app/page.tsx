@@ -2,115 +2,137 @@ import Link from "next/link";
 import { TerminalBlock } from "@/components/TerminalBlock";
 import { HeroTerminal } from "@/components/HeroTerminal";
 import { AdapterStack } from "@/components/AdapterStack";
+import { CodeSnippet } from "@/components/CodeSnippet";
 import { Sparkles } from "@/components/Sparkles";
 import { EasterEggFooter } from "@/components/EasterEggFooter";
 
-const USE_CASES = [
+const FEATURE_BLOCKS = [
   {
-    icon: "💻",
-    title: "Coding agents",
-    prompt: "Refactor the auth module and add tests",
-    description:
-      "The primary use case. Read, write, edit files, run tests, manage git — the full coding loop with sandboxed isolation.",
-  },
-  {
-    icon: "📊",
-    title: "Data analysis",
-    prompt: "Analyze sales.csv and produce a summary report",
-    description:
-      "Read datasets, run scripts, write outputs. The same file + shell primitives that power coding agents handle data pipelines too.",
-  },
-  {
-    icon: "🔧",
-    title: "DevOps & infrastructure",
-    prompt: "Check the deploy logs and rollback if errors spiked",
-    description:
-      "Shell execution, log parsing, config editing. Agents that operate infrastructure need the same sandboxed computer access.",
-  },
-  {
-    icon: "🔍",
-    title: "Research & knowledge work",
-    prompt: "Read every doc in /specs, then write a summary with citations",
-    description:
-      "Fetch URLs, grep through documents, compile findings. Any agent that reads and writes files fits the model.",
-  },
-];
-
-const FEATURES = [
-  {
-    icon: "🔌",
     title: "Seven providers, one interface",
     description:
-      "OpenAI, Anthropic, Google Gemini, OpenRouter, AWS Bedrock, Vertex AI, and Ollama. Same streaming interface, same tool dispatch. Switch models without changing your code.",
+      "Switch models by changing one string. Same streaming, same tool dispatch.",
+    filename: "index.ts",
+    code: `// swap the string — nothing else changes
+const agent = new Agent({ provider: "anthropic", cwd: "." });
+
+// or use any of the 7 providers:
+// "openai" | "anthropic" | "gemini" | "openrouter"
+// | "bedrock" | "vertex" | "ollama"`,
   },
   {
-    icon: "💻",
     title: "Six sandbox backends",
     description:
-      "LocalSandbox (OS-level), UnsandboxedLocal, sprites.dev, Docker, E2B cloud, or Freestyle VMs. Remote backends auto-provision on first use and reconnect on session resume. Swap one line to change the isolation boundary.",
+      "Swap one line to change the isolation boundary — local to cloud.",
+    filename: "index.ts",
+    code: `import { Agent, LocalSandbox, DockerSandbox } from "noumen";
+
+// local development
+const agent = new Agent({ provider, sandbox: LocalSandbox({ cwd: "." }) });
+
+// production — same agent, different sandbox
+const agent = new Agent({ provider, sandbox: DockerSandbox({ cwd: "/workspace" }) });`,
   },
   {
-    icon: "🛠️",
     title: "Nine built-in tools",
     description:
-      "ReadFile, WriteFile, EditFile, Bash, Glob, Grep, WebFetch, NotebookEdit, AskUser — the same tools shipping inside production coding agents, wired up and ready to go.",
+      "The same tools inside production coding agents, wired up and ready to go.",
+    filename: "terminal",
+    code: `$ npx noumen "Add input validation to signup"
+
+  [ReadFile]   src/handlers/signup.ts
+  [EditFile]   src/handlers/signup.ts  +14 lines
+  [Bash]       npm test -- signup
+  ✓ All 9 tests passed
+  turn_complete  tokens: 2,847  cost: $0.03`,
   },
   {
-    icon: "💾",
     title: "Resume, compact, persist",
     description:
-      "Conversations save as JSONL. Auto-compaction, microcompact, and reactive strategies keep context under control. Resume any thread by ID.",
+      "Conversations save as JSONL. Resume any thread by ID.",
+    filename: "resume.ts",
+    code: `const thread = agent.createThread({ threadId: "feature-auth" });
+
+// picks up exactly where it left off
+for await (const ev of thread.run("Continue from the last change")) {
+  // ...
+}`,
   },
   {
-    icon: "🤖",
-    title: "Multi-agent and subagents",
+    title: "Multi-agent orchestration",
     description:
-      "Spawn isolated subagents for focused subtasks. Run a swarm of agents in parallel with message passing and configurable concurrency.",
+      "Spawn isolated subagents for focused subtasks with configurable concurrency.",
+    filename: "swarm.ts",
+    code: `const thread = agent.createThread();
+
+for await (const ev of thread.run("Refactor auth and add tests")) {
+  if (ev.type === "subagent_start") {
+    console.log(\`  spawned: \${ev.name}\`); // "test-writer"
+  }
+}`,
   },
   {
-    icon: "🔗",
-    title: "MCP, LSP, ACP, A2A",
+    title: "MCP, LSP, hooks, and more",
     description:
-      "Connect to MCP servers for external tools. Query language servers via LSP. Expose your agent over HTTP/WebSocket, or use ACP and A2A protocol adapters.",
+      "Connect external tools, query language servers, intercept everything.",
+    filename: "config.ts",
+    code: `const agent = new Agent({
+  provider: "anthropic",
+  mcpServers: {
+    filesystem: { command: "npx", args: ["-y", "@mcp/server-fs", "/tmp"] },
   },
-  {
-    icon: "🔒",
-    title: "Permissions and safety",
-    description:
-      "Six permission modes from full auto to plan-only. Per-tool rules, denial tracking, and an optional AI classifier. Git safety guards built in.",
+  lsp: {
+    typescript: { command: "typescript-language-server", args: ["--stdio"] },
   },
-  {
-    icon: "🧠",
-    title: "Thinking, structured output",
-    description:
-      "Unified extended-thinking config across providers. Request JSON output with schema validation. One option, any model.",
-  },
-  {
-    icon: "📚",
-    title: "Skills and project context",
-    description:
-      "Load SKILL.md files with conditional activation. Drop a NOUMEN.md or CLAUDE.md in your repo for automatic project instructions. Hierarchical scoping from enterprise to local.",
-  },
-  {
-    icon: "💰",
-    title: "Cost tracking and observability",
-    description:
-      "Built-in token usage and USD cost tracking with per-model pricing. OpenTelemetry tracing. Retry with exponential backoff and model fallback.",
-  },
-  {
-    icon: "🪝",
-    title: "18 hook events",
-    description:
-      "Intercept tool calls, session lifecycle, permissions, file writes, model switches, retry, compaction, and memory. Modify inputs, deny actions, or run side effects.",
-  },
-  {
-    icon: "📦",
-    title: "Embed anywhere, or use the CLI",
-    description:
-      "In-process async iterators, HTTP/SSE, WebSocket, Next.js, Electron, VS Code — or just run npx noumen from the terminal. Presets for zero-config setup.",
+});`,
   },
 ];
 
+const QUICKSTART_STEPS = [
+  {
+    title: "Install",
+    description: "One package. No peer dependencies.",
+    code: "npm install noumen",
+    isShell: true,
+  },
+  {
+    title: "Configure",
+    description: "Pick a provider and a sandbox.",
+    code: `import { Agent, LocalSandbox } from "noumen";
+
+const agent = new Agent({
+  provider: "anthropic",
+  sandbox: LocalSandbox({ cwd: "." }),
+});`,
+    isShell: false,
+  },
+  {
+    title: "Run",
+    description: "Stream events from the agent loop.",
+    code: `const thread = agent.createThread();
+
+for await (const event of thread.run("Fix the auth bug")) {
+  if (event.type === "text_delta") process.stdout.write(event.text);
+}`,
+    isShell: false,
+  },
+  {
+    title: "Ship",
+    description: "Embed in your app, or run the CLI.",
+    code: `# zero-config interactive agent
+$ npx noumen`,
+    isShell: true,
+  },
+];
+
+const AND_MORE = [
+  { label: "Permissions", href: "/docs/permissions" },
+  { label: "Structured output", href: "/docs/getting-started" },
+  { label: "Cost tracking", href: "/docs/getting-started" },
+  { label: "Skills & context", href: "/docs/getting-started" },
+  { label: "18 hook events", href: "/docs/hooks" },
+  { label: "Embed anywhere", href: "/docs/embedding" },
+  { label: "Thinking", href: "/docs/getting-started" },
+];
 
 export default function Home() {
   return (
@@ -129,7 +151,6 @@ export default function Home() {
         <Sparkles />
 
         <div className="relative z-10 mx-auto grid w-full max-w-6xl items-center gap-12 grid-cols-[minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-          {/* Left: copy */}
           <div className="min-w-0 flex flex-col gap-6">
             <div className="inline-flex w-fit items-center gap-2 rounded-full border border-[var(--color-accent-blue-dim)] bg-[var(--color-accent-blue-dim)] px-3 py-1 text-xs font-medium text-[var(--color-accent-blue)]">
               <span>🤲</span> hands for your LLM
@@ -145,8 +166,6 @@ export default function Home() {
               File editing, shell execution, context management, and
               sandboxing &mdash; any provider, any sandbox, one package.
             </p>
-
-            <TerminalBlock command="npm install noumen" className="max-w-lg" />
 
             <div className="flex flex-wrap items-center gap-3">
               <Link
@@ -172,98 +191,27 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Right: interactive adapter stack */}
           <div className="min-w-0">
             <AdapterStack />
           </div>
         </div>
       </section>
 
-      {/* ── Features ── */}
-      <section className="relative py-24 sm:py-32">
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent via-[var(--color-accent-blue-dim)] to-transparent opacity-30" />
-        <div className="relative mx-auto max-w-6xl px-6">
-          <h2 className="font-[family-name:var(--font-display)] text-center text-3xl font-bold tracking-tight text-[var(--color-text-primary)] sm:text-4xl">
-            Everything between the LLM and the computer
-          </h2>
-          <p className="mx-auto mt-4 max-w-xl text-center text-[var(--color-text-secondary)]">
-            Other SDKs lock you to one model or make you build the tools
-            yourself. Noumen ships the full stack &mdash; any provider,
-            any sandbox, every tool &mdash; so you ship the agent.
-          </p>
-
-          <div className="mt-14 grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {FEATURES.map((feature) => (
-              <div
-                key={feature.title}
-                className="group flex flex-col gap-3 rounded-xl border border-[var(--color-border-default)] bg-[var(--color-base-card)] p-6 transition hover:border-[var(--color-accent-blue)] hover:-translate-y-1 hover:shadow-lg hover:shadow-[var(--color-accent-blue-dim)]"
-              >
-                <div className="text-2xl">{feature.icon}</div>
-                <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
-                  {feature.title}
-                </h3>
-                <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
-                  {feature.description}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ── Use cases ── */}
-      <section className="relative py-24 sm:py-32">
-        <div className="relative mx-auto max-w-6xl px-6">
-          <h2 className="font-[family-name:var(--font-display)] text-center text-3xl font-bold tracking-tight text-[var(--color-text-primary)] sm:text-4xl">
-            Built for coding.{" "}
-            <span className="bg-gradient-to-r from-[var(--color-accent-blue)] to-[var(--color-accent-cyan)] bg-clip-text text-transparent">
-              Ready for anything.
-            </span>
-          </h2>
-          <p className="mx-auto mt-4 max-w-xl text-center text-[var(--color-text-secondary)]">
-            The same primitives that power coding agents &mdash; filesystem,
-            shell, sandboxing, context management &mdash; work for any agent
-            that uses a computer.
-          </p>
-
-          <div className="mt-14 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-            {USE_CASES.map((uc) => (
-              <div
-                key={uc.title}
-                className="group flex flex-col gap-4 rounded-xl border border-[var(--color-border-default)] bg-[var(--color-base-card)] p-6 transition hover:border-[var(--color-accent-cyan)] hover:-translate-y-1 hover:shadow-lg hover:shadow-[var(--color-accent-cyan-dim)]"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="text-2xl">{uc.icon}</span>
-                  <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
-                    {uc.title}
-                  </h3>
-                </div>
-                <code className="block rounded-md bg-[var(--color-base-surface)] px-3 py-2 text-xs text-[var(--color-accent-blue)] leading-relaxed">
-                  agent.run(&quot;{uc.prompt}&quot;)
-                </code>
-                <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
-                  {uc.description}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ── Try it now ── */}
-      <section className="relative overflow-hidden py-24 sm:py-32">
+      {/* ── See it in action ── */}
+      <section className="relative overflow-hidden py-20 sm:py-28">
         <div className="absolute inset-0 bg-[var(--color-base-surface)]" />
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-[var(--color-accent-blue-dim)] via-transparent to-[var(--color-accent-cyan-dim)] opacity-40" />
         <div className="relative mx-auto max-w-6xl px-6">
           <div className="mx-auto max-w-2xl text-center">
             <h2 className="font-[family-name:var(--font-display)] text-3xl font-bold tracking-tight sm:text-4xl bg-gradient-to-r from-[var(--color-accent-blue)] to-[var(--color-accent-cyan)] bg-clip-text text-transparent">
-              Try it now.
+              Zero config to a coding agent.
             </h2>
             <p className="mt-4 text-[var(--color-text-secondary)]">
-              <code className="rounded bg-[var(--color-base-card)] px-1.5 py-0.5 font-mono text-sm text-[var(--color-text-primary)]">npx noumen</code>{" "}
-              starts an interactive coding agent in your terminal.
-              No config, no signup. One prompt and it reads files, edits code,
-              runs tests, and reports back.
+              <code className="rounded bg-[var(--color-base-card)] px-1.5 py-0.5 font-mono text-sm text-[var(--color-text-primary)]">
+                npx noumen
+              </code>{" "}
+              starts an interactive agent in your terminal. No config, no
+              signup.
             </p>
           </div>
           <div className="mx-auto mt-10 max-w-3xl">
@@ -272,29 +220,154 @@ export default function Home() {
         </div>
       </section>
 
+      {/* ── Features — 6 themed blocks with code ── */}
+      <section className="relative py-24 sm:py-32">
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent via-[var(--color-accent-blue-dim)] to-transparent opacity-30" />
+        <div className="relative mx-auto max-w-6xl px-6">
+          <h2 className="font-[family-name:var(--font-display)] text-center text-3xl font-bold tracking-tight text-[var(--color-text-primary)] sm:text-4xl">
+            Everything between the LLM and the computer
+          </h2>
+          <p className="mx-auto mt-4 max-w-xl text-center text-[var(--color-text-secondary)]">
+            Other SDKs lock you to one model or make you build the tools
+            yourself. Noumen ships the full stack so you ship the agent.
+          </p>
+
+          <div className="mt-16 flex flex-col gap-16">
+            {FEATURE_BLOCKS.map((block, i) => {
+              const isEven = i % 2 === 0;
+              return (
+                <div
+                  key={block.title}
+                  className={`grid items-center gap-8 lg:grid-cols-2 ${isEven ? "" : "lg:direction-rtl"}`}
+                >
+                  <div className={`flex flex-col gap-3 ${isEven ? "" : "lg:order-2"}`}>
+                    <span className="font-mono text-sm font-bold text-[var(--color-accent-blue)]">
+                      {String(i + 1).padStart(2, "0")}
+                    </span>
+                    <h3 className="font-[family-name:var(--font-display)] text-xl font-bold text-[var(--color-text-primary)] sm:text-2xl">
+                      {block.title}
+                    </h3>
+                    <p className="max-w-md text-[var(--color-text-secondary)]">
+                      {block.description}
+                    </p>
+                  </div>
+                  <div className={isEven ? "" : "lg:order-1"}>
+                    <CodeSnippet
+                      code={block.code}
+                      filename={block.filename}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* And more */}
+          <div className="mt-20 text-center">
+            <p className="mb-6 text-sm font-medium text-[var(--color-text-tertiary)] uppercase tracking-wider">
+              And more
+            </p>
+            <div className="flex flex-wrap justify-center gap-3">
+              {AND_MORE.map((item) => (
+                <Link
+                  key={item.label}
+                  href={item.href}
+                  className="rounded-full border border-[var(--color-border-default)] bg-[var(--color-base-card)] px-4 py-2 text-sm text-[var(--color-text-secondary)] transition hover:border-[var(--color-accent-blue)] hover:text-[var(--color-accent-blue)]"
+                >
+                  {item.label}
+                </Link>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Quickstart ── */}
+      <section className="relative py-24 sm:py-32">
+        <div className="relative mx-auto max-w-3xl px-6">
+          <h2 className="font-[family-name:var(--font-display)] text-center text-3xl font-bold tracking-tight text-[var(--color-text-primary)] sm:text-4xl">
+            Get started in{" "}
+            <span className="bg-gradient-to-r from-[var(--color-accent-blue)] to-[var(--color-accent-cyan)] bg-clip-text text-transparent">
+              four steps.
+            </span>
+          </h2>
+          <p className="mx-auto mt-4 max-w-xl text-center text-[var(--color-text-secondary)]">
+            From install to running agent in under a minute.
+          </p>
+
+          <div className="relative mt-14">
+            <div className="absolute left-[19px] top-0 bottom-0 w-px bg-[var(--color-border-default)] hidden sm:block" />
+
+            <div className="flex flex-col gap-12">
+              {QUICKSTART_STEPS.map((step, i) => (
+                <div key={step.title} className="relative flex gap-6">
+                  <div className="relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[var(--color-accent-blue)] bg-[var(--color-base-body)] font-mono text-sm font-bold text-[var(--color-accent-blue)]">
+                    {String(i + 1).padStart(2, "0")}
+                  </div>
+                  <div className="flex min-w-0 flex-1 flex-col gap-3 pt-1">
+                    <div>
+                      <h3 className="text-lg font-semibold text-[var(--color-text-primary)]">
+                        {step.title}
+                      </h3>
+                      <p className="text-sm text-[var(--color-text-secondary)]">
+                        {step.description}
+                      </p>
+                    </div>
+                    {step.isShell ? (
+                      <TerminalBlock command={step.code} />
+                    ) : (
+                      <CodeSnippet
+                        code={step.code}
+                        filename={step.title.toLowerCase() + ".ts"}
+                      />
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* ── Bottom CTA ── */}
       <section className="relative overflow-hidden py-24 sm:py-32">
         <div className="absolute inset-0 bg-gradient-to-b from-transparent via-[var(--color-accent-blue-dim)] to-transparent" />
         <div className="relative mx-auto max-w-2xl px-6 text-center">
-          <div className="mb-4 text-5xl">⚡</div>
           <h2 className="font-[family-name:var(--font-display)] text-3xl font-bold tracking-tight text-[var(--color-text-primary)] sm:text-4xl">
             Three imports to a{" "}
             <span className="bg-gradient-to-r from-[var(--color-accent-blue)] to-[var(--color-accent-cyan)] bg-clip-text text-transparent">
               coding agent.
             </span>
           </h2>
-          <div className="mt-8 space-y-2 text-left">
-            <TerminalBlock command="npm install noumen" />
-            <TerminalBlock command='import { Agent } from "noumen"' />
-            <TerminalBlock command='import { OpenAIProvider } from "noumen/openai"' />
+          <p className="mt-4 text-[var(--color-text-secondary)]">
+            Read the quickstart, browse the docs, or just run{" "}
+            <code className="rounded bg-[var(--color-base-card)] px-1.5 py-0.5 font-mono text-sm text-[var(--color-text-primary)]">
+              npx noumen
+            </code>{" "}
+            and go.
+          </p>
+          <div className="mt-8 flex flex-wrap justify-center gap-3">
+            <Link
+              href="/docs/getting-started"
+              className="group inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-[var(--color-accent-blue)] to-[var(--color-accent-cyan)] px-5 py-2.5 text-sm font-semibold text-[var(--color-base-body)] transition hover:shadow-lg hover:shadow-[var(--color-accent-blue-dim)]"
+            >
+              Read the quickstart
+              <span
+                aria-hidden="true"
+                className="transition-transform group-hover:translate-x-0.5"
+              >
+                &rarr;
+              </span>
+            </Link>
+            <a
+              href="https://github.com/UpstreetAI/noumen"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 rounded-lg border border-[var(--color-border-default)] bg-[var(--color-base-surface)] px-5 py-2.5 text-sm font-semibold text-[var(--color-text-primary)] transition hover:border-[var(--color-accent-blue)]"
+            >
+              GitHub
+            </a>
           </div>
-          <Link
-            href="/docs/getting-started"
-            className="mt-8 inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-[var(--color-accent-blue)] to-[var(--color-accent-cyan)] px-5 py-2.5 text-sm font-semibold text-[var(--color-base-body)] transition hover:shadow-lg hover:shadow-[var(--color-accent-blue-dim)]"
-          >
-            Read the quickstart
-            <span aria-hidden="true">&rarr;</span>
-          </Link>
         </div>
       </section>
 
