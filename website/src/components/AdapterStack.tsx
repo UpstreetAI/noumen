@@ -141,7 +141,7 @@ export function AdapterStack() {
         {ROWS.map((row, rowIdx) => (
             <div
             key={row.field}
-            className="flex flex-col gap-2 rounded-lg border border-[var(--color-border-default)] bg-[var(--color-base-surface)] px-3 py-2 sm:flex-row sm:items-center sm:gap-3"
+            className="flex flex-col gap-2 rounded-lg border border-[var(--color-border-default)] bg-[var(--color-base-surface)] px-3 py-2 sm:flex-row sm:items-start sm:gap-3"
           >
             <div className="flex items-center gap-1.5 text-[var(--color-text-tertiary)] shrink-0">
               {ICONS[row.label]}
@@ -149,14 +149,14 @@ export function AdapterStack() {
                 {row.label}
               </span>
             </div>
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap gap-1 pt-0.5">
               {row.options.map((opt, optIdx) => {
                 const isActive = selected[rowIdx] === optIdx;
                 return (
                   <button
                     key={opt.id}
                     onClick={() => handleSelect(rowIdx, optIdx)}
-                    className={`cursor-pointer rounded-md px-2.5 py-1 text-xs font-medium transition-all duration-150 ${
+                    className={`cursor-pointer rounded-md px-2 py-1 text-xs font-medium transition-all duration-150 ${
                       isActive
                         ? "bg-[var(--color-accent-blue-dim)] text-[var(--color-accent-blue)] border border-[var(--color-accent-blue)]"
                         : "text-[var(--color-text-tertiary)] border border-transparent hover:text-[var(--color-text-secondary)] hover:border-[var(--color-border-default)]"
