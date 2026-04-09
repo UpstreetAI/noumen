@@ -86,6 +86,12 @@ const ROWS: AdapterRow[] = [
         importName: "E2BSandbox",
         code: "E2BSandbox({ sandbox: e2b, cwd: \"/home/user\" })",
       },
+      {
+        id: "freestyle",
+        name: "Freestyle",
+        importName: "FreestyleSandbox",
+        code: 'FreestyleSandbox({ cwd: "/workspace" })',
+      },
     ],
   },
 ];
