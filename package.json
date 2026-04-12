@@ -1,6 +1,6 @@
 {
   "name": "noumen",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "description": "Programmatic AI agent runtime with pluggable providers and sandboxed virtual infrastructure",
   "main": "./dist/index.js",
