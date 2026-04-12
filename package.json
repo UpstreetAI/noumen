@@ -81,6 +81,9 @@
     "dev": "concurrently -n lib,web -c blue,magenta \"tsup --watch\" \"pnpm --filter noumen-docs dev\"",
     "cli": "tsx src/cli/index.ts",
     "prepublishOnly": "pnpm run build",
+    "version:major": "npm version major --no-git-tag-version",
+    "version:minor": "npm version minor --no-git-tag-version",
+    "version:patch": "npm version patch --no-git-tag-version",
     "publish:lib": "pnpm publish --access public --no-git-checks"
   },
   "packageManager": "pnpm@10.8.1",
