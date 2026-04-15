@@ -53,6 +53,7 @@ export {
   DockerSandbox,
   E2BSandbox,
   FreestyleSandbox,
+  SshSandbox,
   type Sandbox,
   type LocalSandboxOptions,
   type UnsandboxedLocalOptions,
@@ -60,6 +61,7 @@ export {
   type DockerSandboxOptions,
   type E2BSandboxOptions,
   type FreestyleSandboxOptions,
+  type SshSandboxOptions,
   type SandboxConfig,
 } from "./virtual/sandbox.js";
 
@@ -109,6 +111,14 @@ export {
   type FreestyleComputerOptions,
   type FreestyleVmInstance,
 } from "./virtual/freestyle-computer.js";
+export { SshFs, type SshFsOptions } from "./virtual/ssh-fs.js";
+export {
+  SshComputer,
+  type SshComputerOptions,
+  type SshClient,
+  type SshSftpSession,
+  type SshChannel,
+} from "./virtual/ssh-computer.js";
 
 // File State Cache
 export type { FileState, FileStateCacheConfig } from "./file-state/types.js";

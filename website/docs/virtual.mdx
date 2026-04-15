@@ -15,7 +15,7 @@ interface Sandbox {
 }
 ```
 
-noumen ships six sandbox factories. The four remote backends (Sprites, Docker, E2B, Freestyle) support **auto-creation** — omit the container/instance ID and the resource is provisioned on first use, persisted across sessions, and disposed automatically. You can also implement your own.
+noumen ships seven sandbox factories. The five remote backends (Sprites, Docker, E2B, Freestyle, SSH) support **auto-creation** — omit the container/instance ID and the resource is provisioned on first use, persisted across sessions, and disposed automatically. You can also implement your own.
 
 ## LocalSandbox — OS-level sandboxing
 
@@ -283,9 +283,69 @@ const agent = new Agent({ provider, sandbox });
   By default, `dispose()` **suspends** the VM rather than deleting it. Suspended VMs preserve full memory state and resume in under 100ms — no reboot, no lost state. Storage-only billing applies while suspended. Set `disposeStrategy: "delete"` for full cleanup.
 </Callout>
 
+## SshSandbox — remote SSH hosts
+
+Connect to any remote machine over SSH. Uses `ssh2` for command execution (exec channels) and file I/O (SFTP):
+
+```bash
+pnpm add ssh2
+```
+
+**Auto-connect** — provide credentials and the connection is established lazily on `init()`:
+
+```typescript
+import { Agent, SshSandbox } from "noumen";
+import fs from "node:fs";
+
+const sandbox = SshSandbox({
+  host: "dev.example.com",
+  username: "deploy",
+  privateKey: fs.readFileSync("/home/deploy/.ssh/id_ed25519"),
+  cwd: "/home/deploy/project",
+});
+const agent = new Agent({ provider, sandbox });
+
+// SSH connection closed on dispose:
+await agent.close();
+```
+
+Password auth is also supported — pass `password` instead of `privateKey`.
+
+**Explicit** — pass a pre-connected ssh2 `Client` (lifecycle is yours):
+
+```typescript
+import { Client } from "ssh2";
+import { SshSandbox } from "noumen";
+
+const client = new Client();
+await new Promise<void>((resolve) => {
+  client.on("ready", resolve);
+  client.connect({ host: "10.0.0.5", username: "root", privateKey: key });
+});
+
+const sandbox = SshSandbox({ client, cwd: "/workspace" });
+const agent = new Agent({ provider, sandbox });
+
+client.end();
+```
+
+### Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `client` | `ssh2.Client` | — | Attach to this client. When omitted, auto-connected from `host` |
+| `host` | `string` | — | SSH hostname (required when `client` is omitted) |
+| `port` | `number` | `22` | SSH port |
+| `username` | `string` | `"root"` | SSH username |
+| `password` | `string` | — | Password for password-based auth |
+| `privateKey` | `string \| Buffer` | — | PEM-encoded private key for key-based auth |
+| `passphrase` | `string` | — | Passphrase for encrypted private keys |
+| `cwd` | `string` | `/` | Working directory on the remote host |
+| `defaultTimeout` | `number` | `30000` | Command timeout in milliseconds |
+
 ## Sandbox auto-creation lifecycle
 
-All four remote backends support on-demand provisioning when you omit the explicit resource handle. Here is how the lifecycle works:
+All five remote backends support on-demand provisioning when you omit the explicit resource handle. Here is how the lifecycle works:
 
 1. **Provisioning** — the first call to `Agent.createThread()` triggers `sandbox.init()`. For auto-create factories this provisions the remote resource (creates a sprite, starts a Docker container, or creates an E2B sandbox).
 

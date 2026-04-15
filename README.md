@@ -549,9 +549,52 @@ const sandbox = FreestyleSandbox({ vm, cwd: "/workspace" });
 const agent = new Agent({ provider, sandbox });
 ```
 
+### SSH — remote hosts
+
+Connect to any remote machine over SSH. Uses `ssh2` for command execution (exec channels) and file I/O (SFTP):
+
+```bash
+pnpm add ssh2
+```
+
+**Auto-connect** — provide credentials and the connection is established lazily on `init()`:
+
+```typescript
+import { Agent, SshSandbox } from "noumen";
+import fs from "node:fs";
+
+const agent = new Agent({
+  provider,
+  sandbox: SshSandbox({
+    host: "dev.example.com",
+    username: "deploy",
+    privateKey: fs.readFileSync("/home/deploy/.ssh/id_ed25519"),
+    cwd: "/home/deploy/project",
+  }),
+});
+```
+
+Password auth is also supported — pass `password` instead of `privateKey`.
+
+**Explicit** — pass a pre-connected ssh2 Client. The caller owns its lifecycle:
+
+```typescript
+import { Client } from "ssh2";
+import { SshSandbox } from "noumen";
+
+const client = new Client();
+await new Promise<void>((resolve) => {
+  client.on("ready", resolve);
+  client.connect({ host: "10.0.0.5", username: "root", privateKey: key });
+});
+
+const sandbox = SshSandbox({ client, cwd: "/workspace" });
+const agent = new Agent({ provider, sandbox });
+```
+
 ### Sandbox auto-creation lifecycle
 
-All four remote backends (Sprites, Docker, E2B, Freestyle) support on-demand provisioning. When you omit the container/instance and let the factory auto-create:
+All five remote backends (Sprites, Docker, E2B, Freestyle, SSH) support on-demand provisioning. When you omit the container/instance and let the factory auto-create:
 
 1. **First `createThread()`** calls `sandbox.init()` which provisions the resource
 2. The sandbox ID is persisted locally (`.noumen/sessions/.sandbox-index.json`) so `resumeThread()` can reconnect to the same resource

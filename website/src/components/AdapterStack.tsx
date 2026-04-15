@@ -13,87 +13,95 @@ interface AdapterRow {
   label: string;
   field: string;
   options: AdapterOption[];
+  /** When set, this row is grouped with the previous row sharing the same field. */
+  group?: string;
 }
 
+const PROVIDERS: AdapterOption[] = [
+  {
+    id: "openai",
+    name: "OpenAI",
+    importName: "OpenAIProvider",
+    code: "new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY })",
+  },
+  {
+    id: "anthropic",
+    name: "Anthropic",
+    importName: "AnthropicProvider",
+    code: "new AnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY })",
+  },
+  {
+    id: "gemini",
+    name: "Gemini",
+    importName: "GeminiProvider",
+    code: "new GeminiProvider({ apiKey: process.env.GEMINI_API_KEY })",
+  },
+  {
+    id: "openrouter",
+    name: "OpenRouter",
+    importName: "OpenRouterProvider",
+    code: "new OpenRouterProvider({ apiKey: process.env.OPENROUTER_API_KEY })",
+  },
+  {
+    id: "ollama",
+    name: "Ollama",
+    importName: "OllamaProvider",
+    code: 'new OllamaProvider({ model: "qwen2.5-coder:32b" })',
+  },
+];
+
+const LOCAL_SANDBOXES: AdapterOption[] = [
+  {
+    id: "local",
+    name: "Local",
+    importName: "LocalSandbox",
+    code: 'LocalSandbox({ cwd: "/my/project" })',
+  },
+  {
+    id: "unsandboxed",
+    name: "Unsandboxed",
+    importName: "UnsandboxedLocal",
+    code: 'UnsandboxedLocal({ cwd: "/my/project" })',
+  },
+  {
+    id: "docker",
+    name: "Docker",
+    importName: "DockerSandbox",
+    code: "DockerSandbox({ container, cwd: \"/workspace\" })",
+  },
+];
+
+const REMOTE_SANDBOXES: AdapterOption[] = [
+  {
+    id: "ssh",
+    name: "SSH",
+    importName: "SshSandbox",
+    code: 'SshSandbox({ host: "dev.example.com", cwd: "/workspace" })',
+  },
+  {
+    id: "sprites",
+    name: "Sprites",
+    importName: "SpritesSandbox",
+    code: "SpritesSandbox({ token, spriteName })",
+  },
+  {
+    id: "e2b",
+    name: "E2B",
+    importName: "E2BSandbox",
+    code: "E2BSandbox({ sandbox: e2b, cwd: \"/home/user\" })",
+  },
+  {
+    id: "freestyle",
+    name: "Freestyle",
+    importName: "FreestyleSandbox",
+    code: 'FreestyleSandbox({ cwd: "/workspace" })',
+  },
+];
+
 const ROWS: AdapterRow[] = [
-  {
-    label: "AI Provider",
-    field: "provider",
-    options: [
-      {
-        id: "openai",
-        name: "OpenAI",
-        importName: "OpenAIProvider",
-        code: "new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY })",
-      },
-      {
-        id: "anthropic",
-        name: "Anthropic",
-        importName: "AnthropicProvider",
-        code: "new AnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY })",
-      },
-      {
-        id: "gemini",
-        name: "Gemini",
-        importName: "GeminiProvider",
-        code: "new GeminiProvider({ apiKey: process.env.GEMINI_API_KEY })",
-      },
-      {
-        id: "openrouter",
-        name: "OpenRouter",
-        importName: "OpenRouterProvider",
-        code: "new OpenRouterProvider({ apiKey: process.env.OPENROUTER_API_KEY })",
-      },
-      {
-        id: "ollama",
-        name: "Ollama",
-        importName: "OllamaProvider",
-        code: 'new OllamaProvider({ model: "qwen2.5-coder:32b" })',
-      },
-    ],
-  },
-  {
-    label: "Sandbox",
-    field: "sandbox",
-    options: [
-      {
-        id: "local",
-        name: "Local",
-        importName: "LocalSandbox",
-        code: 'LocalSandbox({ cwd: "/my/project" })',
-      },
-      {
-        id: "unsandboxed",
-        name: "Unsandboxed",
-        importName: "UnsandboxedLocal",
-        code: 'UnsandboxedLocal({ cwd: "/my/project" })',
-      },
-      {
-        id: "sprites",
-        name: "Sprites",
-        importName: "SpritesSandbox",
-        code: "SpritesSandbox({ token, spriteName })",
-      },
-      {
-        id: "docker",
-        name: "Docker",
-        importName: "DockerSandbox",
-        code: "DockerSandbox({ container, cwd: \"/workspace\" })",
-      },
-      {
-        id: "e2b",
-        name: "E2B",
-        importName: "E2BSandbox",
-        code: "E2BSandbox({ sandbox: e2b, cwd: \"/home/user\" })",
-      },
-      {
-        id: "freestyle",
-        name: "Freestyle",
-        importName: "FreestyleSandbox",
-        code: 'FreestyleSandbox({ cwd: "/workspace" })',
-      },
-    ],
-  },
+  { label: "AI Provider", field: "provider", options: PROVIDERS },
+  { label: "Sandbox", field: "sandbox", options: LOCAL_SANDBOXES, group: "Local" },
+  { label: "Sandbox", field: "sandbox", options: REMOTE_SANDBOXES, group: "Remote" },
 ];
 
 const ICONS: Record<string, React.ReactNode> = {
@@ -119,54 +127,142 @@ const STATIC_LINES = [
   "}",
 ];
 
+/**
+ * Deduplicate rows by field — multiple rows with the same field are grouped
+ * visually but only one option is active at a time across the group.
+ */
+const FIELDS = [...new Set(ROWS.map((r) => r.field))];
+
 export function AdapterStack() {
-  const [selected, setSelected] = useState([0, 0]);
+  // Selection state: keyed by field name -> { rowIdx, optIdx }
+  const [selected, setSelected] = useState<Record<string, { rowIdx: number; optIdx: number }>>(() => {
+    const init: Record<string, { rowIdx: number; optIdx: number }> = {};
+    for (const field of FIELDS) {
+      const rowIdx = ROWS.findIndex((r) => r.field === field);
+      init[field] = { rowIdx, optIdx: 0 };
+    }
+    return init;
+  });
 
   const handleSelect = useCallback((rowIdx: number, optIdx: number) => {
-    setSelected((prev) => {
-      const next = [...prev];
-      next[rowIdx] = optIdx;
-      return next;
-    });
+    const field = ROWS[rowIdx].field;
+    setSelected((prev) => ({ ...prev, [field]: { rowIdx, optIdx } }));
   }, []);
 
-  const activeOptions = ROWS.map((row, i) => row.options[selected[i]]);
-  const imports = activeOptions.map((o) => o.importName);
-  const swapKey = selected.join("-");
+  const activeByField = Object.fromEntries(
+    FIELDS.map((field) => {
+      const sel = selected[field];
+      return [field, ROWS[sel.rowIdx].options[sel.optIdx]];
+    }),
+  );
+
+  const imports = FIELDS.map((f) => activeByField[f].importName);
+  const swapKey = FIELDS.map((f) => `${selected[f].rowIdx}-${selected[f].optIdx}`).join("_");
+
+  // Group consecutive rows that share a field into visual blocks
+  type RowGroup = { label: string; field: string; icon: React.ReactNode; subgroups: { group?: string; rowIdx: number; options: AdapterOption[] }[] };
+  const groups: RowGroup[] = [];
+  for (let i = 0; i < ROWS.length; i++) {
+    const row = ROWS[i];
+    const prev = groups[groups.length - 1];
+    if (prev && prev.field === row.field) {
+      prev.subgroups.push({ group: row.group, rowIdx: i, options: row.options });
+    } else {
+      groups.push({
+        label: row.label,
+        field: row.field,
+        icon: ICONS[row.label],
+        subgroups: [{ group: row.group, rowIdx: i, options: row.options }],
+      });
+    }
+  }
 
   return (
     <div className="flex flex-col gap-4">
       {/* Adapter rows */}
       <div className="flex flex-col gap-2">
-        {ROWS.map((row, rowIdx) => (
-            <div
-            key={row.field}
-            className="flex flex-col gap-1.5 rounded-lg border border-[var(--color-border-default)] bg-[var(--color-base-surface)] px-2.5 py-1.5 sm:flex-row sm:items-center sm:gap-2"
+        {groups.map((grp) => (
+          <div
+            key={grp.field}
+            className="flex flex-col gap-1.5 rounded-lg border border-[var(--color-border-default)] bg-[var(--color-base-surface)] px-2.5 py-1.5 sm:flex-row sm:items-start sm:gap-2"
           >
-            <div className="flex items-center gap-1.5 text-[var(--color-text-tertiary)] shrink-0 sm:min-w-28 sm:border-r sm:border-[var(--color-border-default)] sm:pr-2">
-              {ICONS[row.label]}
-              <span className="text-[10px] font-medium uppercase tracking-wider">
-                {row.label}
-              </span>
-            </div>
-            <div className="flex flex-wrap gap-1">
-              {row.options.map((opt, optIdx) => {
-                const isActive = selected[rowIdx] === optIdx;
-                return (
-                  <button
-                    key={opt.id}
-                    onClick={() => handleSelect(rowIdx, optIdx)}
-                    className={`cursor-pointer rounded-md px-2 py-1 text-xs font-medium transition-all duration-150 ${
-                      isActive
-                        ? "bg-[var(--color-accent-blue-dim)] text-[var(--color-accent-blue)] border border-[var(--color-accent-blue)]"
-                        : "text-[var(--color-text-tertiary)] border border-transparent hover:text-[var(--color-text-secondary)] hover:border-[var(--color-border-default)]"
-                    }`}
-                  >
-                    {opt.name}
-                  </button>
-                );
-              })}
-            </div>
+            {grp.subgroups.length <= 1 ? (
+              <>
+                <div className="flex items-center gap-1.5 text-[var(--color-text-tertiary)] shrink-0 sm:min-w-28 sm:border-r sm:border-[var(--color-border-default)] sm:pr-2">
+                  {grp.icon}
+                  <span className="text-[10px] font-medium uppercase tracking-wider">
+                    {grp.label}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {grp.subgroups[0].options.map((opt, optIdx) => {
+                    const sel = selected[grp.field];
+                    const isActive = sel.rowIdx === grp.subgroups[0].rowIdx && sel.optIdx === optIdx;
+                    return (
+                      <button
+                        key={opt.id}
+                        onClick={() => handleSelect(grp.subgroups[0].rowIdx, optIdx)}
+                        className={`cursor-pointer rounded-md px-2 py-1 text-xs font-medium transition-all duration-150 ${
+                          isActive
+                            ? "bg-[var(--color-accent-blue-dim)] text-[var(--color-accent-blue)] border border-[var(--color-accent-blue)]"
+                            : "text-[var(--color-text-tertiary)] border border-transparent hover:text-[var(--color-text-secondary)] hover:border-[var(--color-border-default)]"
+                        }`}
+                      >
+                        {opt.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex flex-col gap-0.5 text-[var(--color-text-tertiary)] shrink-0 sm:min-w-28 sm:border-r sm:border-[var(--color-border-default)] sm:pr-2">
+                  <div className="flex items-center gap-1.5">
+                    {grp.icon}
+                    <span className="text-[10px] font-medium uppercase tracking-wider">
+                      {grp.label}
+                    </span>
+                  </div>
+                  <div className="flex gap-2 ml-5">
+                    {grp.subgroups.map((sub) => {
+                      const sel = selected[grp.field];
+                      const isGroupActive = sel.rowIdx === sub.rowIdx;
+                      return (
+                        <span
+                          key={sub.group}
+                          className={`text-[9px] uppercase tracking-wider ${isGroupActive ? "opacity-70" : "opacity-30"}`}
+                        >
+                          {sub.group}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1">
+                  {grp.subgroups.map((sub) => (
+                    <div key={sub.group ?? "default"} className="flex flex-wrap gap-1">
+                      {sub.options.map((opt, optIdx) => {
+                        const sel = selected[grp.field];
+                        const isActive = sel.rowIdx === sub.rowIdx && sel.optIdx === optIdx;
+                        return (
+                          <button
+                            key={opt.id}
+                            onClick={() => handleSelect(sub.rowIdx, optIdx)}
+                            className={`cursor-pointer rounded-md px-2 py-1 text-xs font-medium transition-all duration-150 ${
+                              isActive
+                                ? "bg-[var(--color-accent-blue-dim)] text-[var(--color-accent-blue)] border border-[var(--color-accent-blue)]"
+                                : "text-[var(--color-text-tertiary)] border border-transparent hover:text-[var(--color-text-secondary)] hover:border-[var(--color-border-default)]"
+                            }`}
+                          >
+                            {opt.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         ))}
       </div>
@@ -198,13 +294,13 @@ export function AdapterStack() {
             <span className="text-[var(--color-text-tertiary)]">
               {"const agent = new Agent({\n"}
             </span>
-            {ROWS.map((row, i) => (
-              <span key={row.field}>
+            {FIELDS.map((field) => (
+              <span key={field}>
                 <span className="text-[var(--color-text-tertiary)]">
-                  {"  " + row.field + ": "}
+                  {"  " + field + ": "}
                 </span>
-                <span key={`${row.field}-${selected[i]}`} className="adapter-swap text-[var(--color-accent-blue)]">
-                  {activeOptions[i].code}
+                <span key={`${field}-${swapKey}`} className="adapter-swap text-[var(--color-accent-blue)]">
+                  {activeByField[field].code}
                 </span>
                 <span className="text-[var(--color-text-tertiary)]">
                   {",\n"}

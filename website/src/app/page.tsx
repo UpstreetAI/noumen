@@ -20,17 +20,17 @@ const agent = new Agent({ provider: "anthropic", cwd: "." });
 // | "bedrock" | "vertex" | "ollama"`,
   },
   {
-    title: "Six sandbox backends",
+    title: "Seven sandbox backends",
     description:
-      "Swap one line to change the isolation boundary — local to cloud.",
+      "Swap one line to change the isolation boundary — local to cloud to SSH.",
     filename: "index.ts",
-    code: `import { Agent, LocalSandbox, DockerSandbox } from "noumen";
+    code: `import { Agent, LocalSandbox, SshSandbox } from "noumen";
 
 // local development
 const agent = new Agent({ provider, sandbox: LocalSandbox({ cwd: "." }) });
 
-// production — same agent, different sandbox
-const agent = new Agent({ provider, sandbox: DockerSandbox({ cwd: "/workspace" }) });`,
+// production — same agent, remote sandbox over SSH
+const agent = new Agent({ provider, sandbox: SshSandbox({ host: "dev.example.com", cwd: "/workspace" }) });`,
   },
   {
     title: "Nine built-in tools",

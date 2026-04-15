@@ -110,6 +110,7 @@
     "google-auth-library": ">=9.0.0",
     "openai": "^4.85.0",
     "sharp": ">=0.33.0",
+    "ssh2": ">=1.0.0",
     "vscode-jsonrpc": "^8.2.1",
     "ws": ">=8.0.0"
   },
@@ -154,6 +155,9 @@
       "optional": true
     },
     "sharp": {
+      "optional": true
+    },
+    "ssh2": {
       "optional": true
     }
   },
