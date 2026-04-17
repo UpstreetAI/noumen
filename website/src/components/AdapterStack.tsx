@@ -7,6 +7,8 @@ interface AdapterOption {
   name: string;
   code: string;
   importName: string;
+  /** Subpath to import from. Defaults to the root barrel `"noumen"`. */
+  importPath?: string;
 }
 
 interface AdapterRow {
@@ -22,30 +24,35 @@ const PROVIDERS: AdapterOption[] = [
     id: "openai",
     name: "OpenAI",
     importName: "OpenAIProvider",
+    importPath: "noumen/openai",
     code: "new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY })",
   },
   {
     id: "anthropic",
     name: "Anthropic",
     importName: "AnthropicProvider",
+    importPath: "noumen/anthropic",
     code: "new AnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY })",
   },
   {
     id: "gemini",
     name: "Gemini",
     importName: "GeminiProvider",
+    importPath: "noumen/gemini",
     code: "new GeminiProvider({ apiKey: process.env.GEMINI_API_KEY })",
   },
   {
     id: "openrouter",
     name: "OpenRouter",
     importName: "OpenRouterProvider",
+    importPath: "noumen/openrouter",
     code: "new OpenRouterProvider({ apiKey: process.env.OPENROUTER_API_KEY })",
   },
   {
     id: "ollama",
     name: "Ollama",
     importName: "OllamaProvider",
+    importPath: "noumen/ollama",
     code: 'new OllamaProvider({ model: "qwen2.5-coder:32b" })',
   },
 ];
@@ -67,6 +74,7 @@ const LOCAL_SANDBOXES: AdapterOption[] = [
     id: "docker",
     name: "Docker",
     importName: "DockerSandbox",
+    importPath: "noumen/docker",
     code: "DockerSandbox({ container, cwd: \"/workspace\" })",
   },
 ];
@@ -76,24 +84,28 @@ const REMOTE_SANDBOXES: AdapterOption[] = [
     id: "ssh",
     name: "SSH",
     importName: "SshSandbox",
+    importPath: "noumen/ssh",
     code: 'SshSandbox({ host: "dev.example.com", cwd: "/workspace" })',
   },
   {
     id: "sprites",
     name: "Sprites",
     importName: "SpritesSandbox",
+    importPath: "noumen/sprites",
     code: "SpritesSandbox({ token, spriteName })",
   },
   {
     id: "e2b",
     name: "E2B",
     importName: "E2BSandbox",
+    importPath: "noumen/e2b",
     code: "E2BSandbox({ sandbox: e2b, cwd: \"/home/user\" })",
   },
   {
     id: "freestyle",
     name: "Freestyle",
     importName: "FreestyleSandbox",
+    importPath: "noumen/freestyle",
     code: 'FreestyleSandbox({ cwd: "/workspace" })',
   },
 ];
@@ -156,8 +168,24 @@ export function AdapterStack() {
     }),
   );
 
-  const imports = FIELDS.map((f) => activeByField[f].importName);
   const swapKey = FIELDS.map((f) => `${selected[f].rowIdx}-${selected[f].optIdx}`).join("_");
+
+  // Group imports by their path. Root-barrel imports merge with the default
+  // `Agent` import; subpath imports emit one `import` line each.
+  const BARREL = "noumen";
+  const barrelImports = ["Agent"];
+  const subpathImports: { path: string; names: string[] }[] = [];
+  for (const f of FIELDS) {
+    const opt = activeByField[f];
+    const path = opt.importPath ?? BARREL;
+    if (path === BARREL) {
+      barrelImports.push(opt.importName);
+    } else {
+      const existing = subpathImports.find((s) => s.path === path);
+      if (existing) existing.names.push(opt.importName);
+      else subpathImports.push({ path, names: [opt.importName] });
+    }
+  }
 
   // Group consecutive rows that share a field into visual blocks
   type RowGroup = { label: string; field: string; icon: React.ReactNode; subgroups: { group?: string; rowIdx: number; options: AdapterOption[] }[] };
@@ -279,16 +307,24 @@ export function AdapterStack() {
         </div>
         <pre className="whitespace-pre">
           <code>
-            {/* Import line */}
-            <span className="text-[var(--color-text-tertiary)]">
-              {"import { Agent, "}
+            {/* Import lines */}
+            <span className="text-[var(--color-text-tertiary)]">{"import { "}</span>
+            <span key={`barrel-${swapKey}`} className="adapter-swap text-[var(--color-accent-cyan)]">
+              {barrelImports.join(", ")}
             </span>
-            <span key={`imports-${swapKey}`} className="adapter-swap text-[var(--color-accent-cyan)]">
-              {imports.join(", ")}
-            </span>
-            <span className="text-[var(--color-text-tertiary)]">
-              {' } from "noumen";\n\n'}
-            </span>
+            <span className="text-[var(--color-text-tertiary)]">{' } from "noumen";\n'}</span>
+            {subpathImports.map((sub, i) => (
+              <span key={`sub-${i}-${swapKey}`}>
+                <span className="text-[var(--color-text-tertiary)]">{"import { "}</span>
+                <span className="adapter-swap text-[var(--color-accent-cyan)]">
+                  {sub.names.join(", ")}
+                </span>
+                <span className="text-[var(--color-text-tertiary)]">
+                  {` } from "${sub.path}";\n`}
+                </span>
+              </span>
+            ))}
+            <span className="text-[var(--color-text-tertiary)]">{"\n"}</span>
 
             {/* Constructor */}
             <span className="text-[var(--color-text-tertiary)]">

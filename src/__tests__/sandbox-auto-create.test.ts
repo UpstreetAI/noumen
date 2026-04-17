@@ -15,7 +15,7 @@ describe("SpritesSandbox auto-creation", () => {
   });
 
   it("explicit spriteName attaches immediately (no init needed)", async () => {
-    const { SpritesSandbox } = await import("../virtual/sandbox.js");
+    const { SpritesSandbox } = await import("../virtual/sprites-sandbox.js");
 
     const sandbox = SpritesSandbox({
       token: "tok",
@@ -27,7 +27,7 @@ describe("SpritesSandbox auto-creation", () => {
   });
 
   it("omitting spriteName returns lazy sandbox with init()", async () => {
-    const { SpritesSandbox } = await import("../virtual/sandbox.js");
+    const { SpritesSandbox } = await import("../virtual/sprites-sandbox.js");
 
     const sandbox = SpritesSandbox({ token: "tok" });
 
@@ -36,7 +36,7 @@ describe("SpritesSandbox auto-creation", () => {
   });
 
   it("proxy methods throw before init()", async () => {
-    const { SpritesSandbox } = await import("../virtual/sandbox.js");
+    const { SpritesSandbox } = await import("../virtual/sprites-sandbox.js");
 
     const sandbox = SpritesSandbox({ token: "tok" });
 
@@ -55,7 +55,7 @@ describe("SpritesSandbox auto-creation", () => {
       json: () => Promise.resolve({ id: "sprite-1", name: "noumen-1234" }),
     }) as unknown as typeof fetch;
 
-    const { SpritesSandbox } = await import("../virtual/sandbox.js");
+    const { SpritesSandbox } = await import("../virtual/sprites-sandbox.js");
 
     const sandbox = SpritesSandbox({ token: "tok" });
     await sandbox.init!();
@@ -78,7 +78,7 @@ describe("SpritesSandbox auto-creation", () => {
       json: () => Promise.resolve({ name: "existing-sprite-name" }),
     }) as unknown as typeof fetch;
 
-    const { SpritesSandbox } = await import("../virtual/sandbox.js");
+    const { SpritesSandbox } = await import("../virtual/sprites-sandbox.js");
 
     const sandbox = SpritesSandbox({ token: "tok" });
     await sandbox.init!("existing-sprite-name");
@@ -97,7 +97,7 @@ describe("SpritesSandbox auto-creation", () => {
       return { ok: true, text: () => Promise.resolve("{}") };
     }) as unknown as typeof fetch;
 
-    const { SpritesSandbox } = await import("../virtual/sandbox.js");
+    const { SpritesSandbox } = await import("../virtual/sprites-sandbox.js");
     const sandbox = SpritesSandbox({ token: "tok" });
 
     const p1 = sandbox.init!();
@@ -116,7 +116,7 @@ describe("SpritesSandbox auto-creation", () => {
       text: () => Promise.resolve("{}"),
     }) as unknown as typeof fetch;
 
-    const { SpritesSandbox } = await import("../virtual/sandbox.js");
+    const { SpritesSandbox } = await import("../virtual/sprites-sandbox.js");
 
     const sandbox = SpritesSandbox({ token: "tok" });
     await sandbox.init!();
@@ -139,7 +139,7 @@ describe("SpritesSandbox auto-creation", () => {
       json: () => Promise.resolve({ name: "user-provided" }),
     }) as unknown as typeof fetch;
 
-    const { SpritesSandbox } = await import("../virtual/sandbox.js");
+    const { SpritesSandbox } = await import("../virtual/sprites-sandbox.js");
 
     const sandbox = SpritesSandbox({ token: "tok" });
     await sandbox.init!("user-provided");
@@ -169,7 +169,7 @@ describe("SpritesSandbox auto-creation", () => {
       },
     ) as unknown as typeof fetch;
 
-    const { SpritesSandbox } = await import("../virtual/sandbox.js");
+    const { SpritesSandbox } = await import("../virtual/sprites-sandbox.js");
     const sandbox = SpritesSandbox({ token: "tok" });
     await sandbox.init!();
 
@@ -187,7 +187,7 @@ describe("SpritesSandbox auto-creation", () => {
       return { ok: true, text: () => Promise.resolve("{}") };
     }) as unknown as typeof fetch;
 
-    const { SpritesSandbox } = await import("../virtual/sandbox.js");
+    const { SpritesSandbox } = await import("../virtual/sprites-sandbox.js");
     const sandbox = SpritesSandbox({ token: "tok" });
 
     await expect(sandbox.init!()).rejects.toThrow("Network timeout");
@@ -203,7 +203,7 @@ describe("SpritesSandbox auto-creation", () => {
       text: () => Promise.resolve("{}"),
     }) as unknown as typeof fetch;
 
-    const { SpritesSandbox } = await import("../virtual/sandbox.js");
+    const { SpritesSandbox } = await import("../virtual/sprites-sandbox.js");
     const sandbox = SpritesSandbox({ token: "tok" });
     await sandbox.init!();
 
@@ -220,7 +220,7 @@ describe("SpritesSandbox auto-creation", () => {
       text: () => Promise.resolve("{}"),
     }) as unknown as typeof fetch;
 
-    const { SpritesSandbox } = await import("../virtual/sandbox.js");
+    const { SpritesSandbox } = await import("../virtual/sprites-sandbox.js");
     const sandbox = SpritesSandbox({ token: "tok", namePrefix: "myapp-" });
     await sandbox.init!();
 
@@ -234,7 +234,7 @@ describe("SpritesSandbox auto-creation", () => {
 
 describe("DockerSandbox", () => {
   it("explicit container attaches immediately", async () => {
-    const { DockerSandbox } = await import("../virtual/sandbox.js");
+    const { DockerSandbox } = await import("../virtual/docker-sandbox.js");
 
     const mockContainer = {
       id: "abc123",
@@ -247,7 +247,7 @@ describe("DockerSandbox", () => {
   });
 
   it("throws when neither container nor image provided", async () => {
-    const { DockerSandbox } = await import("../virtual/sandbox.js");
+    const { DockerSandbox } = await import("../virtual/docker-sandbox.js");
 
     expect(() => DockerSandbox({} as any)).toThrow(
       "requires either `container` or `image`",
@@ -255,7 +255,7 @@ describe("DockerSandbox", () => {
   });
 
   it("returns lazy sandbox when image is provided", async () => {
-    const { DockerSandbox } = await import("../virtual/sandbox.js");
+    const { DockerSandbox } = await import("../virtual/docker-sandbox.js");
 
     const sandbox = DockerSandbox({ image: "ubuntu:22.04" });
     expect(sandbox.init).toBeTypeOf("function");
@@ -263,7 +263,7 @@ describe("DockerSandbox", () => {
   });
 
   it("proxy throws before init()", async () => {
-    const { DockerSandbox } = await import("../virtual/sandbox.js");
+    const { DockerSandbox } = await import("../virtual/docker-sandbox.js");
 
     const sandbox = DockerSandbox({ image: "ubuntu:22.04" });
 
@@ -279,7 +279,7 @@ describe("DockerSandbox", () => {
 
 describe("E2BSandbox", () => {
   it("explicit sandbox attaches immediately", async () => {
-    const { E2BSandbox } = await import("../virtual/sandbox.js");
+    const { E2BSandbox } = await import("../virtual/e2b-sandbox.js");
 
     const mockSandbox = {
       sandboxId: "e2b-123",
@@ -301,7 +301,7 @@ describe("E2BSandbox", () => {
   });
 
   it("returns lazy sandbox when no instance provided", async () => {
-    const { E2BSandbox } = await import("../virtual/sandbox.js");
+    const { E2BSandbox } = await import("../virtual/e2b-sandbox.js");
 
     const sandbox = E2BSandbox({ template: "base" });
     expect(sandbox.init).toBeTypeOf("function");
@@ -309,7 +309,7 @@ describe("E2BSandbox", () => {
   });
 
   it("proxy throws before init()", async () => {
-    const { E2BSandbox } = await import("../virtual/sandbox.js");
+    const { E2BSandbox } = await import("../virtual/e2b-sandbox.js");
 
     const sandbox = E2BSandbox({ template: "base" });
 

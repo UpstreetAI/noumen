@@ -92,10 +92,21 @@ export interface AgentOptions {
 
   /**
    * Bundled sandbox providing both filesystem and shell execution.
-   * Use `LocalSandbox()` for OS-level sandboxing (requires
-   * `@anthropic-ai/sandbox-runtime`), `UnsandboxedLocal()` for raw host
-   * access, `SpritesSandbox()` for isolated remote containers, or pass
-   * any `{ fs: VirtualFs; computer: VirtualComputer }` for custom sandboxes.
+   *
+   * Local backends live on the root barrel:
+   * - `LocalSandbox()` — OS-level sandboxing (requires `@anthropic-ai/sandbox-runtime`).
+   * - `UnsandboxedLocal()` — raw host access.
+   *
+   * Remote backends are subpath imports so their optional peer deps do
+   * not enter the module graph unless opted into:
+   * - `import { DockerSandbox }    from "noumen/docker"`
+   * - `import { E2BSandbox }       from "noumen/e2b"`
+   * - `import { FreestyleSandbox } from "noumen/freestyle"`
+   * - `import { SshSandbox }       from "noumen/ssh"`
+   * - `import { SpritesSandbox }   from "noumen/sprites"`
+   *
+   * You can also pass any `{ fs: VirtualFs; computer: VirtualComputer }`
+   * for custom sandboxes.
    *
    * Defaults to `UnsandboxedLocal({ cwd })` when omitted — the library
    * default is non-sandboxed for backward compatibility. The CLI defaults

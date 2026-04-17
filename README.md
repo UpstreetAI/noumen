@@ -417,7 +417,7 @@ Run inside a remote [sprites.dev](https://docs.sprites.dev) container. The agent
 **Auto-create** — omit `spriteName` and the sprite is provisioned on first use. The sandbox ID is persisted so sessions can reconnect on resume. `Agent.close()` tears the sprite down automatically:
 
 ```typescript
-import { SpritesSandbox } from "noumen";
+import { SpritesSandbox } from "noumen/sprites";
 
 const sandbox = SpritesSandbox({ token: process.env.SPRITE_TOKEN });
 ```
@@ -442,7 +442,7 @@ pnpm add dockerode
 **Auto-create** — pass `image` instead of `container` and the container is created and started on first use. `Agent.close()` stops and removes it:
 
 ```typescript
-import { DockerSandbox } from "noumen";
+import { DockerSandbox } from "noumen/docker";
 
 const sandbox = DockerSandbox({ image: "node:22", cwd: "/workspace" });
 const agent = new Agent({ provider, sandbox });
@@ -455,7 +455,7 @@ await agent.close();
 
 ```typescript
 import Docker from "dockerode";
-import { DockerSandbox } from "noumen";
+import { DockerSandbox } from "noumen/docker";
 
 const docker = new Docker();
 const container = await docker.createContainer({
@@ -483,7 +483,7 @@ pnpm add e2b
 **Auto-create** — omit `sandbox` and the E2B sandbox is provisioned on first use via the `e2b` SDK. `Agent.close()` kills it:
 
 ```typescript
-import { E2BSandbox } from "noumen";
+import { E2BSandbox } from "noumen/e2b";
 
 const sandbox = E2BSandbox({ template: "base" });
 const agent = new Agent({ provider, sandbox });
@@ -495,7 +495,7 @@ await agent.close(); // kills the E2B sandbox
 
 ```typescript
 import { Sandbox as E2BSandboxSDK } from "e2b";
-import { E2BSandbox } from "noumen";
+import { E2BSandbox } from "noumen/e2b";
 
 const e2b = await E2BSandboxSDK.create();
 
@@ -520,7 +520,7 @@ pnpm add freestyle-sandboxes
 **Auto-create** — omit `vm` and a Freestyle VM is provisioned on first use. `Agent.close()` **suspends** (not deletes) the VM so it can resume instantly later:
 
 ```typescript
-import { FreestyleSandbox } from "noumen";
+import { FreestyleSandbox } from "noumen/freestyle";
 
 const sandbox = FreestyleSandbox({ cwd: "/workspace" });
 const agent = new Agent({ provider, sandbox });
@@ -541,7 +541,7 @@ const sandbox = FreestyleSandbox({
 
 ```typescript
 import { freestyle } from "freestyle-sandboxes";
-import { FreestyleSandbox } from "noumen";
+import { FreestyleSandbox } from "noumen/freestyle";
 
 const { vm } = await freestyle.vms.create({ workdir: "/workspace" });
 
@@ -560,7 +560,8 @@ pnpm add ssh2
 **Auto-connect** — provide credentials and the connection is established lazily on `init()`:
 
 ```typescript
-import { Agent, SshSandbox } from "noumen";
+import { Agent } from "noumen";
+import { SshSandbox } from "noumen/ssh";
 import fs from "node:fs";
 
 const agent = new Agent({
@@ -580,7 +581,7 @@ Password auth is also supported — pass `password` instead of `privateKey`.
 
 ```typescript
 import { Client } from "ssh2";
-import { SshSandbox } from "noumen";
+import { SshSandbox } from "noumen/ssh";
 
 const client = new Client();
 await new Promise<void>((resolve) => {

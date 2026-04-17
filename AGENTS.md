@@ -99,9 +99,18 @@ Run this checklist **every time** you modify any of the files listed below:
   import { OpenAIProvider } from "noumen/openai";     // correct
   import { OpenAIProvider } from "noumen";              // wrong — providers are not re-exported from main
   ```
-- **Import sandbox factories and Agent from the main barrel**:
+- **Import remote sandbox factories from subpaths**, mirroring the provider convention. Only local factories (`LocalSandbox`, `UnsandboxedLocal`) live on the root barrel. Remote backends live on subpaths so their optional peer deps do not enter the module graph unless opted into:
   ```typescript
-  import { Agent, LocalSandbox } from "noumen";
+  import { DockerSandbox }    from "noumen/docker";    // requires `dockerode`
+  import { E2BSandbox }       from "noumen/e2b";       // requires `e2b`
+  import { FreestyleSandbox } from "noumen/freestyle"; // requires `freestyle-sandboxes`
+  import { SshSandbox }       from "noumen/ssh";       // requires `ssh2`
+  import { SpritesSandbox }   from "noumen/sprites";   // no peer dep
+  ```
+  A vitest invariant at `src/__tests__/barrel-cold-start.test.ts` mocks every optional peer to throw on import and asserts the root barrel still loads. If you add a new optional peer, add it to the list there.
+- **Import the Agent and local sandbox factories from the main barrel**:
+  ```typescript
+  import { Agent, LocalSandbox, UnsandboxedLocal } from "noumen";
   ```
 
 ## Counts to keep accurate

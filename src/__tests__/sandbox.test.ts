@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { UnsandboxedLocal, LocalSandbox, SpritesSandbox } from "../virtual/sandbox.js";
+import { UnsandboxedLocal, LocalSandbox } from "../virtual/sandbox.js";
+import { SpritesSandbox } from "../virtual/sprites-sandbox.js";
 import { LocalFs } from "../virtual/local-fs.js";
 import { LocalComputer } from "../virtual/local-computer.js";
 import { SandboxedLocalComputer } from "../virtual/sandboxed-local-computer.js";
@@ -227,7 +228,7 @@ describe("SpritesSandbox", () => {
 // ---------------------------------------------------------------------------
 describe("Sandbox dispose-during-init race", () => {
   it("DockerSandbox dispose awaits init before cleanup", async () => {
-    const { DockerSandbox } = await import("../virtual/sandbox.js");
+    const { DockerSandbox } = await import("../virtual/docker-sandbox.js");
     let containerStarted = false;
     let containerStopped = false;
     let containerRemoved = false;
@@ -268,7 +269,7 @@ describe("Sandbox dispose-during-init race", () => {
   });
 
   it("E2BSandbox dispose awaits init before cleanup", async () => {
-    const { E2BSandbox } = await import("../virtual/sandbox.js");
+    const { E2BSandbox } = await import("../virtual/e2b-sandbox.js");
     let sandboxCreated = false;
     let sandboxKilled = false;
 
@@ -327,7 +328,7 @@ describe("Sandbox reconnect validation", () => {
     }) as typeof fetch;
 
     try {
-      const { SpritesSandbox } = await import("../virtual/sandbox.js");
+      const { SpritesSandbox } = await import("../virtual/sprites-sandbox.js");
       const sandbox = SpritesSandbox({ token: "test-token" });
       await sandbox.init!("existing-sprite");
 
@@ -357,7 +358,7 @@ describe("Sandbox reconnect validation", () => {
     }) as typeof fetch;
 
     try {
-      const { SpritesSandbox } = await import("../virtual/sandbox.js");
+      const { SpritesSandbox } = await import("../virtual/sprites-sandbox.js");
       const sandbox = SpritesSandbox({ token: "test-token" });
       await sandbox.init!("gone-sprite");
 
@@ -410,7 +411,7 @@ describe("DockerSandbox reconnect", () => {
       },
     }));
 
-    const { DockerSandbox } = await import("../virtual/sandbox.js");
+    const { DockerSandbox } = await import("../virtual/docker-sandbox.js");
     const sandbox = DockerSandbox({ image: "ubuntu:latest" });
     await sandbox.init!("existing-container-id");
 
@@ -451,7 +452,7 @@ describe("DockerSandbox reconnect", () => {
       },
     }));
 
-    const { DockerSandbox } = await import("../virtual/sandbox.js");
+    const { DockerSandbox } = await import("../virtual/docker-sandbox.js");
     const sandbox = DockerSandbox({ image: "ubuntu:latest" });
     await sandbox.init!("nonexistent-container");
 
@@ -489,7 +490,7 @@ describe("E2BSandbox reconnect", () => {
       },
     }));
 
-    const { E2BSandbox } = await import("../virtual/sandbox.js");
+    const { E2BSandbox } = await import("../virtual/e2b-sandbox.js");
     const sandbox = E2BSandbox({ template: "base" });
     await sandbox.init!("existing-sandbox-id");
 
@@ -521,7 +522,7 @@ describe("E2BSandbox reconnect", () => {
       },
     }));
 
-    const { E2BSandbox } = await import("../virtual/sandbox.js");
+    const { E2BSandbox } = await import("../virtual/e2b-sandbox.js");
     const sandbox = E2BSandbox({ template: "base" });
     await sandbox.init!("expired-sandbox-id");
 
@@ -536,7 +537,7 @@ describe("E2BSandbox reconnect", () => {
 // ---------------------------------------------------------------------------
 describe("FreestyleSandbox", () => {
   it("returns a Sandbox with FreestyleFs and FreestyleComputer when vm is provided", async () => {
-    const { FreestyleSandbox } = await import("../virtual/sandbox.js");
+    const { FreestyleSandbox } = await import("../virtual/freestyle-sandbox.js");
     const { FreestyleFs } = await import("../virtual/freestyle-fs.js");
     const { FreestyleComputer } = await import("../virtual/freestyle-computer.js");
 
@@ -591,7 +592,7 @@ describe("FreestyleSandbox dispose-during-init race", () => {
       },
     }));
 
-    const { FreestyleSandbox } = await import("../virtual/sandbox.js");
+    const { FreestyleSandbox } = await import("../virtual/freestyle-sandbox.js");
     const sandbox = FreestyleSandbox({ cwd: "/workspace" });
 
     const initPromise = sandbox.init!();
@@ -642,7 +643,7 @@ describe("FreestyleSandbox reconnect", () => {
       },
     }));
 
-    const { FreestyleSandbox } = await import("../virtual/sandbox.js");
+    const { FreestyleSandbox } = await import("../virtual/freestyle-sandbox.js");
     const sandbox = FreestyleSandbox({ cwd: "/workspace" });
     await sandbox.init!("existing-vm-id");
 
@@ -682,7 +683,7 @@ describe("FreestyleSandbox reconnect", () => {
       },
     }));
 
-    const { FreestyleSandbox } = await import("../virtual/sandbox.js");
+    const { FreestyleSandbox } = await import("../virtual/freestyle-sandbox.js");
     const sandbox = FreestyleSandbox({ cwd: "/workspace" });
     await sandbox.init!("gone-vm-id");
 
@@ -720,7 +721,7 @@ describe("FreestyleSandbox reconnect", () => {
       },
     }));
 
-    const { FreestyleSandbox } = await import("../virtual/sandbox.js");
+    const { FreestyleSandbox } = await import("../virtual/freestyle-sandbox.js");
     const sandbox = FreestyleSandbox({ cwd: "/workspace", disposeStrategy: "delete" });
     await sandbox.init!();
     await sandbox.dispose!();

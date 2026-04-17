@@ -46,22 +46,21 @@ export type { VertexAnthropicProviderOptions } from "./providers/vertex.js";
 export type { OllamaProviderOptions } from "./providers/ollama.js";
 
 // Sandbox (bundled VirtualFs + VirtualComputer)
+//
+// The barrel only exports the local-only factories. Remote backends live
+// on subpaths so that importing `noumen` never pulls their optional peer
+// deps into the module graph:
+//   import { DockerSandbox }    from "noumen/docker"     // requires `dockerode`
+//   import { E2BSandbox }       from "noumen/e2b"        // requires `e2b`
+//   import { FreestyleSandbox } from "noumen/freestyle"  // requires `freestyle-sandboxes`
+//   import { SshSandbox }       from "noumen/ssh"        // requires `ssh2`
+//   import { SpritesSandbox }   from "noumen/sprites"    // no peer dep
 export {
   LocalSandbox,
   UnsandboxedLocal,
-  SpritesSandbox,
-  DockerSandbox,
-  E2BSandbox,
-  FreestyleSandbox,
-  SshSandbox,
   type Sandbox,
   type LocalSandboxOptions,
   type UnsandboxedLocalOptions,
-  type SpritesSandboxOptions,
-  type DockerSandboxOptions,
-  type E2BSandboxOptions,
-  type FreestyleSandboxOptions,
-  type SshSandboxOptions,
   type SandboxConfig,
 } from "./virtual/sandbox.js";
 
@@ -88,37 +87,6 @@ export {
   SandboxedLocalComputer,
   type SandboxedLocalComputerOptions,
 } from "./virtual/sandboxed-local-computer.js";
-export { SpritesFs, type SpritesFsOptions } from "./virtual/sprites-fs.js";
-export {
-  SpritesComputer,
-  type SpritesComputerOptions,
-} from "./virtual/sprites-computer.js";
-export { DockerFs, type DockerFsOptions } from "./virtual/docker-fs.js";
-export {
-  DockerComputer,
-  type DockerComputerOptions,
-  type DockerContainer,
-} from "./virtual/docker-computer.js";
-export { E2BFs, type E2BFsOptions } from "./virtual/e2b-fs.js";
-export {
-  E2BComputer,
-  type E2BComputerOptions,
-  type E2BSandboxInstance,
-} from "./virtual/e2b-computer.js";
-export { FreestyleFs, type FreestyleFsOptions } from "./virtual/freestyle-fs.js";
-export {
-  FreestyleComputer,
-  type FreestyleComputerOptions,
-  type FreestyleVmInstance,
-} from "./virtual/freestyle-computer.js";
-export { SshFs, type SshFsOptions } from "./virtual/ssh-fs.js";
-export {
-  SshComputer,
-  type SshComputerOptions,
-  type SshClient,
-  type SshSftpSession,
-  type SshChannel,
-} from "./virtual/ssh-computer.js";
 
 // File State Cache
 export type { FileState, FileStateCacheConfig } from "./file-state/types.js";

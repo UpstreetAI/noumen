@@ -69,6 +69,26 @@
     "./jsonrpc": {
       "import": "./dist/jsonrpc/index.js",
       "types": "./dist/jsonrpc/index.d.ts"
+    },
+    "./docker": {
+      "import": "./dist/docker.js",
+      "types": "./dist/docker.d.ts"
+    },
+    "./e2b": {
+      "import": "./dist/e2b.js",
+      "types": "./dist/e2b.d.ts"
+    },
+    "./freestyle": {
+      "import": "./dist/freestyle.js",
+      "types": "./dist/freestyle.d.ts"
+    },
+    "./ssh": {
+      "import": "./dist/ssh.js",
+      "types": "./dist/ssh.d.ts"
+    },
+    "./sprites": {
+      "import": "./dist/sprites.js",
+      "types": "./dist/sprites.d.ts"
     }
   },
   "files": [

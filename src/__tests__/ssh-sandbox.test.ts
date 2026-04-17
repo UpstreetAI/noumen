@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { SshComputer, type SshClient, type SshSftpSession } from "../virtual/ssh-computer.js";
 import { SshFs } from "../virtual/ssh-fs.js";
-import { SshSandbox } from "../virtual/sandbox.js";
+import { SshSandbox } from "../virtual/ssh-sandbox.js";
 
 interface MockFsTree {
   [path: string]: string | { dir: true };
