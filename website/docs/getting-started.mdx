@@ -134,7 +134,7 @@ Every noumen agent needs two things: an **AI provider** and a **sandbox**.
     const sandbox = LocalSandbox({ cwd: "/path/to/your/project" });
     ```
 
-    For remote isolation or different environments, swap in `SpritesSandbox` (remote containers), `DockerSandbox`, `E2BSandbox`, or `FreestyleSandbox` (cloud VMs). See [Virtual Infrastructure](/docs/virtual).
+    For remote isolation or different environments, swap in `SpritesSandbox` (from `noumen/sprites`), `DockerSandbox` (from `noumen/docker`), `E2BSandbox` (from `noumen/e2b`), `FreestyleSandbox` (from `noumen/freestyle`), or `SshSandbox` (from `noumen/ssh`). Each remote backend ships on its own subpath so its optional peer dep is only loaded when you opt in. See [Virtual Infrastructure](/docs/virtual).
   </Step>
 
   <Step>

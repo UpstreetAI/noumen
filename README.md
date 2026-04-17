@@ -375,6 +375,17 @@ The CLI auto-detects a running Ollama server when no cloud API keys are set, so 
 
 A `Sandbox` bundles a `VirtualFs` (filesystem) and `VirtualComputer` (shell execution) into one object. Every file read/write and shell command the agent executes goes through these interfaces — swap the sandbox to control what the agent can access.
 
+Local factories live on the root barrel; each remote backend ships on its own subpath so its optional peer dep only enters the module graph when you opt in:
+
+| Factory | Import | Peer dep |
+| --- | --- | --- |
+| `LocalSandbox`, `UnsandboxedLocal` | `noumen` | `@anthropic-ai/sandbox-runtime` (bundled) |
+| `SpritesSandbox` | `noumen/sprites` | — |
+| `DockerSandbox` | `noumen/docker` | `dockerode` |
+| `E2BSandbox` | `noumen/e2b` | `e2b` |
+| `FreestyleSandbox` | `noumen/freestyle` | `freestyle-sandboxes` |
+| `SshSandbox` | `noumen/ssh` | `ssh2` |
+
 ### Local — OS-level sandboxing
 
 Backed by `@anthropic-ai/sandbox-runtime`. Uses macOS Seatbelt or Linux bubblewrap to restrict filesystem and network access at the OS level — no containers needed:

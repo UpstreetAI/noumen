@@ -17,6 +17,19 @@ interface Sandbox {
 
 noumen ships seven sandbox factories. The five remote backends (Sprites, Docker, E2B, Freestyle, SSH) support **auto-creation** — omit the container/instance ID and the resource is provisioned on first use, persisted across sessions, and disposed automatically. You can also implement your own.
 
+### Import paths
+
+The two local factories live on the root barrel. Each remote backend lives on its own subpath so its optional peer dependency (e.g. `dockerode`, `e2b`, `ssh2`) only enters the module graph when you opt in — `import { Agent } from "noumen"` stays lean regardless of which backends are installed.
+
+| Factory | Import | Peer dep |
+| --- | --- | --- |
+| `LocalSandbox`, `UnsandboxedLocal` | `noumen` | `@anthropic-ai/sandbox-runtime` (bundled) |
+| `SpritesSandbox` | `noumen/sprites` | — (uses global `fetch`) |
+| `DockerSandbox` | `noumen/docker` | `dockerode` |
+| `E2BSandbox` | `noumen/e2b` | `e2b` |
+| `FreestyleSandbox` | `noumen/freestyle` | `freestyle-sandboxes` |
+| `SshSandbox` | `noumen/ssh` | `ssh2` |
+
 ## LocalSandbox — OS-level sandboxing
 
 Uses `@anthropic-ai/sandbox-runtime` to wrap every shell command with OS-level restrictions. On macOS this uses Seatbelt (`sandbox-exec`); on Linux it uses bubblewrap (`bwrap`) + socat.
