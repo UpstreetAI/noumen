@@ -3,6 +3,7 @@ import type { AIProvider } from "./providers/types.js";
 import { UnsandboxedLocal, type Sandbox } from "./virtual/sandbox.js";
 import type { HookDefinition } from "./hooks/types.js";
 import type { McpServerConfig } from "./mcp/types.js";
+import type { AutoTitleConfig } from "./session/auto-title.js";
 
 export interface PresetOptions {
   /** The AI provider instance (e.g. `new OpenAIProvider({ apiKey })`) */
@@ -19,6 +20,13 @@ export interface PresetOptions {
   mcpServers?: Record<string, McpServerConfig>;
   /** Custom system prompt prepended to the built-in prompt. */
   systemPrompt?: string;
+  /**
+   * Opt-in AI-generated session titles. `true` uses the agent's main
+   * provider / model; pass a config object to override the model or
+   * provider (typically a cheaper one like Haiku) used for title
+   * generation only.
+   */
+  autoTitle?: AutoTitleConfig | boolean;
 }
 
 /**
@@ -44,6 +52,7 @@ export function codingAgent(opts: PresetOptions): Agent {
       retry: true,
       hooks: opts.hooks,
       mcpServers: opts.mcpServers,
+      autoTitle: opts.autoTitle,
     },
   });
 }
@@ -71,6 +80,7 @@ export function planningAgent(opts: PresetOptions): Agent {
       retry: true,
       hooks: opts.hooks,
       mcpServers: opts.mcpServers,
+      autoTitle: opts.autoTitle,
     },
   });
 }
@@ -98,6 +108,7 @@ export function reviewAgent(opts: PresetOptions): Agent {
       retry: true,
       hooks: opts.hooks,
       mcpServers: opts.mcpServers,
+      autoTitle: opts.autoTitle,
       webSearch: {
         search: async (query: string) => {
           try {

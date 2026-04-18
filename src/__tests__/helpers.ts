@@ -207,6 +207,11 @@ export class MockAIProvider implements AIProvider {
   private responses: ChatStreamChunk[][] = [];
   /** Record of all chat() params received */
   calls: ChatParams[] = [];
+  /**
+   * Mirrors `AIProvider.defaultModel` so Thread / Agent constructors that
+   * require a resolved model don't have to hardcode one in every test.
+   */
+  defaultModel = "mock-model";
 
   constructor(responses?: ChatStreamChunk[][]) {
     if (responses) this.responses = [...responses];

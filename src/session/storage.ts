@@ -12,6 +12,8 @@ import type {
   ContentReplacementRecord,
   SnipBoundaryEntry,
   SessionInfo,
+  CustomTitleEntry,
+  AiTitleEntry,
 } from "./types.js";
 import type { FileCheckpointSnapshot } from "../checkpoint/types.js";
 import { generateUUID } from "../utils/uuid.js";
@@ -195,17 +197,51 @@ export class SessionStorage {
   }
 
   /**
-   * Re-append custom-title and key metadata entries after a compact boundary
-   * so they remain discoverable in the active-entries window.
+   * Append a user-set session title. Wins over any `ai-title` when read.
+   * Idempotent-ish: callers may append as many as they like; the last one
+   * wins according to file order.
+   */
+  async appendCustomTitle(sessionId: string, title: string): Promise<void> {
+    const entry: CustomTitleEntry = {
+      type: "custom-title",
+      sessionId,
+      title,
+      timestamp: new Date().toISOString(),
+    };
+    await this.appendEntry(sessionId, entry);
+  }
+
+  /**
+   * Append an AI-generated session title. A `custom-title` (if present)
+   * always takes precedence on read.
+   */
+  async appendAiTitle(sessionId: string, title: string): Promise<void> {
+    const entry: AiTitleEntry = {
+      type: "ai-title",
+      sessionId,
+      title,
+      timestamp: new Date().toISOString(),
+    };
+    await this.appendEntry(sessionId, entry);
+  }
+
+  /**
+   * Re-append custom-title, ai-title, and key metadata entries after a
+   * compact boundary so they remain discoverable in the active-entries
+   * window.
    */
   async reAppendMetadataAfterCompact(sessionId: string): Promise<void> {
     const entries = await this.loadAllEntries(sessionId);
     let customTitle: string | undefined;
+    let aiTitle: string | undefined;
     const metadataByKey = new Map<string, unknown>();
 
     for (const entry of entries) {
       if (entry.type === "custom-title") {
         customTitle = entry.title;
+      }
+      if (entry.type === "ai-title") {
+        aiTitle = entry.title;
       }
       if (entry.type === "metadata") {
         metadataByKey.set(entry.key, entry.value);
@@ -213,12 +249,10 @@ export class SessionStorage {
     }
 
     if (customTitle) {
-      await this.appendEntry(sessionId, {
-        type: "custom-title",
-        sessionId,
-        title: customTitle,
-        timestamp: new Date().toISOString(),
-      });
+      await this.appendCustomTitle(sessionId, customTitle);
+    }
+    if (aiTitle) {
+      await this.appendAiTitle(sessionId, aiTitle);
     }
 
     for (const [key, value] of metadataByKey) {
@@ -289,6 +323,26 @@ export class SessionStorage {
     return this.fs.exists(this.getTranscriptPath(sessionId));
   }
 
+  /**
+   * Return the currently persisted titles for a session. `title` reflects
+   * the display preference (custom > ai). Returns all-undefined if the
+   * session file doesn't exist.
+   */
+  async getSessionTitles(sessionId: string): Promise<{
+    title?: string;
+    customTitle?: string;
+    aiTitle?: string;
+  }> {
+    const entries = await this.loadAllEntries(sessionId);
+    let customTitle: string | undefined;
+    let aiTitle: string | undefined;
+    for (const entry of entries) {
+      if (entry.type === "custom-title") customTitle = entry.title;
+      if (entry.type === "ai-title") aiTitle = entry.title;
+    }
+    return { title: customTitle ?? aiTitle, customTitle, aiTitle };
+  }
+
   async deleteSession(sessionId: string): Promise<void> {
     const filePath = this.getTranscriptPath(sessionId);
     const exists = await this.fs.exists(filePath);
@@ -342,7 +396,8 @@ export class SessionStorage {
           ? parseJSONL<Entry>(tailSlice)
           : headEntries;
 
-        let title: string | undefined;
+        let customTitle: string | undefined;
+        let aiTitle: string | undefined;
         let firstTimestamp: string | undefined;
         let lastTimestamp: string | undefined;
         let messageCount = 0;
@@ -353,7 +408,8 @@ export class SessionStorage {
             if (!firstTimestamp) firstTimestamp = e.timestamp;
             lastTimestamp = e.timestamp;
           }
-          if (e.type === "custom-title") title = e.title;
+          if (e.type === "custom-title") customTitle = e.title;
+          if (e.type === "ai-title") aiTitle = e.title;
         }
 
         if (isSplit) {
@@ -362,7 +418,8 @@ export class SessionStorage {
               messageCount++;
               if (e.timestamp) lastTimestamp = e.timestamp;
             }
-            if (e.type === "custom-title") title = e.title;
+            if (e.type === "custom-title") customTitle = e.title;
+            if (e.type === "ai-title") aiTitle = e.title;
           }
         }
 
@@ -370,7 +427,9 @@ export class SessionStorage {
           sessionId,
           createdAt: firstTimestamp ?? new Date().toISOString(),
           lastMessageAt: lastTimestamp ?? new Date().toISOString(),
-          title,
+          title: customTitle ?? aiTitle,
+          customTitle,
+          aiTitle,
           messageCount,
         });
       } catch {

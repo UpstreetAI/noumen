@@ -94,6 +94,7 @@ export type EntryType =
   | "compact-boundary"
   | "summary"
   | "custom-title"
+  | "ai-title"
   | "metadata"
   | "file-checkpoint"
   | "tool-result-overflow"
@@ -127,6 +128,18 @@ export interface SummaryEntry {
 
 export interface CustomTitleEntry {
   type: "custom-title";
+  sessionId: string;
+  title: string;
+  timestamp: string;
+}
+
+/**
+ * AI-generated session title. Persisted separately from `custom-title`
+ * so user-set titles always win regardless of write order. Reader logic
+ * prefers `custom-title` over `ai-title`.
+ */
+export interface AiTitleEntry {
+  type: "ai-title";
   sessionId: string;
   title: string;
   timestamp: string;
@@ -183,6 +196,7 @@ export type Entry =
   | CompactBoundaryEntry
   | SummaryEntry
   | CustomTitleEntry
+  | AiTitleEntry
   | MetadataEntry
   | ToolResultOverflowEntry
   | FileCheckpointEntry
@@ -193,7 +207,15 @@ export interface SessionInfo {
   sessionId: string;
   createdAt: string;
   lastMessageAt: string;
+  /**
+   * Effective title for display. When both a user-set (`custom-title`) and
+   * an AI-generated (`ai-title`) entry exist, the user-set one wins.
+   */
   title?: string;
+  /** User-set title, if any. */
+  customTitle?: string;
+  /** AI-generated title, if any. */
+  aiTitle?: string;
   messageCount: number;
 }
 
@@ -287,6 +309,12 @@ export type StreamEvent =
       deleted: string[];
     }
   | { type: "session_resumed"; sessionId: string; messageCount: number }
+  | {
+      type: "title_updated";
+      sessionId: string;
+      title: string;
+      source: "custom" | "ai";
+    }
   | { type: "checkpoint_snapshot"; messageId: string }
   | { type: "recovery_filtered"; filterName: string; removedCount: number }
   | {

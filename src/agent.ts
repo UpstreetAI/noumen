@@ -5,7 +5,19 @@ import type { ProviderName } from "./providers/resolve.js";
 import type { VirtualFs } from "./virtual/fs.js";
 import type { VirtualComputer } from "./virtual/computer.js";
 import { UnsandboxedLocal, type Sandbox } from "./virtual/sandbox.js";
-import type { StreamEvent, RunOptions, ToolResult, ContentPart } from "./session/types.js";
+import type {
+  StreamEvent,
+  RunOptions,
+  ToolResult,
+  ContentPart,
+  ChatMessage,
+} from "./session/types.js";
+import {
+  generateAutoTitle,
+  DEFAULT_AUTO_TITLE_MAX_INPUT_CHARS,
+  DEFAULT_AUTO_TITLE_SYSTEM_PROMPT,
+  type AutoTitleConfig,
+} from "./session/auto-title.js";
 import type { SkillDefinition } from "./skills/types.js";
 import type { Tool, SubagentConfig, SubagentRun } from "./tools/types.js";
 import type { CheckpointConfig } from "./checkpoint/types.js";
@@ -170,6 +182,17 @@ export interface AgentOptions {
     outputFormat?: OutputFormat;
     /** Default structured output mode for all threads. */
     structuredOutputMode?: "alongside_tools" | "final_response";
+    /**
+     * Opt-in AI-generated session titles. When enabled, callers can invoke
+     * `agent.autoTitleIfMissing(sessionId)` (typically once per session,
+     * e.g. after the first assistant turn) to produce a short title and
+     * persist it as an `ai-title` JSONL entry. User-set `custom-title`
+     * entries (see `agent.setCustomTitle`) always take precedence on read.
+     *
+     * Pass `true` for defaults (same provider as the Agent, provider's
+     * default model, built-in prompt) or an object to customise.
+     */
+    autoTitle?: AutoTitleConfig | boolean;
   };
 }
 
@@ -246,6 +269,8 @@ export class Agent {
   private historySnipConfig: SnipConfig | undefined;
   private outputFormat: OutputFormat | undefined;
   private structuredOutputMode: "alongside_tools" | "final_response" | undefined;
+  private autoTitleConfig: AutoTitleConfig | undefined;
+  private autoTitleInFlight: Map<string, Promise<string | null>> = new Map();
   private providerPromise: Promise<AIProvider> | null = null;
   private initPromise: Promise<void> | null = null;
 
@@ -325,6 +350,13 @@ export class Agent {
     this.historySnipConfig = opts.options?.historySnip;
     this.outputFormat = opts.options?.outputFormat;
     this.structuredOutputMode = opts.options?.structuredOutputMode;
+
+    const autoTitleOpt = opts.options?.autoTitle;
+    if (autoTitleOpt === true) {
+      this.autoTitleConfig = { enabled: true };
+    } else if (autoTitleOpt && typeof autoTitleOpt === "object") {
+      this.autoTitleConfig = { enabled: true, ...autoTitleOpt };
+    }
 
     if (opts.options?.checkpoint?.enabled) {
       this.checkpointManager = new FileCheckpointManager(
@@ -519,6 +551,109 @@ export class Agent {
 
   async listSessions(): Promise<SessionInfo[]> {
     return this.storage.listSessions();
+  }
+
+  /**
+   * Load the message history for a stored session, respecting compact
+   * boundaries and history snips. Returns `[]` when the session does
+   * not exist. Use this to rehydrate a UI — resuming a Thread for
+   * further execution should go through `resumeThread()` instead.
+   */
+  async getMessages(sessionId: string): Promise<ChatMessage[]> {
+    return this.storage.loadMessages(sessionId);
+  }
+
+  /**
+   * Persist a user-set title for a session. Takes precedence over any
+   * AI-generated title on read. No-op on empty / whitespace-only input.
+   */
+  async setCustomTitle(sessionId: string, title: string): Promise<void> {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    await this.storage.appendCustomTitle(sessionId, trimmed);
+  }
+
+  /**
+   * Persist an AI-generated title for a session. A user-set title
+   * (see `setCustomTitle`) always wins on read, so writing this after a
+   * user has renamed the session is harmless.
+   */
+  async setAiTitle(sessionId: string, title: string): Promise<void> {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    await this.storage.appendAiTitle(sessionId, trimmed);
+  }
+
+  /**
+   * Delete a session's persisted transcript. Does not affect any
+   * currently-running `Thread` reading from the same session id.
+   */
+  async deleteSession(sessionId: string): Promise<void> {
+    await this.storage.deleteSession(sessionId);
+  }
+
+  /**
+   * Return the currently persisted titles for a session.
+   * `title` reflects the display preference (custom > ai).
+   */
+  async getSessionTitles(sessionId: string): Promise<{
+    title?: string;
+    customTitle?: string;
+    aiTitle?: string;
+  }> {
+    return this.storage.getSessionTitles(sessionId);
+  }
+
+  /**
+   * When `autoTitle` is enabled and the session has no title yet,
+   * generate one via the configured provider + model and persist it
+   * as an `ai-title` entry. Returns the new title on success, or `null`
+   * when skipped (feature disabled, title already present, empty seed,
+   * or provider error).
+   *
+   * Concurrency-safe: parallel calls for the same session coalesce to
+   * a single in-flight request.
+   */
+  async autoTitleIfMissing(
+    sessionId: string,
+    opts?: { signal?: AbortSignal; force?: boolean },
+  ): Promise<string | null> {
+    const cfg = this.autoTitleConfig;
+    if (!cfg?.enabled) return null;
+
+    const existing = this.autoTitleInFlight.get(sessionId);
+    if (existing) return existing;
+
+    const task = (async () => {
+      try {
+        if (!opts?.force) {
+          const titles = await this.storage.getSessionTitles(sessionId);
+          if (titles.customTitle || titles.aiTitle) return null;
+        }
+
+        await this.ensureProvider();
+        const provider = cfg.provider ?? this.getProvider();
+        const messages = await this.storage.loadMessages(sessionId);
+        if (messages.length === 0) return null;
+
+        const title = await generateAutoTitle(messages, {
+          provider,
+          model: cfg.model ?? provider.defaultModel ?? this.model,
+          systemPrompt: cfg.systemPrompt ?? DEFAULT_AUTO_TITLE_SYSTEM_PROMPT,
+          maxInputChars: cfg.maxInputChars ?? DEFAULT_AUTO_TITLE_MAX_INPUT_CHARS,
+          signal: opts?.signal,
+        });
+        if (!title) return null;
+
+        await this.storage.appendAiTitle(sessionId, title);
+        return title;
+      } finally {
+        this.autoTitleInFlight.delete(sessionId);
+      }
+    })();
+
+    this.autoTitleInFlight.set(sessionId, task);
+    return task;
   }
 
   getCostSummary(): import("./cost/types.js").CostSummary | null {

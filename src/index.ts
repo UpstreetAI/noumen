@@ -111,6 +111,7 @@ export type {
   SummaryEntry,
   ToolResultOverflowEntry,
   CustomTitleEntry,
+  AiTitleEntry,
   MetadataEntry,
   SessionInfo,
   StreamEvent,
@@ -120,6 +121,22 @@ export type {
   ContentReplacementRecord,
   SnipBoundaryEntry,
 } from "./session/types.js";
+
+// Session storage (titles, history, list, delete)
+export { SessionStorage } from "./session/storage.js";
+
+// Auto-title helpers (exposed so advanced users can drive titling
+// manually with a different provider/model than the Agent's main one).
+export {
+  generateAutoTitle,
+  extractTitleSeedText,
+  extractTitleFromResponse,
+  normalizeTitle,
+  DEFAULT_AUTO_TITLE_SYSTEM_PROMPT,
+  DEFAULT_AUTO_TITLE_MAX_INPUT_CHARS,
+  type AutoTitleConfig,
+  type GenerateAutoTitleOptions,
+} from "./session/auto-title.js";
 
 // Tools
 export type {
