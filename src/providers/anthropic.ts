@@ -17,7 +17,7 @@ export interface AnthropicProviderOptions {
 
 export class AnthropicProvider implements AIProvider {
   private client: Anthropic;
-  private defaultModel: string;
+  readonly defaultModel: string;
   private cacheConfig: CacheControlConfig | undefined;
 
   constructor(opts: AnthropicProviderOptions) {
@@ -26,7 +26,10 @@ export class AnthropicProvider implements AIProvider {
       baseURL: opts.baseURL,
       maxRetries: 0,
     });
-    this.defaultModel = opts.model ?? "claude-opus-4.6";
+    // Anthropic model IDs use hyphens throughout (e.g. `claude-opus-4-7`).
+    // A dot-separated fallback silently 404s against the real API, which is
+    // especially nasty when the string only surfaces via Thread's fallback.
+    this.defaultModel = opts.model ?? "claude-opus-4-7";
     this.cacheConfig = opts.cacheControl;
   }
 

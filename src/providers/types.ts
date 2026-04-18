@@ -117,6 +117,13 @@ export interface ChatParams {
 
 export interface AIProvider {
   chat(params: ChatParams): AsyncIterable<ChatStreamChunk>;
+  /**
+   * Optional fallback model name, used when no `model` is provided at the
+   * Thread / Agent level. Consumers should pass explicit models when they
+   * can, but this lets each provider ship a sensible default without
+   * forcing Thread to hardcode provider-specific strings.
+   */
+  readonly defaultModel?: string;
 }
 
 /**

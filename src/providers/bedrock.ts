@@ -36,7 +36,7 @@ export interface BedrockAnthropicProviderOptions {
  */
 export class BedrockAnthropicProvider implements AIProvider {
   private client: AnthropicStreamClient;
-  private defaultModel: string;
+  readonly defaultModel: string;
   private cacheConfig: CacheControlConfig | undefined;
 
   constructor(opts: BedrockAnthropicProviderOptions) {

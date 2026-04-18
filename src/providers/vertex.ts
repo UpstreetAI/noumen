@@ -39,7 +39,7 @@ export interface VertexAnthropicProviderOptions {
  */
 export class VertexAnthropicProvider implements AIProvider {
   private client: AnthropicStreamClient;
-  private defaultModel: string;
+  readonly defaultModel: string;
   private cacheConfig: CacheControlConfig | undefined;
 
   constructor(opts: VertexAnthropicProviderOptions) {
@@ -87,7 +87,7 @@ export class VertexAnthropicProvider implements AIProvider {
       this.client = new AnthropicVertex(args) as unknown as AnthropicStreamClient;
     }
 
-    this.defaultModel = opts.model ?? "claude-opus-4.6";
+    this.defaultModel = opts.model ?? "claude-opus-4-7";
     this.cacheConfig = opts.cacheControl;
   }
 

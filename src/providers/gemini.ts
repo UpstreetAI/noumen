@@ -31,7 +31,7 @@ interface GeminiPart {
 
 export class GeminiProvider implements AIProvider {
   private client: GoogleGenAI;
-  private defaultModel: string;
+  readonly defaultModel: string;
 
   constructor(opts: GeminiProviderOptions) {
     const clientOpts: Record<string, unknown> = { apiKey: opts.apiKey };

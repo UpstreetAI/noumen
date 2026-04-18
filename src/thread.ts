@@ -189,7 +189,16 @@ export class Thread {
     this.config = config;
     this.sessionId = opts?.sessionId ?? generateUUID();
     this.cwd = opts?.cwd ?? "/";
-    this.model = opts?.model ?? config.model ?? "gpt-5.4";
+    const resolvedModel =
+      opts?.model ?? config.model ?? config.provider.defaultModel;
+    if (!resolvedModel) {
+      throw new Error(
+        "Thread: no model resolved. Pass `model` to Thread / Agent / preset " +
+          "options, set `config.model`, or provide a provider with a " +
+          "`defaultModel` (built-in providers expose one automatically).",
+      );
+    }
+    this.model = resolvedModel;
     this.storage = new SessionStorage(config.fs, config.sessionDir);
 
     if (config.permissions) {

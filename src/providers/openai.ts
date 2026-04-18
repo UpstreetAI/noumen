@@ -20,7 +20,7 @@ const O_SERIES_PATTERN = /^o[1-9]/;
 
 export class OpenAIProvider implements AIProvider {
   private client: OpenAI;
-  private defaultModel: string;
+  readonly defaultModel: string;
   protected compatMode: boolean;
 
   constructor(opts: OpenAIProviderOptions) {
