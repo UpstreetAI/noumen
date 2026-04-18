@@ -228,7 +228,8 @@ export class SessionStorage {
   /**
    * Re-append custom-title, ai-title, and key metadata entries after a
    * compact boundary so they remain discoverable in the active-entries
-   * window.
+   * window. Written as a single batched append so a crash mid-write can't
+   * leave the transcript with only a subset of the re-emitted entries.
    */
   async reAppendMetadataAfterCompact(sessionId: string): Promise<void> {
     const entries = await this.loadAllEntries(sessionId);
@@ -248,15 +249,37 @@ export class SessionStorage {
       }
     }
 
+    const timestamp = new Date().toISOString();
+    const batch: Entry[] = [];
+
     if (customTitle) {
-      await this.appendCustomTitle(sessionId, customTitle);
+      batch.push({
+        type: "custom-title",
+        sessionId,
+        title: customTitle,
+        timestamp,
+      });
     }
     if (aiTitle) {
-      await this.appendAiTitle(sessionId, aiTitle);
+      batch.push({
+        type: "ai-title",
+        sessionId,
+        title: aiTitle,
+        timestamp,
+      });
+    }
+    for (const [key, value] of metadataByKey) {
+      batch.push({
+        type: "metadata",
+        sessionId,
+        timestamp,
+        key,
+        value,
+      });
     }
 
-    for (const [key, value] of metadataByKey) {
-      await this.appendMetadata(sessionId, key, value);
+    if (batch.length > 0) {
+      await this.appendEntriesBatch(sessionId, batch);
     }
   }
 
@@ -392,9 +415,6 @@ export class SessionStorage {
         }
 
         const headEntries = parseJSONL<Entry>(headSlice);
-        const tailEntries = isSplit
-          ? parseJSONL<Entry>(tailSlice)
-          : headEntries;
 
         let customTitle: string | undefined;
         let aiTitle: string | undefined;
@@ -413,6 +433,13 @@ export class SessionStorage {
         }
 
         if (isSplit) {
+          // Title entries appended between `LITE_READ_LIMIT` and
+          // `content.length - LITE_READ_LIMIT` bytes are not sampled. In
+          // practice `reAppendMetadataAfterCompact` re-emits titles near
+          // the tail, so renames survive; very long sessions that rename
+          // mid-stream without a subsequent compact may briefly show a
+          // stale title here until the next append.
+          const tailEntries = parseJSONL<Entry>(tailSlice);
           for (const e of tailEntries) {
             if (e.type === "message" || e.type === "summary") {
               messageCount++;

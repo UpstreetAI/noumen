@@ -5,7 +5,11 @@ import type {
   ChatStreamChunk,
 } from "./types.js";
 import type { CacheControlConfig } from "./cache.js";
-import { streamAnthropicChat, type AnthropicStreamClient } from "./anthropic-shared.js";
+import {
+  streamAnthropicChat,
+  type AnthropicStreamClient,
+  DEFAULT_ANTHROPIC_MODEL,
+} from "./anthropic-shared.js";
 
 export interface AnthropicProviderOptions {
   apiKey: string;
@@ -26,10 +30,7 @@ export class AnthropicProvider implements AIProvider {
       baseURL: opts.baseURL,
       maxRetries: 0,
     });
-    // Anthropic model IDs use hyphens throughout (e.g. `claude-opus-4-7`).
-    // A dot-separated fallback silently 404s against the real API, which is
-    // especially nasty when the string only surfaces via Thread's fallback.
-    this.defaultModel = opts.model ?? "claude-opus-4-7";
+    this.defaultModel = opts.model ?? DEFAULT_ANTHROPIC_MODEL;
     this.cacheConfig = opts.cacheControl;
   }
 

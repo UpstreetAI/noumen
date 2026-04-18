@@ -13,6 +13,17 @@ import type { CacheControlConfig } from "./cache.js";
 import { getMessageCacheBreakpointIndex } from "./cache.js";
 import { getMaxOutputTokensForModel } from "../utils/context.js";
 
+/**
+ * Default model for Anthropic-family providers (direct API + Vertex).
+ * Bedrock uses its own ARN-shaped ids so it keeps its own default.
+ *
+ * Note: Anthropic model ids use hyphens throughout (`claude-opus-4-7`,
+ * not `claude-opus-4.7`). A dot-separated fallback silently 404s against
+ * the real API, which is especially nasty when the string only surfaces
+ * via Thread's fallback path.
+ */
+export const DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-7";
+
 interface AnthropicToolUseBlock {
   type: "tool_use";
   id: string;

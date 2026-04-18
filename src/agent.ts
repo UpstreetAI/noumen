@@ -270,6 +270,12 @@ export class Agent {
   private outputFormat: OutputFormat | undefined;
   private structuredOutputMode: "alongside_tools" | "final_response" | undefined;
   private autoTitleConfig: AutoTitleConfig | undefined;
+  /**
+   * Keyed by `${sessionId}:${force ? "force" : "normal"}`. Parallel calls
+   * that pass the same `force` mode coalesce to one in-flight request; a
+   * `force: true` call arriving during a normal in-flight request runs its
+   * own pass so the caller's intent isn't silently dropped.
+   */
   private autoTitleInFlight: Map<string, Promise<string | null>> = new Map();
   private providerPromise: Promise<AIProvider> | null = null;
   private initPromise: Promise<void> | null = null;
@@ -621,12 +627,19 @@ export class Agent {
     const cfg = this.autoTitleConfig;
     if (!cfg?.enabled) return null;
 
-    const existing = this.autoTitleInFlight.get(sessionId);
+    const force = opts?.force === true;
+    // Coalesce by `(sessionId, force)` — not just `sessionId` — so that a
+    // `force: true` call arriving during a normal in-flight request still
+    // runs. Sharing the result across force modes would make force silently
+    // inherit the non-force early-exit decision.
+    const key = `${sessionId}:${force ? "force" : "normal"}`;
+
+    const existing = this.autoTitleInFlight.get(key);
     if (existing) return existing;
 
     const task = (async () => {
       try {
-        if (!opts?.force) {
+        if (!force) {
           const titles = await this.storage.getSessionTitles(sessionId);
           if (titles.customTitle || titles.aiTitle) return null;
         }
@@ -648,11 +661,11 @@ export class Agent {
         await this.storage.appendAiTitle(sessionId, title);
         return title;
       } finally {
-        this.autoTitleInFlight.delete(sessionId);
+        this.autoTitleInFlight.delete(key);
       }
     })();
 
-    this.autoTitleInFlight.set(sessionId, task);
+    this.autoTitleInFlight.set(key, task);
     return task;
   }
 

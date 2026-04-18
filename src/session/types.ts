@@ -309,6 +309,12 @@ export type StreamEvent =
       deleted: string[];
     }
   | { type: "session_resumed"; sessionId: string; messageCount: number }
+  /**
+   * Title change event. `noumen` defines the shape so consumers can wire
+   * renames + auto-titles into the same stream as other StreamEvents, but
+   * does not emit it internally: callers synthesize it after
+   * `Agent.setCustomTitle` / `Agent.autoTitleIfMissing` resolves.
+   */
   | {
       type: "title_updated";
       sessionId: string;

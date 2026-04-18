@@ -4,7 +4,11 @@ import type {
   ChatStreamChunk,
 } from "./types.js";
 import type { CacheControlConfig } from "./cache.js";
-import { streamAnthropicChat, type AnthropicStreamClient } from "./anthropic-shared.js";
+import {
+  streamAnthropicChat,
+  type AnthropicStreamClient,
+  DEFAULT_ANTHROPIC_MODEL,
+} from "./anthropic-shared.js";
 
 export interface VertexAnthropicProviderOptions {
   /** GCP project ID. If omitted, inferred from application default credentials. */
@@ -87,7 +91,7 @@ export class VertexAnthropicProvider implements AIProvider {
       this.client = new AnthropicVertex(args) as unknown as AnthropicStreamClient;
     }
 
-    this.defaultModel = opts.model ?? "claude-opus-4-7";
+    this.defaultModel = opts.model ?? DEFAULT_ANTHROPIC_MODEL;
     this.cacheConfig = opts.cacheControl;
   }
 

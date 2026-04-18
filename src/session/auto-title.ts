@@ -103,18 +103,52 @@ export function extractTitleSeedText(
 }
 
 /**
- * Attempt to pull a quoted title out of a free-form model response.
- * Handles the common case where the model wraps JSON in prose or code
- * fences without requiring a full JSON parser upstream of us.
+ * Attempt to pull a title out of a free-form model response.
+ *
+ * Strategy, cheapest-first:
+ *   1. Parse the whole string as JSON; return `.title` if present.
+ *   2. Slice out the first `{...}` block and `JSON.parse` that.
+ *   3. Fall back to the first bare quoted substring in the response.
+ *
+ * Going through `JSON.parse` (instead of a bespoke regex-unescape) means
+ * `\n`, `\\`, `\uXXXX`, and any other valid JSON string escapes round-trip
+ * correctly — the previous regex only handled `\"`.
  */
 export function extractTitleFromResponse(raw: string): string | null {
   if (!raw) return null;
   const trimmed = raw.trim();
 
-  const jsonMatch = trimmed.match(/\{[\s\S]*?"title"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"[\s\S]*?\}/);
-  if (jsonMatch?.[1]) {
-    const candidate = jsonMatch[1].replace(/\\"/g, '"').trim();
-    if (candidate) return candidate;
+  type ParseOutcome =
+    | { kind: "ok"; title: string }
+    | { kind: "empty" } // JSON parsed but `title` was missing / bad / empty
+    | { kind: "none" }; // not valid JSON — try the next strategy
+  const parseTitle = (s: string): ParseOutcome => {
+    let obj: unknown;
+    try {
+      obj = JSON.parse(s);
+    } catch {
+      return { kind: "none" };
+    }
+    if (obj && typeof obj === "object" && "title" in obj) {
+      const v = (obj as { title: unknown }).title;
+      if (typeof v === "string") {
+        const t = v.trim();
+        if (t) return { kind: "ok", title: t };
+      }
+    }
+    return { kind: "empty" };
+  };
+
+  const whole = parseTitle(trimmed);
+  if (whole.kind === "ok") return whole.title;
+  if (whole.kind === "empty") return null;
+
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    const sliced = parseTitle(trimmed.slice(start, end + 1));
+    if (sliced.kind === "ok") return sliced.title;
+    if (sliced.kind === "empty") return null;
   }
 
   const quoteMatch = trimmed.match(/"([^"\\]{2,120})"/);
@@ -184,10 +218,14 @@ export async function generateAutoTitle(
 export function normalizeTitle(raw: string): string | null {
   if (!raw) return null;
   let t = raw.replace(/\s+/g, " ").trim();
-  if (t.startsWith('"') && t.endsWith('"') && t.length >= 2) {
+  if (
+    t.length >= 2 &&
+    ((t.startsWith('"') && t.endsWith('"')) ||
+      (t.startsWith("'") && t.endsWith("'")))
+  ) {
     t = t.slice(1, -1).trim();
   }
-  if (t.endsWith(".")) t = t.slice(0, -1).trim();
+  t = t.replace(/\.+$/, "").trim();
   if (!t) return null;
   if (t.length > 120) t = t.slice(0, 120).trim();
   return t;

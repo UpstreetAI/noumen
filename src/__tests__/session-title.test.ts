@@ -111,6 +111,80 @@ describe("SessionStorage title APIs", () => {
     expect((customAfter as { title: string }).title).toBe("User title");
     expect((aiAfter as { title: string }).title).toBe("Ai title");
   });
+
+  it("reAppendMetadataAfterCompact preserves metadata keys", async () => {
+    await storage.appendMessage("s1", { role: "user", content: "hi" });
+    await storage.appendMetadata("s1", "k1", "v1");
+    await storage.appendMetadata("s1", "k2", { nested: true });
+    await storage.appendCompactBoundary("s1");
+    await storage.appendSummary("s1", { role: "user", content: "summary" });
+
+    await storage.reAppendMetadataAfterCompact("s1");
+
+    const entries = await storage.loadAllEntries("s1");
+    const boundaryIdx = entries.findIndex((e) => e.type === "compact-boundary");
+    const metadataAfter = entries
+      .slice(boundaryIdx + 1)
+      .filter((e) => e.type === "metadata") as Array<{
+        key: string;
+        value: unknown;
+      }>;
+    const byKey = new Map(metadataAfter.map((m) => [m.key, m.value]));
+    expect(byKey.get("k1")).toBe("v1");
+    expect(byKey.get("k2")).toEqual({ nested: true });
+  });
+
+  it("reAppendMetadataAfterCompact uses the latest value when a key changed", async () => {
+    await storage.appendMessage("s1", { role: "user", content: "hi" });
+    await storage.appendMetadata("s1", "k", "first");
+    await storage.appendMetadata("s1", "k", "latest");
+    await storage.appendCompactBoundary("s1");
+    await storage.appendSummary("s1", { role: "user", content: "summary" });
+
+    await storage.reAppendMetadataAfterCompact("s1");
+
+    const entries = await storage.loadAllEntries("s1");
+    const boundaryIdx = entries.findIndex((e) => e.type === "compact-boundary");
+    const metadataAfter = entries
+      .slice(boundaryIdx + 1)
+      .filter((e) => e.type === "metadata") as Array<{ key: string; value: unknown }>;
+    expect(metadataAfter).toHaveLength(1);
+    expect(metadataAfter[0].value).toBe("latest");
+  });
+
+  it("reAppendMetadataAfterCompact is a no-op when there is nothing to re-emit", async () => {
+    await storage.appendMessage("s1", { role: "user", content: "hi" });
+    const before = await storage.loadAllEntries("s1");
+    await storage.reAppendMetadataAfterCompact("s1");
+    const after = await storage.loadAllEntries("s1");
+    expect(after).toHaveLength(before.length);
+  });
+
+  it("titles survive multiple compact cycles", async () => {
+    await storage.appendMessage("s1", { role: "user", content: "hi" });
+    await storage.appendCustomTitle("s1", "User title");
+    await storage.appendAiTitle("s1", "Ai title v1");
+
+    for (let i = 0; i < 3; i++) {
+      await storage.appendCompactBoundary("s1");
+      await storage.appendSummary("s1", {
+        role: "user",
+        content: `summary ${i}`,
+      });
+      await storage.reAppendMetadataAfterCompact("s1");
+    }
+
+    const titles = await storage.getSessionTitles("s1");
+    expect(titles.customTitle).toBe("User title");
+    expect(titles.aiTitle).toBe("Ai title v1");
+    expect(titles.title).toBe("User title");
+
+    const sessions = await storage.listSessions();
+    const s1 = sessions.find((s) => s.sessionId === "s1");
+    expect(s1?.title).toBe("User title");
+    expect(s1?.customTitle).toBe("User title");
+    expect(s1?.aiTitle).toBe("Ai title v1");
+  });
 });
 
 describe("auto-title helpers", () => {
@@ -185,6 +259,24 @@ describe("auto-title helpers", () => {
       ).toBe('He said "hi"');
     });
 
+    it("decodes \\n, \\t, and \\\\ through JSON.parse", () => {
+      expect(
+        extractTitleFromResponse('{"title": "Line one\\nLine two"}'),
+      ).toBe("Line one\nLine two");
+      expect(
+        extractTitleFromResponse('{"title": "Tab\\there"}'),
+      ).toBe("Tab\there");
+      expect(
+        extractTitleFromResponse('{"title": "Back\\\\slash"}'),
+      ).toBe("Back\\slash");
+    });
+
+    it("decodes unicode escapes through JSON.parse", () => {
+      expect(
+        extractTitleFromResponse('{"title": "caf\\u00e9 order"}'),
+      ).toBe("café order");
+    });
+
     it("falls back to a quoted substring", () => {
       expect(extractTitleFromResponse('Here is "Ship the fix" maybe')).toBe(
         "Ship the fix",
@@ -195,6 +287,11 @@ describe("auto-title helpers", () => {
       expect(extractTitleFromResponse("")).toBeNull();
       expect(extractTitleFromResponse("no structure at all")).toBeNull();
     });
+
+    it("returns null when the JSON 'title' field is empty or non-string", () => {
+      expect(extractTitleFromResponse('{"title": ""}')).toBeNull();
+      expect(extractTitleFromResponse('{"title": 42}')).toBeNull();
+    });
   });
 
   describe("normalizeTitle", () => {
@@ -204,6 +301,14 @@ describe("auto-title helpers", () => {
 
     it("strips wrapping quotes and trailing period", () => {
       expect(normalizeTitle('"Fix the bug."')).toBe("Fix the bug");
+    });
+
+    it("strips multiple trailing periods", () => {
+      expect(normalizeTitle("Fix the bug...")).toBe("Fix the bug");
+    });
+
+    it("strips wrapping single quotes", () => {
+      expect(normalizeTitle("'Fix the bug'")).toBe("Fix the bug");
     });
 
     it("clamps overlong titles", () => {
@@ -285,6 +390,37 @@ describe("auto-title helpers", () => {
       );
       expect(t).toBe("Investigate cache miss");
       expect(provider.calls[0].model).toBe("default-123");
+    });
+
+    it("returns null when the provider only emits thinking deltas (no content)", async () => {
+      // Some providers stream thinking blocks without any content delta.
+      // We want to bail rather than pretend to have parsed a title.
+      const thinkingChunk: ChatStreamChunk = {
+        id: "mock-thinking",
+        model: "mock-model",
+        choices: [
+          {
+            index: 0,
+            delta: { thinking_content: "pondering..." },
+            finish_reason: null,
+          },
+        ],
+      };
+      const provider = new MockAIProvider([[thinkingChunk, stopChunk()]]);
+      const t = await generateAutoTitle(
+        [{ role: "user", content: "hello" }],
+        { provider, model: "mock-model" },
+      );
+      expect(t).toBeNull();
+    });
+
+    it("returns null when the provider yields an empty string", async () => {
+      const provider = new MockAIProvider([[textChunk(""), stopChunk()]]);
+      const t = await generateAutoTitle(
+        [{ role: "user", content: "hello" }],
+        { provider, model: "mock-model" },
+      );
+      expect(t).toBeNull();
     });
   });
 });

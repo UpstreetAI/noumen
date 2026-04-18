@@ -51,6 +51,72 @@ describe("Thread", () => {
     expect(thread.sessionId).toBe("custom-id");
   });
 
+  describe("model resolution", () => {
+    it("prefers opts.model over config.model and provider.defaultModel", () => {
+      const p: AIProvider = {
+        defaultModel: "from-provider",
+        async *chat() {},
+      };
+      const cfg: ThreadConfig = {
+        provider: p,
+        fs,
+        computer,
+        sessionDir: "/sessions",
+        autoCompact: createAutoCompactConfig({ enabled: false }),
+        model: "from-config",
+      };
+      const thread = new Thread(cfg, { model: "from-opts" });
+      expect(thread.getModel()).toBe("from-opts");
+    });
+
+    it("falls back to config.model when opts.model is missing", () => {
+      const p: AIProvider = {
+        defaultModel: "from-provider",
+        async *chat() {},
+      };
+      const cfg: ThreadConfig = {
+        provider: p,
+        fs,
+        computer,
+        sessionDir: "/sessions",
+        autoCompact: createAutoCompactConfig({ enabled: false }),
+        model: "from-config",
+      };
+      const thread = new Thread(cfg);
+      expect(thread.getModel()).toBe("from-config");
+    });
+
+    it("falls back to provider.defaultModel when neither opts nor config specify", () => {
+      const p: AIProvider = {
+        defaultModel: "from-provider",
+        async *chat() {},
+      };
+      const cfg: ThreadConfig = {
+        provider: p,
+        fs,
+        computer,
+        sessionDir: "/sessions",
+        autoCompact: createAutoCompactConfig({ enabled: false }),
+      };
+      const thread = new Thread(cfg);
+      expect(thread.getModel()).toBe("from-provider");
+    });
+
+    it("throws with a helpful message when no model can be resolved", () => {
+      const bareProvider: AIProvider = {
+        async *chat() {},
+      };
+      const cfg: ThreadConfig = {
+        provider: bareProvider,
+        fs,
+        computer,
+        sessionDir: "/sessions",
+        autoCompact: createAutoCompactConfig({ enabled: false }),
+      };
+      expect(() => new Thread(cfg)).toThrow(/no model resolved/);
+    });
+  });
+
   describe("run() - text-only response", () => {
     it("yields text_delta and message_complete events", async () => {
       provider.addResponse(textResponse("Hello there!"));
