@@ -1,52 +1,80 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { MockFs, MockComputer, MockAIProvider, textResponse, toolCallResponse } from "./helpers.js";
 import { Agent } from "../agent.js";
-import { createServer, type NoumenServer } from "../server/index.js";
+import { createServer, type NoumenServer, type ServerOptions } from "../server/index.js";
 import WebSocket from "ws";
 
-let fs: MockFs;
-let computer: MockComputer;
-let provider: MockAIProvider;
-let code: Agent;
-let server: NoumenServer;
-let baseUrl: string;
+// ---------------------------------------------------------------------------
+// Per-test harness
+//
+// Every test builds a fresh fs / computer / provider / agent / server and
+// tears it down via a `using`-style `cleanup` array. Nothing lives at module
+// scope, which makes `it.concurrent` safe.
+// ---------------------------------------------------------------------------
 
-function makeCode(opts?: { permissionMode?: string }) {
-  return new Agent({
-    provider: provider,
+interface TestCtx {
+  fs: MockFs;
+  computer: MockComputer;
+  provider: MockAIProvider;
+  code: Agent;
+  server: NoumenServer;
+  baseUrl: string;
+  wsUrl: string;
+  stop: () => Promise<void>;
+}
+
+interface BootOptions {
+  permissionMode?: "default" | "bypassPermissions" | "acceptEdits";
+  ws?: boolean;
+  auth?: ServerOptions["auth"];
+  maxSessions?: number;
+  idleTimeoutMs?: number;
+  idleReaperMinIntervalMs?: number;
+  pendingTimeoutMs?: number;
+  responses?: Array<Parameters<MockAIProvider["addResponse"]>[0]>;
+}
+
+async function boot(opts: BootOptions = {}): Promise<TestCtx> {
+  const fs = new MockFs();
+  const computer = new MockComputer();
+  const provider = new MockAIProvider();
+  for (const r of opts.responses ?? []) provider.addResponse(r);
+
+  const code = new Agent({
+    provider,
     sandbox: { fs, computer },
     options: {
-      permissions: opts?.permissionMode
-        ? { mode: opts.permissionMode as any }
-        : undefined,
+      permissions: opts.permissionMode ? { mode: opts.permissionMode } : undefined,
     },
   });
-}
 
-async function startServer(
-  c: Agent,
-  opts?: { auth?: any; maxSessions?: number; idleTimeoutMs?: number },
-): Promise<{ server: NoumenServer; baseUrl: string }> {
-  const s = createServer(c, {
+  const server = createServer(code, {
     port: 0,
-    ws: false,
-    ...opts,
+    ws: opts.ws ?? false,
+    auth: opts.auth,
+    maxSessions: opts.maxSessions,
+    idleTimeoutMs: opts.idleTimeoutMs,
+    idleReaperMinIntervalMs: opts.idleReaperMinIntervalMs,
+    pendingTimeoutMs: opts.pendingTimeoutMs,
+    // Tests should never pay the 500 ms drain penalty: teardown is instant.
+    shutdownDrainMs: 0,
   });
-  await s.start();
-  const addr = (s as any).httpServer?.address();
-  const port = typeof addr === "object" ? addr.port : 0;
-  return { server: s, baseUrl: `http://127.0.0.1:${port}` };
+  await server.start();
+
+  const addr = (server as unknown as { httpServer?: { address(): { port: number } | string | null } }).httpServer?.address();
+  const port = typeof addr === "object" && addr ? addr.port : 0;
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const wsUrl = `ws://127.0.0.1:${port}`;
+
+  return {
+    fs, computer, provider, code, server, baseUrl, wsUrl,
+    stop: () => server.stop(),
+  };
 }
 
-beforeEach(() => {
-  fs = new MockFs();
-  computer = new MockComputer();
-  provider = new MockAIProvider();
-});
-
-afterEach(async () => {
-  if (server) await server.stop();
-});
+// ---------------------------------------------------------------------------
+// Small helpers shared across tests
+// ---------------------------------------------------------------------------
 
 async function post(url: string, body: unknown, headers?: Record<string, string>): Promise<Response> {
   return globalThis.fetch(url, {
@@ -56,12 +84,47 @@ async function post(url: string, body: unknown, headers?: Record<string, string>
   });
 }
 
+/**
+ * Wait for a session's run loop to finish by polling `/sessions`. Far faster
+ * and more reliable than a fixed `setTimeout`.
+ */
+async function waitForSessionDone(
+  baseUrl: string,
+  sessionId: string,
+  opts: { timeoutMs?: number; headers?: Record<string, string> } = {},
+): Promise<void> {
+  const deadline = Date.now() + (opts.timeoutMs ?? 2000);
+  while (Date.now() < deadline) {
+    const res = await globalThis.fetch(`${baseUrl}/sessions`, { headers: opts.headers });
+    if (res.ok) {
+      const sessions = (await res.json()) as Array<{ id: string; done: boolean }>;
+      const me = sessions.find((s) => s.id === sessionId);
+      if (me?.done) return;
+    }
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error(`Session ${sessionId} did not complete within timeout`);
+}
+
+/** Poll `predicate` every 10 ms until it returns true or the timeout elapses. */
+async function waitFor(
+  predicate: () => boolean | Promise<boolean>,
+  opts: { timeoutMs?: number; label?: string } = {},
+): Promise<void> {
+  const deadline = Date.now() + (opts.timeoutMs ?? 2000);
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error(`waitFor timed out${opts.label ? `: ${opts.label}` : ""}`);
+}
+
 async function readSseEvents(
   url: string,
   opts?: { headers?: Record<string, string>; untilType?: string; timeoutMs?: number },
 ): Promise<any[]> {
   const ac = new AbortController();
-  const timeout = opts?.timeoutMs ?? 3000;
+  const timeout = opts?.timeoutMs ?? 2000;
   const timer = setTimeout(() => ac.abort(), timeout);
 
   const res = await globalThis.fetch(url, { headers: opts?.headers, signal: ac.signal }).catch(() => null);
@@ -104,498 +167,440 @@ async function readSseEvents(
 
 // ---------------------------------------------------------------------------
 
-describe("NoumenServer", () => {
+describe.concurrent("NoumenServer", () => {
   describe("health check", () => {
     it("returns status ok on GET /health", async () => {
-      code = makeCode();
-      ({ server, baseUrl } = await startServer(code));
-
-      const res = await globalThis.fetch(`${baseUrl}/health`);
-      const body = await res.json() as any;
-      expect(res.status).toBe(200);
-      expect(body.status).toBe("ok");
-      expect(body.sessions).toBe(0);
+      const ctx = await boot();
+      try {
+        const res = await globalThis.fetch(`${ctx.baseUrl}/health`);
+        const body = await res.json() as any;
+        expect(res.status).toBe(200);
+        expect(body.status).toBe("ok");
+        expect(body.sessions).toBe(0);
+      } finally { await ctx.stop(); }
     });
   });
 
   describe("REST+SSE basic flow", () => {
     it("creates a session and streams events over SSE", async () => {
-      provider.addResponse(textResponse("Hello from agent!"));
+      const ctx = await boot({ responses: [textResponse("Hello from agent!")] });
+      try {
+        const createRes = await post(`${ctx.baseUrl}/sessions`, { prompt: "hi" });
+        expect(createRes.status).toBe(201);
+        const { sessionId, eventsUrl } = await createRes.json() as any;
+        expect(sessionId).toBeTruthy();
+        expect(eventsUrl).toContain(sessionId);
 
-      code = makeCode();
-      ({ server, baseUrl } = await startServer(code));
+        const events = await readSseEvents(
+          `${ctx.baseUrl}${eventsUrl}`,
+          { untilType: "turn_complete" },
+        );
+        const types = events.map((e: any) => e.type);
+        expect(types).toContain("text_delta");
+        expect(types).toContain("turn_complete");
 
-      const createRes = await post(`${baseUrl}/sessions`, { prompt: "hi" });
-      expect(createRes.status).toBe(201);
-      const { sessionId, eventsUrl } = await createRes.json() as any;
-      expect(sessionId).toBeTruthy();
-      expect(eventsUrl).toContain(sessionId);
-
-      // Wait for the agent run to finish, then read buffered events
-      await new Promise((r) => setTimeout(r, 300));
-
-      const events = await readSseEvents(`${baseUrl}${eventsUrl}`, { untilType: "turn_complete" });
-      const types = events.map((e: any) => e.type);
-      expect(types).toContain("text_delta");
-      expect(types).toContain("turn_complete");
-
-      const textDelta = events.find((e: any) => e.type === "text_delta");
-      expect(textDelta.text).toContain("Hello from agent!");
+        const textDelta = events.find((e: any) => e.type === "text_delta");
+        expect(textDelta.text).toContain("Hello from agent!");
+      } finally { await ctx.stop(); }
     });
 
     it("returns 400 when prompt is missing", async () => {
-      code = makeCode();
-      ({ server, baseUrl } = await startServer(code));
-
-      const res = await post(`${baseUrl}/sessions`, {});
-      expect(res.status).toBe(400);
+      const ctx = await boot();
+      try {
+        const res = await post(`${ctx.baseUrl}/sessions`, {});
+        expect(res.status).toBe(400);
+      } finally { await ctx.stop(); }
     });
   });
 
   describe("session management", () => {
     it("lists active sessions", async () => {
-      provider.addResponse(textResponse("a"));
-      provider.addResponse(textResponse("b"));
+      const ctx = await boot({
+        responses: [textResponse("a"), textResponse("b")],
+      });
+      try {
+        const r1 = await post(`${ctx.baseUrl}/sessions`, { prompt: "one" });
+        const r2 = await post(`${ctx.baseUrl}/sessions`, { prompt: "two" });
+        const id1 = (await r1.json() as any).sessionId;
+        const id2 = (await r2.json() as any).sessionId;
 
-      code = makeCode();
-      ({ server, baseUrl } = await startServer(code));
+        await waitForSessionDone(ctx.baseUrl, id1);
+        await waitForSessionDone(ctx.baseUrl, id2);
 
-      await post(`${baseUrl}/sessions`, { prompt: "one" });
-      await post(`${baseUrl}/sessions`, { prompt: "two" });
-
-      await new Promise((r) => setTimeout(r, 200));
-
-      const listRes = await globalThis.fetch(`${baseUrl}/sessions`);
-      const sessions = await listRes.json() as any[];
-      expect(sessions.length).toBe(2);
+        const listRes = await globalThis.fetch(`${ctx.baseUrl}/sessions`);
+        const sessions = await listRes.json() as any[];
+        expect(sessions.length).toBe(2);
+      } finally { await ctx.stop(); }
     });
 
     it("deletes a session", async () => {
-      provider.addResponse(textResponse("hi"));
+      const ctx = await boot({ responses: [textResponse("hi")] });
+      try {
+        const createRes = await post(`${ctx.baseUrl}/sessions`, { prompt: "hi" });
+        const { sessionId } = await createRes.json() as any;
 
-      code = makeCode();
-      ({ server, baseUrl } = await startServer(code));
+        await waitForSessionDone(ctx.baseUrl, sessionId);
 
-      const createRes = await post(`${baseUrl}/sessions`, { prompt: "hi" });
-      const { sessionId } = await createRes.json() as any;
+        const delRes = await globalThis.fetch(`${ctx.baseUrl}/sessions/${sessionId}`, { method: "DELETE" });
+        expect(delRes.status).toBe(200);
 
-      await new Promise((r) => setTimeout(r, 200));
-
-      const delRes = await globalThis.fetch(`${baseUrl}/sessions/${sessionId}`, { method: "DELETE" });
-      expect(delRes.status).toBe(200);
-
-      const listRes = await globalThis.fetch(`${baseUrl}/sessions`);
-      const sessions = await listRes.json() as any[];
-      expect(sessions.length).toBe(0);
+        const listRes = await globalThis.fetch(`${ctx.baseUrl}/sessions`);
+        const sessions = await listRes.json() as any[];
+        expect(sessions.length).toBe(0);
+      } finally { await ctx.stop(); }
     });
 
     it("returns 404 for unknown session", async () => {
-      code = makeCode();
-      ({ server, baseUrl } = await startServer(code));
-
-      const res = await globalThis.fetch(`${baseUrl}/sessions/nonexistent/events`);
-      expect(res.status).toBe(404);
+      const ctx = await boot();
+      try {
+        const res = await globalThis.fetch(`${ctx.baseUrl}/sessions/nonexistent/events`);
+        expect(res.status).toBe(404);
+      } finally { await ctx.stop(); }
     });
   });
 
   describe("auth", () => {
     it("rejects requests without valid bearer token", async () => {
-      code = makeCode();
-      ({ server, baseUrl } = await startServer(code, {
-        auth: { type: "bearer", token: "secret-token" },
-      }));
-
-      const res = await post(`${baseUrl}/sessions`, { prompt: "hi" });
-      expect(res.status).toBe(401);
+      const ctx = await boot({ auth: { type: "bearer", token: "secret-token" } });
+      try {
+        const res = await post(`${ctx.baseUrl}/sessions`, { prompt: "hi" });
+        expect(res.status).toBe(401);
+      } finally { await ctx.stop(); }
     });
 
     it("accepts requests with valid bearer token", async () => {
-      provider.addResponse(textResponse("ok"));
-
-      code = makeCode();
-      ({ server, baseUrl } = await startServer(code, {
+      const ctx = await boot({
+        responses: [textResponse("ok")],
         auth: { type: "bearer", token: "secret-token" },
-      }));
-
-      const res = await post(`${baseUrl}/sessions`, { prompt: "hi" }, {
-        Authorization: "Bearer secret-token",
       });
-      expect(res.status).toBe(201);
+      try {
+        const res = await post(`${ctx.baseUrl}/sessions`, { prompt: "hi" }, {
+          Authorization: "Bearer secret-token",
+        });
+        expect(res.status).toBe(201);
+      } finally { await ctx.stop(); }
     });
 
     it("health check does not require auth", async () => {
-      code = makeCode();
-      ({ server, baseUrl } = await startServer(code, {
-        auth: { type: "bearer", token: "secret-token" },
-      }));
-
-      const res = await globalThis.fetch(`${baseUrl}/health`);
-      expect(res.status).toBe(200);
+      const ctx = await boot({ auth: { type: "bearer", token: "secret-token" } });
+      try {
+        const res = await globalThis.fetch(`${ctx.baseUrl}/health`);
+        expect(res.status).toBe(200);
+      } finally { await ctx.stop(); }
     });
   });
 
   describe("max sessions", () => {
     it("rejects when max sessions reached", async () => {
-      provider.addResponse(textResponse("ok"));
-      provider.addResponse(textResponse("ok"));
+      const ctx = await boot({
+        responses: [textResponse("ok"), textResponse("ok")],
+        maxSessions: 1,
+      });
+      try {
+        const res1 = await post(`${ctx.baseUrl}/sessions`, { prompt: "one" });
+        expect(res1.status).toBe(201);
 
-      code = makeCode();
-      ({ server, baseUrl } = await startServer(code, { maxSessions: 1 }));
-
-      const res1 = await post(`${baseUrl}/sessions`, { prompt: "one" });
-      expect(res1.status).toBe(201);
-
-      const res2 = await post(`${baseUrl}/sessions`, { prompt: "two" });
-      expect(res2.status).toBe(429);
+        const res2 = await post(`${ctx.baseUrl}/sessions`, { prompt: "two" });
+        expect(res2.status).toBe(429);
+      } finally { await ctx.stop(); }
     });
   });
 
   describe("idle timeout", () => {
     it("reaps idle sessions", async () => {
-      provider.addResponse(textResponse("ok"));
+      // With idleReaperMinIntervalMs = 25, the reaper fires every ~25 ms,
+      // so total wait is idleTimeoutMs (50) + one reaper tick (~25) ≈ 75 ms.
+      const ctx = await boot({
+        responses: [textResponse("ok")],
+        idleTimeoutMs: 50,
+        idleReaperMinIntervalMs: 25,
+      });
+      try {
+        const createRes = await post(`${ctx.baseUrl}/sessions`, { prompt: "hi" });
+        const { sessionId } = await createRes.json() as any;
 
-      code = makeCode();
-      ({ server, baseUrl } = await startServer(code, { idleTimeoutMs: 200 }));
+        await waitForSessionDone(ctx.baseUrl, sessionId);
 
-      await post(`${baseUrl}/sessions`, { prompt: "hi" });
-
-      // Wait for agent to finish + idle timeout + reaper interval to fire
-      await new Promise((r) => setTimeout(r, 1500));
-
-      const listRes = await globalThis.fetch(`${baseUrl}/sessions`);
-      const sessions = await listRes.json() as any[];
-      expect(sessions.length).toBe(0);
-    }, 5000);
+        await waitFor(async () => {
+          const listRes = await globalThis.fetch(`${ctx.baseUrl}/sessions`);
+          const sessions = await listRes.json() as any[];
+          return sessions.length === 0;
+        }, { timeoutMs: 1000, label: "session reaped" });
+      } finally { await ctx.stop(); }
+    });
   });
 
   describe("permission bridging (REST)", () => {
-    it("emits permission_request and accepts permission_response via POST", async () => {
-      // First call: tool that triggers permission, second call: follow-up text
-      provider.addResponse(toolCallResponse("tc-1", "Bash", { command: "rm -rf /" }));
-      provider.addResponse(textResponse("Done."));
-
-      code = new Agent({
-        provider: provider,
-        sandbox: { fs, computer },
-        options: {
-          permissions: {
-            mode: "default",
-            handler: undefined,
-          },
-        },
+    it("emits permission_request and responds to it via POST", async () => {
+      const ctx = await boot({
+        permissionMode: "default",
+        responses: [
+          toolCallResponse("tc-1", "Bash", { command: "rm -rf /" }),
+          textResponse("Done."),
+        ],
       });
-      ({ server, baseUrl } = await startServer(code));
+      try {
+        const createRes = await post(`${ctx.baseUrl}/sessions`, { prompt: "do it" });
+        const { sessionId } = await createRes.json() as any;
 
-      const createRes = await post(`${baseUrl}/sessions`, { prompt: "do it" });
-      const { sessionId } = await createRes.json() as any;
+        // Wait for the permission request to be pending on the server side.
+        const sessions = (ctx.server as any).sessions as Map<string, any>;
+        await waitFor(
+          () => !!sessions.get(sessionId)?.pendingPermission,
+          { timeoutMs: 2000, label: "pending permission set" },
+        );
 
-      // Give agent time to reach the permission request
-      await new Promise((r) => setTimeout(r, 300));
+        const permRes = await post(
+          `${ctx.baseUrl}/sessions/${sessionId}/permissions`,
+          { allow: true },
+        );
+        expect(permRes.status).toBe(200);
 
-      // The permission_request should be buffered; respond to it
-      const permRes = await post(`${baseUrl}/sessions/${sessionId}/permissions`, {
-        allow: true,
-      });
-      // May be 200 or 409 depending on timing
-      expect([200, 409]).toContain(permRes.status);
+        // After allow, the agent continues and eventually finishes.
+        await waitForSessionDone(ctx.baseUrl, sessionId);
+      } finally { await ctx.stop(); }
     });
   });
 
   describe("user input bridging (REST)", () => {
-    it("accepts input response via POST", async () => {
-      code = makeCode();
-      ({ server, baseUrl } = await startServer(code));
-
-      // No session to test against, verify endpoint returns 404
-      const res = await post(`${baseUrl}/sessions/fake/input`, { answer: "yes" });
-      expect(res.status).toBe(404);
+    it("returns 404 for input response on unknown session", async () => {
+      const ctx = await boot();
+      try {
+        const res = await post(`${ctx.baseUrl}/sessions/fake/input`, { answer: "yes" });
+        expect(res.status).toBe(404);
+      } finally { await ctx.stop(); }
     });
 
     it("rejects input response when no pending request", async () => {
-      provider.addResponse(textResponse("ok"));
+      const ctx = await boot({ responses: [textResponse("ok")] });
+      try {
+        const createRes = await post(`${ctx.baseUrl}/sessions`, { prompt: "hi" });
+        const { sessionId } = await createRes.json() as any;
 
-      code = makeCode();
-      ({ server, baseUrl } = await startServer(code));
+        await waitForSessionDone(ctx.baseUrl, sessionId);
 
-      const createRes = await post(`${baseUrl}/sessions`, { prompt: "hi" });
-      const { sessionId } = await createRes.json() as any;
-
-      await new Promise((r) => setTimeout(r, 200));
-
-      const res = await post(`${baseUrl}/sessions/${sessionId}/input`, { answer: "yes" });
-      expect(res.status).toBe(409);
+        const res = await post(`${ctx.baseUrl}/sessions/${sessionId}/input`, { answer: "yes" });
+        expect(res.status).toBe(409);
+      } finally { await ctx.stop(); }
     });
   });
 
   describe("follow-up messages", () => {
     it("rejects messages while session is running", async () => {
-      // Use a slow response — tool call that takes time
-      provider.addResponse(textResponse("thinking..."));
+      // Block the provider until we choose to release it, guaranteeing the
+      // session is still running when we POST the follow-up.
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
 
-      code = makeCode();
-      ({ server, baseUrl } = await startServer(code));
+      const provider: any = {
+        defaultModel: "mock-model",
+        async *chat() {
+          await gate;
+          yield {
+            id: "x", model: "mock-model",
+            choices: [{ index: 0, delta: { content: "ok" }, finish_reason: null }],
+          };
+          yield {
+            id: "x", model: "mock-model",
+            choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+          };
+        },
+      };
 
-      const createRes = await post(`${baseUrl}/sessions`, { prompt: "start" });
-      const { sessionId } = await createRes.json() as any;
+      const code = new Agent({
+        provider,
+        sandbox: { fs: new MockFs(), computer: new MockComputer() },
+      });
+      const server = createServer(code, { port: 0, ws: false, shutdownDrainMs: 0 });
+      await server.start();
+      const addr = (server as any).httpServer?.address();
+      const port = typeof addr === "object" ? addr.port : 0;
+      const baseUrl = `http://127.0.0.1:${port}`;
 
-      // Try immediately before the run finishes
-      const msgRes = await post(`${baseUrl}/sessions/${sessionId}/messages`, { prompt: "more" });
-      // Might be 409 (still running) or 200 (if it completed fast)
-      expect([200, 409]).toContain(msgRes.status);
+      try {
+        const createRes = await post(`${baseUrl}/sessions`, { prompt: "start" });
+        const { sessionId } = await createRes.json() as any;
+
+        // Wait until the provider's chat() is actually gated (i.e. the run
+        // loop has reached `await gate`). The session is guaranteed to be
+        // running at this point — no timing flake possible.
+        await waitFor(() => {
+          const sessions = (server as any).sessions as Map<string, any>;
+          const s = sessions.get(sessionId);
+          return !!s && !s.done;
+        }, { timeoutMs: 1000, label: "session entered run loop" });
+
+        const msgRes = await post(`${baseUrl}/sessions/${sessionId}/messages`, { prompt: "more" });
+        expect(msgRes.status).toBe(409);
+
+        release();
+        await waitForSessionDone(baseUrl, sessionId);
+      } finally { await server.stop(); }
     });
   });
 
   describe("404 handling", () => {
     it("returns 404 for unknown routes", async () => {
-      code = makeCode();
-      ({ server, baseUrl } = await startServer(code));
-
-      const res = await globalThis.fetch(`${baseUrl}/unknown`);
-      expect(res.status).toBe(404);
+      const ctx = await boot();
+      try {
+        const res = await globalThis.fetch(`${ctx.baseUrl}/unknown`);
+        expect(res.status).toBe(404);
+      } finally { await ctx.stop(); }
     });
   });
 
-  describe("SSE keepalive", () => {
-    it("emits keepalive comments on SSE stream", async () => {
-      provider.addResponse(textResponse("ok"));
+  describe("SSE format", () => {
+    it("SSE stream is text/event-stream with id and data lines", async () => {
+      const ctx = await boot({ responses: [textResponse("ok")] });
+      try {
+        const createRes = await post(`${ctx.baseUrl}/sessions`, { prompt: "hi" });
+        const { sessionId } = await createRes.json() as any;
 
-      code = makeCode();
-      // Use a custom server with short keepalive for testing — we test
-      // the raw SSE stream manually instead of using the client
-      const s = createServer(code, { port: 0, ws: false });
-      await s.start();
-      const addr = (s as any).httpServer?.address();
-      const port = typeof addr === "object" ? addr.port : 0;
-      const burl = `http://127.0.0.1:${port}`;
-      server = s;
-      baseUrl = burl;
+        await waitForSessionDone(ctx.baseUrl, sessionId);
 
-      const createRes = await post(`${burl}/sessions`, { prompt: "hi" });
-      const { sessionId } = await createRes.json() as any;
+        const ac = new AbortController();
+        const sseRes = await globalThis.fetch(
+          `${ctx.baseUrl}/sessions/${sessionId}/events`,
+          { signal: ac.signal },
+        );
+        expect(sseRes.status).toBe(200);
+        expect(sseRes.headers.get("content-type")).toBe("text/event-stream");
 
-      // Wait for agent to finish
-      await new Promise((r) => setTimeout(r, 300));
+        const reader = sseRes.body!.getReader();
+        const decoder = new TextDecoder();
+        let raw = "";
+        const { value } = await reader.read();
+        if (value) raw += decoder.decode(value, { stream: true });
+        ac.abort();
+        reader.releaseLock();
 
-      // Connect to SSE stream
-      const ac = new AbortController();
-      const sseRes = await globalThis.fetch(`${burl}/sessions/${sessionId}/events`, { signal: ac.signal });
-      expect(sseRes.status).toBe(200);
-      expect(sseRes.headers.get("content-type")).toBe("text/event-stream");
-
-      // Read raw bytes to check for keepalive comments
-      const reader = sseRes.body!.getReader();
-      const decoder = new TextDecoder();
-      let raw = "";
-
-      // Read buffered events (should include id: field)
-      const { value } = await reader.read();
-      if (value) raw += decoder.decode(value, { stream: true });
-      expect(raw).toContain("id: ");
-      expect(raw).toContain("data: ");
-
-      ac.abort();
-      reader.releaseLock();
-    });
-  });
-
-  describe("SSE event IDs", () => {
-    it("includes id: field in SSE events", async () => {
-      provider.addResponse(textResponse("hello"));
-
-      code = makeCode();
-      ({ server, baseUrl } = await startServer(code));
-
-      const createRes = await post(`${baseUrl}/sessions`, { prompt: "hi" });
-      const { sessionId } = await createRes.json() as any;
-
-      await new Promise((r) => setTimeout(r, 300));
-
-      // Read raw SSE to check for id: fields
-      const ac = new AbortController();
-      const sseRes = await globalThis.fetch(`${baseUrl}/sessions/${sessionId}/events`, { signal: ac.signal });
-      const reader = sseRes.body!.getReader();
-      const decoder = new TextDecoder();
-      let raw = "";
-      const { value } = await reader.read();
-      if (value) raw += decoder.decode(value, { stream: true });
-      ac.abort();
-      reader.releaseLock();
-
-      // Should have multiple id: lines with incrementing numbers
-      const idMatches = raw.match(/^id: \d+$/gm);
-      expect(idMatches).toBeTruthy();
-      expect(idMatches!.length).toBeGreaterThanOrEqual(1);
+        expect(raw).toContain("id: ");
+        expect(raw).toContain("data: ");
+        expect(raw).toMatch(/^id: \d+$/m);
+      } finally { await ctx.stop(); }
     });
 
     it("respects Last-Event-ID on reconnect — replays only events after the given seq", async () => {
-      provider.addResponse(textResponse("hello world"));
+      const ctx = await boot({ responses: [textResponse("hello world")] });
+      try {
+        const createRes = await post(`${ctx.baseUrl}/sessions`, { prompt: "hi" });
+        const { sessionId } = await createRes.json() as any;
 
-      code = makeCode();
-      ({ server, baseUrl } = await startServer(code));
+        await waitForSessionDone(ctx.baseUrl, sessionId);
 
-      const createRes = await post(`${baseUrl}/sessions`, { prompt: "hi" });
-      const { sessionId } = await createRes.json() as any;
+        const sessions = (ctx.server as any).sessions as Map<string, any>;
+        const session = sessions.get(sessionId);
+        expect(session).toBeDefined();
 
-      // Wait for the run to complete so events are buffered
-      await new Promise((r) => setTimeout(r, 500));
+        const totalBuffered = session.eventBuffer.length;
+        expect(totalBuffered).toBeGreaterThan(2);
 
-      // Access the internal session state to inspect buffered events
-      const sessions = (server as any).sessions as Map<string, any>;
-      const session = sessions.get(sessionId);
-      expect(session).toBeDefined();
+        const midpointSeq = session.eventBuffer[1].seq;
+        const expectedReplayCount = session.eventBuffer.filter(
+          (e: any) => e.seq > midpointSeq,
+        ).length;
+        expect(expectedReplayCount).toBeGreaterThan(0);
+        expect(expectedReplayCount).toBeLessThan(totalBuffered);
 
-      // Capture the total event count and a midpoint seq
-      const totalBuffered = session.eventBuffer.length;
-      expect(totalBuffered).toBeGreaterThan(2);
+        const events = await readSseEvents(
+          `${ctx.baseUrl}/sessions/${sessionId}/events`,
+          { headers: { "Last-Event-ID": String(midpointSeq) }, timeoutMs: 1000 },
+        );
 
-      const midpointSeq = session.eventBuffer[1].seq;
-      const expectedReplayCount = session.eventBuffer.filter(
-        (e: any) => e.seq > midpointSeq,
-      ).length;
-      expect(expectedReplayCount).toBeGreaterThan(0);
-      expect(expectedReplayCount).toBeLessThan(totalBuffered);
-
-      // Connect with Last-Event-ID set to the midpoint — should skip events up to midpoint
-      const events = await readSseEvents(
-        `${baseUrl}/sessions/${sessionId}/events`,
-        { headers: { "Last-Event-ID": String(midpointSeq) }, timeoutMs: 1000 },
-      );
-
-      // Should receive only events after the midpoint
-      expect(events.length).toBe(expectedReplayCount);
+        expect(events.length).toBe(expectedReplayCount);
+      } finally { await ctx.stop(); }
     });
   });
 
   describe("body size limit", () => {
     it("rejects oversized request bodies", async () => {
-      code = makeCode();
-      ({ server, baseUrl } = await startServer(code));
+      const ctx = await boot();
+      try {
+        const largeBody = JSON.stringify({ prompt: "x".repeat(1_100_000) });
+        const res = await globalThis.fetch(`${ctx.baseUrl}/sessions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: largeBody,
+        }).catch(() => null);
 
-      // Send a body larger than 1MB
-      const largeBody = JSON.stringify({ prompt: "x".repeat(1_100_000) });
-      const res = await globalThis.fetch(`${baseUrl}/sessions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: largeBody,
-      }).catch(() => null);
-
-      // Should either get a 500 (server caught the error) or connection reset
-      if (res) {
-        expect(res.status).toBe(500);
-      }
+        if (res) expect(res.status).toBe(500);
+      } finally { await ctx.stop(); }
     });
   });
 
   describe("event buffer cap", () => {
-    it("caps event buffer at MAX_EVENT_BUFFER entries", async () => {
-      // We can't easily test this end-to-end without generating 1000+ events,
-      // but we can verify the buffer doesn't grow unboundedly by checking
-      // that a session with events has a bounded buffer
-      provider.addResponse(textResponse("ok"));
+    it("keeps the per-session event buffer bounded", async () => {
+      const ctx = await boot({ responses: [textResponse("ok")] });
+      try {
+        const createRes = await post(`${ctx.baseUrl}/sessions`, { prompt: "hi" });
+        const { sessionId } = await createRes.json() as any;
+        expect(createRes.status).toBe(201);
 
-      code = makeCode();
-      ({ server, baseUrl } = await startServer(code));
+        await waitForSessionDone(ctx.baseUrl, sessionId);
 
-      const createRes = await post(`${baseUrl}/sessions`, { prompt: "hi" });
-      expect(createRes.status).toBe(201);
-
-      // Buffer should exist and be bounded (implementation detail check)
-      await new Promise((r) => setTimeout(r, 200));
-      const sessions = (server as any).sessions as Map<string, any>;
-      for (const session of sessions.values()) {
-        expect(session.eventBuffer.length).toBeLessThanOrEqual(1000);
-      }
+        const sessions = (ctx.server as any).sessions as Map<string, any>;
+        for (const session of sessions.values()) {
+          expect(session.eventBuffer.length).toBeLessThanOrEqual(1000);
+        }
+      } finally { await ctx.stop(); }
     });
   });
 
   describe("subscriber replacement", () => {
     it("replaces existing SSE subscriber with new one", async () => {
-      provider.addResponse(textResponse("ok"));
+      const ctx = await boot({ responses: [textResponse("ok")] });
+      try {
+        const createRes = await post(`${ctx.baseUrl}/sessions`, { prompt: "hi" });
+        const { sessionId } = await createRes.json() as any;
 
-      code = makeCode();
-      ({ server, baseUrl } = await startServer(code));
+        await waitForSessionDone(ctx.baseUrl, sessionId);
 
-      const createRes = await post(`${baseUrl}/sessions`, { prompt: "hi" });
-      const { sessionId } = await createRes.json() as any;
+        const events1 = await readSseEvents(
+          `${ctx.baseUrl}/sessions/${sessionId}/events`,
+          { untilType: "turn_complete", timeoutMs: 1000 },
+        );
+        expect(events1.length).toBeGreaterThan(0);
 
-      await new Promise((r) => setTimeout(r, 300));
-
-      // First subscriber reads the buffered events
-      const events1 = await readSseEvents(
-        `${baseUrl}/sessions/${sessionId}/events`,
-        { untilType: "turn_complete", timeoutMs: 2000 },
-      );
-      expect(events1.length).toBeGreaterThan(0);
-
-      // Session is done by now, so the internal sseResponse is set to
-      // the first connection. A second subscriber should work (it gets
-      // the subscriber_replaced event on the first connection).
-      const events2 = await readSseEvents(
-        `${baseUrl}/sessions/${sessionId}/events`,
-        { timeoutMs: 1000 },
-      );
-      // The second stream may be empty (session already done, no new events)
-      // but it should connect successfully (200)
-      expect(Array.isArray(events2)).toBe(true);
+        const events2 = await readSseEvents(
+          `${ctx.baseUrl}/sessions/${sessionId}/events`,
+          { timeoutMs: 300 },
+        );
+        expect(Array.isArray(events2)).toBe(true);
+      } finally { await ctx.stop(); }
     });
   });
 
   describe("pending timeout", () => {
     it("rejects permission bridge after timeout", async () => {
-      provider.addResponse(toolCallResponse("tc-1", "Bash", { command: "ls" }));
-      provider.addResponse(textResponse("Done."));
-
-      code = new Agent({
-        provider: provider,
-        sandbox: { fs, computer },
-        options: {
-          permissions: { mode: "default", handler: undefined },
-        },
+      const ctx = await boot({
+        permissionMode: "default",
+        responses: [
+          toolCallResponse("tc-1", "Bash", { command: "ls" }),
+          textResponse("Done."),
+        ],
+        pendingTimeoutMs: 50,
       });
-      // Use a very short timeout for testing
-      const s = createServer(code, { port: 0, ws: false, pendingTimeoutMs: 200 });
-      await s.start();
-      const addr = (s as any).httpServer?.address();
-      const port = typeof addr === "object" ? addr.port : 0;
-      server = s;
-      baseUrl = `http://127.0.0.1:${port}`;
+      try {
+        const createRes = await post(`${ctx.baseUrl}/sessions`, { prompt: "do it" });
+        const { sessionId } = await createRes.json() as any;
 
-      const createRes = await post(`${baseUrl}/sessions`, { prompt: "do it" });
-      const { sessionId } = await createRes.json() as any;
+        // Don't respond to the permission request — let it timeout, then the
+        // session errors and becomes done.
+        await waitForSessionDone(ctx.baseUrl, sessionId, { timeoutMs: 1000 });
 
-      // Don't respond to the permission request — let it timeout
-      await new Promise((r) => setTimeout(r, 500));
-
-      // After timeout, the session should have errored and become done
-      const listRes = await globalThis.fetch(`${baseUrl}/sessions`);
-      const sessions = await listRes.json() as any[];
-      const session = sessions.find((s: any) => s.id === sessionId);
-      if (session) {
-        expect(session.done).toBe(true);
-      }
-    }, 5000);
+        const listRes = await globalThis.fetch(`${ctx.baseUrl}/sessions`);
+        const sessions = await listRes.json() as any[];
+        const session = sessions.find((s: any) => s.id === sessionId);
+        expect(session?.done).toBe(true);
+      } finally { await ctx.stop(); }
+    });
   });
 
   // -------------------------------------------------------------------------
-  // WebSocket transport tests
+  // WebSocket transport
   // -------------------------------------------------------------------------
 
   describe("WebSocket transport", () => {
-    async function startWsServer(
-      c: Agent,
-      opts?: { auth?: any; maxSessions?: number },
-    ): Promise<{ server: NoumenServer; wsUrl: string; baseUrl: string }> {
-      const s = createServer(c, { port: 0, ws: true, ...opts });
-      await s.start();
-      const addr = (s as any).httpServer?.address();
-      const port = typeof addr === "object" ? addr.port : 0;
-      return {
-        server: s,
-        wsUrl: `ws://127.0.0.1:${port}`,
-        baseUrl: `http://127.0.0.1:${port}`,
-      };
-    }
-
     function wsConnect(url: string): Promise<WebSocket> {
       return new Promise((resolve, reject) => {
         const ws = new WebSocket(url);
@@ -613,7 +618,7 @@ describe("NoumenServer", () => {
       opts?: { untilType?: string; timeoutMs?: number },
     ): Promise<any[]> {
       const msgs: any[] = [];
-      const timeout = opts?.timeoutMs ?? 3000;
+      const timeout = opts?.timeoutMs ?? 2000;
 
       return new Promise((resolve) => {
         const timer = setTimeout(() => {
@@ -634,174 +639,166 @@ describe("NoumenServer", () => {
     }
 
     it("sends run command and receives session_created + stream events", async () => {
-      provider.addResponse(textResponse("WS hello!"));
-      code = makeCode();
-      ({ server, baseUrl } = await startWsServer(code));
-      const wsUrl = baseUrl.replace("http", "ws");
+      const ctx = await boot({ ws: true, responses: [textResponse("WS hello!")] });
+      try {
+        const ws = await wsConnect(ctx.wsUrl);
+        wsSend(ws, { type: "run", prompt: "hi" });
 
-      const ws = await wsConnect(wsUrl);
-      wsSend(ws, { type: "run", prompt: "hi" });
+        const msgs = await collectMessages(ws, { untilType: "turn_complete" });
+        ws.close();
 
-      const msgs = await collectMessages(ws, { untilType: "turn_complete" });
-      ws.close();
+        const types = msgs.map((m) => m.type);
+        expect(types).toContain("session_created");
+        expect(types).toContain("text_delta");
+        expect(types).toContain("turn_complete");
 
-      const types = msgs.map((m) => m.type);
-      expect(types).toContain("session_created");
-      expect(types).toContain("text_delta");
-      expect(types).toContain("turn_complete");
+        const sessionCreated = msgs.find((m) => m.type === "session_created");
+        expect(sessionCreated.sessionId).toBeTruthy();
 
-      const sessionCreated = msgs.find((m) => m.type === "session_created");
-      expect(sessionCreated.sessionId).toBeTruthy();
-
-      const textDelta = msgs.find((m) => m.type === "text_delta");
-      expect(textDelta.text).toContain("WS hello!");
-      expect(textDelta.sessionId).toBeTruthy();
-      expect(textDelta.seq).toBeGreaterThan(0);
+        const textDelta = msgs.find((m) => m.type === "text_delta");
+        expect(textDelta.text).toContain("WS hello!");
+        expect(textDelta.sessionId).toBeTruthy();
+        expect(textDelta.seq).toBeGreaterThan(0);
+      } finally { await ctx.stop(); }
     });
 
     it("supports follow-up messages after session is done", async () => {
-      provider.addResponse(textResponse("first"));
-      provider.addResponse(textResponse("second"));
-      code = makeCode();
-      ({ server, baseUrl } = await startWsServer(code));
-      const wsUrl = baseUrl.replace("http", "ws");
+      const ctx = await boot({
+        ws: true,
+        responses: [textResponse("first"), textResponse("second")],
+      });
+      try {
+        const ws = await wsConnect(ctx.wsUrl);
+        wsSend(ws, { type: "run", prompt: "hi" });
 
-      const ws = await wsConnect(wsUrl);
-      wsSend(ws, { type: "run", prompt: "hi" });
+        const firstMsgs = await collectMessages(ws, { untilType: "turn_complete" });
+        const sessionId = firstMsgs.find((m) => m.type === "session_created")?.sessionId;
+        expect(sessionId).toBeTruthy();
 
-      const firstMsgs = await collectMessages(ws, { untilType: "turn_complete" });
-      const sessionId = firstMsgs.find((m) => m.type === "session_created")?.sessionId;
-      expect(sessionId).toBeTruthy();
+        await waitForSessionDone(ctx.baseUrl, sessionId);
 
-      await new Promise((r) => setTimeout(r, 100));
+        wsSend(ws, { type: "message", sessionId, prompt: "more" });
 
-      wsSend(ws, { type: "message", sessionId, prompt: "more" });
+        const secondMsgs = await collectMessages(ws, { untilType: "turn_complete" });
+        ws.close();
 
-      const secondMsgs = await collectMessages(ws, { untilType: "turn_complete" });
-      ws.close();
-
-      const textDeltas = secondMsgs.filter((m) => m.type === "text_delta");
-      expect(textDeltas.length).toBeGreaterThan(0);
-      expect(textDeltas[0].text).toContain("second");
+        const textDeltas = secondMsgs.filter((m) => m.type === "text_delta");
+        expect(textDeltas.length).toBeGreaterThan(0);
+        expect(textDeltas[0].text).toContain("second");
+      } finally { await ctx.stop(); }
     });
 
     it("handles abort command", async () => {
-      provider.addResponse(textResponse("hi"));
-      code = makeCode();
-      ({ server, baseUrl } = await startWsServer(code));
-      const wsUrl = baseUrl.replace("http", "ws");
+      const ctx = await boot({ ws: true, responses: [textResponse("hi")] });
+      try {
+        const ws = await wsConnect(ctx.wsUrl);
+        wsSend(ws, { type: "run", prompt: "start" });
 
-      const ws = await wsConnect(wsUrl);
-      wsSend(ws, { type: "run", prompt: "start" });
+        const msgs = await collectMessages(ws, { untilType: "session_created", timeoutMs: 1000 });
+        const sessionId = msgs.find((m) => m.type === "session_created")?.sessionId;
 
-      const msgs = await collectMessages(ws, { untilType: "session_created", timeoutMs: 1000 });
-      const sessionId = msgs.find((m) => m.type === "session_created")?.sessionId;
+        wsSend(ws, { type: "abort", sessionId });
 
-      wsSend(ws, { type: "abort", sessionId });
+        await waitFor(async () => {
+          const listRes = await globalThis.fetch(ctx.baseUrl + "/sessions");
+          const sessions = await listRes.json() as any[];
+          return sessions.length === 0;
+        }, { timeoutMs: 1000, label: "session cleaned up after abort" });
 
-      await new Promise((r) => setTimeout(r, 200));
-      ws.close();
-
-      // Verify session was cleaned up
-      const listRes = await globalThis.fetch(baseUrl + "/sessions");
-      const sessions = await listRes.json() as any[];
-      expect(sessions.length).toBe(0);
+        ws.close();
+      } finally { await ctx.stop(); }
     });
 
     it("authenticates via query parameter token", async () => {
-      provider.addResponse(textResponse("ok"));
-      code = makeCode();
-      ({ server, baseUrl } = await startWsServer(code, {
+      const ctx = await boot({
+        ws: true,
         auth: { type: "bearer", token: "ws-secret" },
-      }));
-      const wsUrl = baseUrl.replace("http", "ws");
+        responses: [textResponse("ok")],
+      });
+      try {
+        const ws = await wsConnect(`${ctx.wsUrl}?token=ws-secret`);
+        wsSend(ws, { type: "run", prompt: "hi" });
 
-      const ws = await wsConnect(`${wsUrl}?token=ws-secret`);
-      wsSend(ws, { type: "run", prompt: "hi" });
+        const msgs = await collectMessages(ws, { untilType: "session_created", timeoutMs: 1000 });
+        ws.close();
 
-      const msgs = await collectMessages(ws, { untilType: "session_created", timeoutMs: 1000 });
-      ws.close();
-
-      expect(msgs.find((m) => m.type === "session_created")).toBeTruthy();
+        expect(msgs.find((m) => m.type === "session_created")).toBeTruthy();
+      } finally { await ctx.stop(); }
     });
 
     it("rejects connections with invalid token", async () => {
-      code = makeCode();
-      ({ server, baseUrl } = await startWsServer(code, {
+      const ctx = await boot({
+        ws: true,
         auth: { type: "bearer", token: "ws-secret" },
-      }));
-      const wsUrl = baseUrl.replace("http", "ws");
-
-      const ws = new WebSocket(`${wsUrl}?token=wrong`);
-      const closed = new Promise<void>((resolve) => ws.on("close", () => resolve()));
-
-      await closed;
-      // If we get here, the connection was correctly rejected
+      });
+      try {
+        const ws = new WebSocket(`${ctx.wsUrl}?token=wrong`);
+        const closed = new Promise<void>((resolve) => ws.on("close", () => resolve()));
+        await closed;
+      } finally { await ctx.stop(); }
     });
 
     it("enforces max sessions over WebSocket", async () => {
-      provider.addResponse(textResponse("ok"));
-      provider.addResponse(textResponse("ok"));
-      code = makeCode();
-      ({ server, baseUrl } = await startWsServer(code, { maxSessions: 1 }));
-      const wsUrl = baseUrl.replace("http", "ws");
+      const ctx = await boot({
+        ws: true,
+        maxSessions: 1,
+        responses: [textResponse("ok"), textResponse("ok")],
+      });
+      try {
+        const ws = await wsConnect(ctx.wsUrl);
+        wsSend(ws, { type: "run", prompt: "one" });
 
-      const ws = await wsConnect(wsUrl);
-      wsSend(ws, { type: "run", prompt: "one" });
+        await collectMessages(ws, { untilType: "session_created", timeoutMs: 1000 });
 
-      await collectMessages(ws, { untilType: "session_created", timeoutMs: 1000 });
+        wsSend(ws, { type: "run", prompt: "two" });
 
-      wsSend(ws, { type: "run", prompt: "two" });
+        const errorMsgs = await collectMessages(ws, { timeoutMs: 300 });
+        ws.close();
 
-      const errorMsgs = await collectMessages(ws, { timeoutMs: 500 });
-      ws.close();
-
-      const error = errorMsgs.find((m) => m.type === "error");
-      expect(error).toBeTruthy();
-      expect(error.error).toContain("Maximum sessions");
+        const error = errorMsgs.find((m) => m.type === "error");
+        expect(error).toBeTruthy();
+        expect(error.error).toContain("Maximum sessions");
+      } finally { await ctx.stop(); }
     });
 
     it("includes sessionId and seq on all stream events", async () => {
-      provider.addResponse(textResponse("tagged"));
-      code = makeCode();
-      ({ server, baseUrl } = await startWsServer(code));
-      const wsUrl = baseUrl.replace("http", "ws");
+      const ctx = await boot({ ws: true, responses: [textResponse("tagged")] });
+      try {
+        const ws = await wsConnect(ctx.wsUrl);
+        wsSend(ws, { type: "run", prompt: "hi" });
 
-      const ws = await wsConnect(wsUrl);
-      wsSend(ws, { type: "run", prompt: "hi" });
+        const msgs = await collectMessages(ws, { untilType: "turn_complete" });
+        ws.close();
 
-      const msgs = await collectMessages(ws, { untilType: "turn_complete" });
-      ws.close();
+        const streamEvents = msgs.filter((m) => m.type !== "session_created");
+        for (const evt of streamEvents) {
+          expect(evt.sessionId).toBeTruthy();
+          expect(typeof evt.seq).toBe("number");
+        }
 
-      const streamEvents = msgs.filter((m) => m.type !== "session_created");
-      for (const evt of streamEvents) {
-        expect(evt.sessionId).toBeTruthy();
-        expect(typeof evt.seq).toBe("number");
-      }
-
-      const seqs = streamEvents.map((e) => e.seq);
-      for (let i = 1; i < seqs.length; i++) {
-        expect(seqs[i]).toBeGreaterThan(seqs[i - 1]);
-      }
+        const seqs = streamEvents.map((e) => e.seq);
+        for (let i = 1; i < seqs.length; i++) {
+          expect(seqs[i]).toBeGreaterThan(seqs[i - 1]);
+        }
+      } finally { await ctx.stop(); }
     });
 
     it("cleans up sessions when WebSocket closes", async () => {
-      provider.addResponse(textResponse("ok"));
-      code = makeCode();
-      ({ server, baseUrl } = await startWsServer(code));
-      const wsUrl = baseUrl.replace("http", "ws");
+      const ctx = await boot({ ws: true, responses: [textResponse("ok")] });
+      try {
+        const ws = await wsConnect(ctx.wsUrl);
+        wsSend(ws, { type: "run", prompt: "hi" });
 
-      const ws = await wsConnect(wsUrl);
-      wsSend(ws, { type: "run", prompt: "hi" });
+        await collectMessages(ws, { untilType: "session_created", timeoutMs: 1000 });
 
-      await collectMessages(ws, { untilType: "session_created", timeoutMs: 1000 });
+        ws.close();
 
-      ws.close();
-      await new Promise((r) => setTimeout(r, 200));
-
-      const listRes = await globalThis.fetch(baseUrl + "/sessions");
-      const sessions = await listRes.json() as any[];
-      expect(sessions.length).toBe(0);
+        await waitFor(async () => {
+          const listRes = await globalThis.fetch(ctx.baseUrl + "/sessions");
+          const sessions = await listRes.json() as any[];
+          return sessions.length === 0;
+        }, { timeoutMs: 1000, label: "sessions cleaned up after ws.close" });
+      } finally { await ctx.stop(); }
     });
   });
 });

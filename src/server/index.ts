@@ -41,7 +41,8 @@ type MaybePromise<T> = T | Promise<T>;
 
 const SSE_KEEPALIVE_INTERVAL_MS = 15_000;
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
-const SHUTDOWN_DRAIN_MS = 500;
+const DEFAULT_SHUTDOWN_DRAIN_MS = 500;
+const DEFAULT_IDLE_REAPER_MIN_INTERVAL_MS = 1000;
 const WS_PING_INTERVAL_MS = 30_000;
 
 // ---------------------------------------------------------------------------
@@ -65,6 +66,18 @@ export interface ServerOptions {
   cors?: boolean;
   /** Timeout for pending permission/input responses before rejecting (ms). Default 120000. */
   pendingTimeoutMs?: number;
+  /**
+   * How long `stop()` waits for in-flight requests to drain after aborting
+   * active sessions (ms). Default 500. Set to 0 in tests to make teardown
+   * instant. The drain is skipped entirely when no sessions are active.
+   */
+  shutdownDrainMs?: number;
+  /**
+   * Minimum interval for the idle-session reaper (ms). Default 1000. Lower
+   * values let tests observe reaping quickly; production should use the
+   * default to avoid burning CPU on a short idle timeout.
+   */
+  idleReaperMinIntervalMs?: number;
 }
 
 /**
@@ -79,6 +92,7 @@ export interface RequestHandlerOptions {
   onError?: (err: Error) => void;
   cors?: boolean;
   pendingTimeoutMs?: number;
+  idleReaperMinIntervalMs?: number;
 }
 
 export type AuthConfig =
@@ -141,10 +155,15 @@ export class NoumenServer {
       this.idleTimer = null;
     }
 
+    const hadActiveSessions = this.sessions.size > 0;
     for (const session of this.sessions.values()) {
       session.abortController.abort();
     }
-    await new Promise<void>((resolve) => setTimeout(resolve, SHUTDOWN_DRAIN_MS));
+
+    const drainMs = this.options.shutdownDrainMs ?? DEFAULT_SHUTDOWN_DRAIN_MS;
+    if (hadActiveSessions && drainMs > 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, drainMs));
+    }
 
     for (const session of this.sessions.values()) {
       destroySession(this.sessions, session);
@@ -217,7 +236,8 @@ export class NoumenServer {
   private ensureIdleReaper(): void {
     if (this.idleReaperStarted || !this.options.idleTimeoutMs) return;
     this.idleReaperStarted = true;
-    const interval = Math.max(this.options.idleTimeoutMs / 2, 1000);
+    const minInterval = this.options.idleReaperMinIntervalMs ?? DEFAULT_IDLE_REAPER_MIN_INTERVAL_MS;
+    const interval = Math.max(this.options.idleTimeoutMs / 2, minInterval);
     this.idleTimer = setInterval(() => reapIdleSessions(this.sessions, this.options.idleTimeoutMs), interval);
     this.idleTimer.unref();
   }

@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { MockFs, MockComputer, MockAIProvider, textResponse, toolCallResponse } from "./helpers.js";
+import { describe, it, expect } from "vitest";
+import { MockFs, MockComputer, MockAIProvider, textResponse } from "./helpers.js";
 import { Agent } from "../agent.js";
 import { createServer, type NoumenServer } from "../server/index.js";
 import { NoumenClient } from "../client/index.js";
@@ -11,29 +11,38 @@ if (typeof globalThis.WebSocket === "undefined") {
   (globalThis as any).WebSocket = WebSocket;
 }
 
-let fs: MockFs;
-let computer: MockComputer;
-let provider: MockAIProvider;
-let code: Agent;
-let server: NoumenServer;
-let baseUrl: string;
+interface TestCtx {
+  fs: MockFs;
+  computer: MockComputer;
+  provider: MockAIProvider;
+  code: Agent;
+  server: NoumenServer;
+  baseUrl: string;
+  stop: () => Promise<void>;
+}
 
-async function setup(opts?: { auth?: any }) {
-  code = new Agent({
-    provider: provider,
-    sandbox: { fs, computer },
-  });
+async function setup(opts?: { auth?: any; responses?: any[] }): Promise<TestCtx> {
+  const fs = new MockFs();
+  const computer = new MockComputer();
+  const provider = new MockAIProvider();
+  for (const r of opts?.responses ?? []) provider.addResponse(r);
 
-  server = createServer(code, {
+  const code = new Agent({ provider, sandbox: { fs, computer } });
+
+  const server = createServer(code, {
     port: 0,
     ws: true,
-    ...opts,
+    auth: opts?.auth,
+    // Tests should never pay the 500 ms drain penalty: teardown is instant.
+    shutdownDrainMs: 0,
   });
   await server.start();
 
   const addr = (server as any).httpServer?.address();
   const port = typeof addr === "object" ? addr.port : 0;
-  baseUrl = `http://127.0.0.1:${port}`;
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  return { fs, computer, provider, code, server, baseUrl, stop: () => server.stop() };
 }
 
 async function collectEvents(gen: AsyncGenerator<StreamEvent>): Promise<StreamEvent[]> {
@@ -44,194 +53,186 @@ async function collectEvents(gen: AsyncGenerator<StreamEvent>): Promise<StreamEv
   return events;
 }
 
-beforeEach(() => {
-  fs = new MockFs();
-  computer = new MockComputer();
-  provider = new MockAIProvider();
-});
-
-afterEach(async () => {
-  if (server) await server.stop();
-});
-
 // ---------------------------------------------------------------------------
 
-describe("NoumenClient", () => {
+describe.concurrent("NoumenClient", () => {
   describe("SSE transport", () => {
     it("streams events via SSE", async () => {
-      provider.addResponse(textResponse("Hello from SSE!"));
-      await setup();
+      const ctx = await setup({ responses: [textResponse("Hello from SSE!")] });
+      try {
+        const client = new NoumenClient({ baseUrl: ctx.baseUrl, transport: "sse" });
+        const events = await collectEvents(client.run("hi"));
 
-      const client = new NoumenClient({ baseUrl, transport: "sse" });
-      const events = await collectEvents(client.run("hi"));
+        const types = events.map((e) => e.type);
+        expect(types).toContain("text_delta");
+        expect(types).toContain("turn_complete");
 
-      const types = events.map((e) => e.type);
-      expect(types).toContain("text_delta");
-      expect(types).toContain("turn_complete");
-
-      const textDelta = events.find((e) => e.type === "text_delta") as any;
-      expect(textDelta.text).toContain("Hello from SSE!");
+        const textDelta = events.find((e) => e.type === "text_delta") as any;
+        expect(textDelta.text).toContain("Hello from SSE!");
+      } finally { await ctx.stop(); }
     });
 
     it("works with bearer auth", async () => {
-      provider.addResponse(textResponse("Authenticated!"));
-      await setup({ auth: { type: "bearer", token: "test-token" } });
-
-      const client = new NoumenClient({ baseUrl, token: "test-token", transport: "sse" });
-      const events = await collectEvents(client.run("hi"));
-      const types = events.map((e) => e.type);
-      expect(types).toContain("text_delta");
+      const ctx = await setup({
+        responses: [textResponse("Authenticated!")],
+        auth: { type: "bearer", token: "test-token" },
+      });
+      try {
+        const client = new NoumenClient({ baseUrl: ctx.baseUrl, token: "test-token", transport: "sse" });
+        const events = await collectEvents(client.run("hi"));
+        const types = events.map((e) => e.type);
+        expect(types).toContain("text_delta");
+      } finally { await ctx.stop(); }
     });
 
     it("throws on auth failure", async () => {
-      provider.addResponse(textResponse("nope"));
-      await setup({ auth: { type: "bearer", token: "correct" } });
-
-      const client = new NoumenClient({ baseUrl, token: "wrong", transport: "sse" });
-      await expect(collectEvents(client.run("hi"))).rejects.toThrow();
+      const ctx = await setup({
+        responses: [textResponse("nope")],
+        auth: { type: "bearer", token: "correct" },
+      });
+      try {
+        const client = new NoumenClient({ baseUrl: ctx.baseUrl, token: "wrong", transport: "sse" });
+        await expect(collectEvents(client.run("hi"))).rejects.toThrow();
+      } finally { await ctx.stop(); }
     });
   });
 
   describe("WebSocket transport", () => {
     it("streams events via WebSocket", async () => {
-      provider.addResponse(textResponse("Hello from WS!"));
-      await setup();
+      const ctx = await setup({ responses: [textResponse("Hello from WS!")] });
+      try {
+        const client = new NoumenClient({ baseUrl: ctx.baseUrl, transport: "ws" });
+        const events = await collectEvents(client.run("hi"));
 
-      const client = new NoumenClient({ baseUrl, transport: "ws" });
-      const events = await collectEvents(client.run("hi"));
+        const types = events.map((e) => e.type);
+        expect(types).toContain("text_delta");
+        expect(types).toContain("turn_complete");
 
-      const types = events.map((e) => e.type);
-      expect(types).toContain("text_delta");
-      expect(types).toContain("turn_complete");
-
-      const textDelta = events.find((e) => e.type === "text_delta") as any;
-      expect(textDelta.text).toContain("Hello from WS!");
+        const textDelta = events.find((e) => e.type === "text_delta") as any;
+        expect(textDelta.text).toContain("Hello from WS!");
+      } finally { await ctx.stop(); }
     });
 
     it("works with bearer auth via query param", async () => {
-      provider.addResponse(textResponse("WS Auth!"));
-      await setup({ auth: { type: "bearer", token: "ws-token" } });
-
-      const client = new NoumenClient({ baseUrl, token: "ws-token", transport: "ws" });
-      const events = await collectEvents(client.run("hi"));
-      const types = events.map((e) => e.type);
-      expect(types).toContain("text_delta");
+      const ctx = await setup({
+        responses: [textResponse("WS Auth!")],
+        auth: { type: "bearer", token: "ws-token" },
+      });
+      try {
+        const client = new NoumenClient({ baseUrl: ctx.baseUrl, token: "ws-token", transport: "ws" });
+        const events = await collectEvents(client.run("hi"));
+        const types = events.map((e) => e.type);
+        expect(types).toContain("text_delta");
+      } finally { await ctx.stop(); }
     });
   });
 
   describe("listSessions", () => {
     it("returns active sessions", async () => {
-      provider.addResponse(textResponse("ok"));
-      await setup();
+      const ctx = await setup({ responses: [textResponse("ok")] });
+      try {
+        const client = new NoumenClient({ baseUrl: ctx.baseUrl, transport: "sse" });
+        await collectEvents(client.run("hi"));
 
-      const client = new NoumenClient({ baseUrl, transport: "sse" });
-      await collectEvents(client.run("hi"));
-
-      const sessions = await client.listSessions();
-      // Session should exist (may be done=true)
-      expect(sessions.length).toBeGreaterThanOrEqual(1);
+        const sessions = await client.listSessions();
+        expect(sessions.length).toBeGreaterThanOrEqual(1);
+      } finally { await ctx.stop(); }
     });
   });
 
   describe("abort", () => {
     it("aborts a session via AbortSignal (SSE)", async () => {
-      provider.addResponse(textResponse("long response that takes forever"));
-      await setup();
+      const ctx = await setup({ responses: [textResponse("long response that takes forever")] });
+      try {
+        const ac = new AbortController();
+        const client = new NoumenClient({ baseUrl: ctx.baseUrl, transport: "sse" });
 
-      const ac = new AbortController();
-      const client = new NoumenClient({ baseUrl, transport: "sse" });
+        const eventsPromise = collectEvents(client.run("hi", { signal: ac.signal }));
+        setTimeout(() => ac.abort(), 20);
 
-      // Start collecting but abort quickly
-      const eventsPromise = collectEvents(client.run("hi", { signal: ac.signal }));
-      setTimeout(() => ac.abort(), 50);
-
-      // Should resolve (not hang) due to abort
-      const events = await eventsPromise.catch(() => [] as StreamEvent[]);
-      // May have some events or may be empty depending on timing
-      expect(Array.isArray(events)).toBe(true);
+        const events = await eventsPromise.catch(() => [] as StreamEvent[]);
+        expect(Array.isArray(events)).toBe(true);
+      } finally { await ctx.stop(); }
     });
 
     it("aborts a session via client.abort()", async () => {
-      provider.addResponse(textResponse("ok"));
-      await setup();
+      const ctx = await setup({ responses: [textResponse("ok")] });
+      try {
+        const client = new NoumenClient({ baseUrl: ctx.baseUrl, transport: "sse" });
+        const events = await collectEvents(client.run("hi"));
+        expect(events.length).toBeGreaterThan(0);
 
-      // First create a session via SSE
-      const client = new NoumenClient({ baseUrl, transport: "sse" });
-      const events = await collectEvents(client.run("hi"));
-      expect(events.length).toBeGreaterThan(0);
-
-      // List sessions to get an ID
-      const sessions = await client.listSessions();
-      if (sessions.length > 0) {
-        await client.abort(sessions[0].id);
-        const after = await client.listSessions();
-        expect(after.length).toBeLessThan(sessions.length);
-      }
+        const sessions = await client.listSessions();
+        if (sessions.length > 0) {
+          await client.abort(sessions[0].id);
+          const after = await client.listSessions();
+          expect(after.length).toBeLessThan(sessions.length);
+        }
+      } finally { await ctx.stop(); }
     });
   });
 
   describe("sendMessage (follow-up)", () => {
     it("sends a follow-up message via SSE", async () => {
-      provider.addResponse(textResponse("first"));
-      provider.addResponse(textResponse("second"));
-      await setup();
+      const ctx = await setup({
+        responses: [textResponse("first"), textResponse("second")],
+      });
+      try {
+        const client = new NoumenClient({ baseUrl: ctx.baseUrl, transport: "sse" });
 
-      const client = new NoumenClient({ baseUrl, transport: "sse" });
+        const firstEvents = await collectEvents(client.run("hello"));
+        expect(firstEvents.some((e) => e.type === "turn_complete")).toBe(true);
 
-      // Run first prompt
-      const firstEvents = await collectEvents(client.run("hello"));
-      expect(firstEvents.some((e) => e.type === "turn_complete")).toBe(true);
+        const sessions = await client.listSessions();
+        expect(sessions.length).toBeGreaterThanOrEqual(1);
+        const sessionId = sessions[0].id;
 
-      // Get session ID from server
-      const sessions = await client.listSessions();
-      expect(sessions.length).toBeGreaterThanOrEqual(1);
-      const sessionId = sessions[0].id;
-
-      // Send follow-up
-      const secondEvents = await collectEvents(client.sendMessage(sessionId, "world"));
-      const types = secondEvents.map((e) => e.type);
-      expect(types).toContain("text_delta");
-      expect(types).toContain("turn_complete");
+        const secondEvents = await collectEvents(client.sendMessage(sessionId, "world"));
+        const types = secondEvents.map((e) => e.type);
+        expect(types).toContain("text_delta");
+        expect(types).toContain("turn_complete");
+      } finally { await ctx.stop(); }
     });
   });
 
   describe("SSE reconnection", () => {
     it("does not throw on permanent 401 error during run", async () => {
-      provider.addResponse(textResponse("ok"));
-      await setup({ auth: { type: "bearer", token: "correct" } });
-
-      const client = new NoumenClient({ baseUrl, token: "wrong", transport: "sse" });
-      // Should fail with auth error, not hang
-      await expect(collectEvents(client.run("hi"))).rejects.toThrow();
+      const ctx = await setup({
+        responses: [textResponse("ok")],
+        auth: { type: "bearer", token: "correct" },
+      });
+      try {
+        const client = new NoumenClient({ baseUrl: ctx.baseUrl, token: "wrong", transport: "sse" });
+        await expect(collectEvents(client.run("hi"))).rejects.toThrow();
+      } finally { await ctx.stop(); }
     });
   });
 
   describe("SSE event IDs", () => {
     it("receives events with sequential ordering", async () => {
-      provider.addResponse(textResponse("Hello!"));
-      await setup();
+      const ctx = await setup({ responses: [textResponse("Hello!")] });
+      try {
+        const client = new NoumenClient({ baseUrl: ctx.baseUrl, transport: "sse" });
+        const events = await collectEvents(client.run("hi"));
 
-      const client = new NoumenClient({ baseUrl, transport: "sse" });
-      const events = await collectEvents(client.run("hi"));
-
-      const types = events.map((e) => e.type);
-      expect(types).toContain("text_delta");
-      expect(types).toContain("turn_complete");
-      expect(events.length).toBeGreaterThanOrEqual(2);
+        const types = events.map((e) => e.type);
+        expect(types).toContain("text_delta");
+        expect(types).toContain("turn_complete");
+        expect(events.length).toBeGreaterThanOrEqual(2);
+      } finally { await ctx.stop(); }
     });
   });
 
   describe("SSE deduplication", () => {
     it("yields turn_complete after normal flow without duplicates", async () => {
-      provider.addResponse(textResponse("one"));
-      await setup();
+      const ctx = await setup({ responses: [textResponse("one")] });
+      try {
+        const client = new NoumenClient({ baseUrl: ctx.baseUrl, transport: "sse" });
+        const events = await collectEvents(client.run("hi"));
 
-      const client = new NoumenClient({ baseUrl, transport: "sse" });
-      const events = await collectEvents(client.run("hi"));
-
-      // Should have exactly one turn_complete
-      const turnCompletes = events.filter((e) => e.type === "turn_complete");
-      expect(turnCompletes.length).toBe(1);
+        const turnCompletes = events.filter((e) => e.type === "turn_complete");
+        expect(turnCompletes.length).toBe(1);
+      } finally { await ctx.stop(); }
     });
   });
 });

@@ -151,17 +151,18 @@ describe("SessionEnd hook", () => {
 describe("ModelSwitch hook", () => {
   it("fires from setModel()", async () => {
     const captured: HookInput[] = [];
+    let resolveFired!: () => void;
+    const fired = new Promise<void>((r) => { resolveFired = r; });
     const hooks: HookDefinition[] = [
       {
         event: "ModelSwitch",
-        handler: async (input) => { captured.push(input); },
+        handler: async (input) => { captured.push(input); resolveFired(); },
       },
     ];
     const thread = new Thread(baseConfig({ hooks, model: "old-model" }), { model: "old-model" });
     thread.setModel("new-model");
 
-    // Give the async hook time to complete
-    await new Promise((r) => setTimeout(r, 50));
+    await fired;
     expect(captured).toHaveLength(1);
     const ev = captured[0] as { previousModel: string; newModel: string };
     expect(ev.previousModel).toBe("old-model");
@@ -170,16 +171,18 @@ describe("ModelSwitch hook", () => {
 
   it("fires from setProvider() when model changes", async () => {
     const captured: HookInput[] = [];
+    let resolveFired!: () => void;
+    const fired = new Promise<void>((r) => { resolveFired = r; });
     const hooks: HookDefinition[] = [
       {
         event: "ModelSwitch",
-        handler: async (input) => { captured.push(input); },
+        handler: async (input) => { captured.push(input); resolveFired(); },
       },
     ];
     const thread = new Thread(baseConfig({ hooks, model: "m1" }), { model: "m1" });
     thread.setProvider(new MockAIProvider([textResponse("ok")]), "m2");
 
-    await new Promise((r) => setTimeout(r, 50));
+    await fired;
     expect(captured).toHaveLength(1);
     expect((captured[0] as { newModel: string }).newModel).toBe("m2");
   });
@@ -194,7 +197,10 @@ describe("ModelSwitch hook", () => {
     ];
     const thread = new Thread(baseConfig({ hooks, model: "same" }), { model: "same" });
     thread.setModel("same");
-    await new Promise((r) => setTimeout(r, 50));
+    // A microtask flush is enough — if the hook were going to fire, it would
+    // already be queued. No wall-clock wait required.
+    await Promise.resolve();
+    await Promise.resolve();
     expect(captured).toHaveLength(0);
   });
 });
@@ -205,10 +211,12 @@ describe("ModelSwitch hook", () => {
 describe("FileWrite hook", () => {
   it("fires after successful WriteFile", async () => {
     const captured: HookInput[] = [];
+    let resolveFired!: () => void;
+    const fired = new Promise<void>((r) => { resolveFired = r; });
     const hooks: HookDefinition[] = [
       {
         event: "FileWrite",
-        handler: async (input) => { captured.push(input); },
+        handler: async (input) => { captured.push(input); resolveFired(); },
       },
     ];
     const provider = new MockAIProvider([
@@ -222,8 +230,7 @@ describe("FileWrite hook", () => {
     }));
     await collectEvents(thread, "write a file");
 
-    // Give async hook time
-    await new Promise((r) => setTimeout(r, 50));
+    await fired;
     expect(captured.length).toBeGreaterThanOrEqual(1);
     const ev = captured[0] as { toolName: string; filePath: string; isNew: boolean };
     expect(ev.toolName).toBe("WriteFile");
