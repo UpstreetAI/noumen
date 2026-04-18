@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { resolveAgentConfig } from "../agent-config.js";
 import { DEFAULT_RETRY_CONFIG } from "../retry/types.js";
+import { DEFAULT_DOT_DIRS } from "../config/dot-dirs.js";
 
 describe("resolveAgentConfig", () => {
   const originalCwd = process.cwd;
@@ -64,23 +65,74 @@ describe("resolveAgentConfig", () => {
       expect(projectContextConfig).toBeUndefined();
     });
 
-    it("expands true to { cwd: effectiveCwd }", () => {
+    it("expands true to { cwd: effectiveCwd, dotDirs: DEFAULT_DOT_DIRS }", () => {
       const { projectContextConfig } = resolveAgentConfig({
         cwd: "/my/project",
         projectContext: true,
       });
-      expect(projectContextConfig).toEqual({ cwd: "/my/project" });
+      expect(projectContextConfig).toEqual({
+        cwd: "/my/project",
+        dotDirs: DEFAULT_DOT_DIRS,
+      });
     });
 
-    it("passes through object config as-is", () => {
-      const custom = { cwd: "/other", include: ["*.md"] };
+    it("passes through object config, injecting default dotDirs if absent", () => {
+      const custom = { cwd: "/other", include: ["*.md"] } as unknown as Parameters<typeof resolveAgentConfig>[0]["projectContext"];
       const { projectContextConfig } = resolveAgentConfig({ projectContext: custom });
-      expect(projectContextConfig).toBe(custom);
+      expect(projectContextConfig).toMatchObject({
+        cwd: "/other",
+        dotDirs: DEFAULT_DOT_DIRS,
+      });
+    });
+
+    it("preserves an explicit dotDirs on projectContext", () => {
+      const { projectContextConfig } = resolveAgentConfig({
+        cwd: "/proj",
+        projectContext: { cwd: "/proj", dotDirs: { names: [".custom"] } },
+      });
+      expect(projectContextConfig?.dotDirs?.names).toEqual([".custom"]);
     });
 
     it("expands true using process.cwd() when no cwd given", () => {
       const { projectContextConfig } = resolveAgentConfig({ projectContext: true });
-      expect(projectContextConfig).toEqual({ cwd: "/default/cwd" });
+      expect(projectContextConfig).toEqual({
+        cwd: "/default/cwd",
+        dotDirs: DEFAULT_DOT_DIRS,
+      });
+    });
+  });
+
+  describe("dotDirs", () => {
+    it("defaults to DEFAULT_DOT_DIRS when unset", () => {
+      const { dotDirs, dotDirResolver } = resolveAgentConfig({});
+      expect(dotDirs).toEqual(DEFAULT_DOT_DIRS);
+      expect(dotDirResolver.writePath("/x")).toBe("/x/.noumen");
+    });
+
+    it("threads custom dotDirs through to the resolver", () => {
+      const { dotDirs, dotDirResolver } = resolveAgentConfig({
+        dotDirs: { names: [".custom", ".noumen"] },
+      });
+      expect(dotDirs.names).toEqual([".custom", ".noumen"]);
+      expect(dotDirResolver.writePath("/x")).toBe("/x/.custom");
+    });
+
+    it("propagates dotDirs into a boolean projectContext", () => {
+      const { projectContextConfig } = resolveAgentConfig({
+        cwd: "/proj",
+        projectContext: true,
+        dotDirs: { names: [".custom"] },
+      });
+      expect(projectContextConfig?.dotDirs?.names).toEqual([".custom"]);
+    });
+
+    it("respects projectContext.dotDirs over top-level dotDirs", () => {
+      const { projectContextConfig } = resolveAgentConfig({
+        cwd: "/proj",
+        projectContext: { cwd: "/proj", dotDirs: { names: [".ctx"] } },
+        dotDirs: { names: [".top"] },
+      });
+      expect(projectContextConfig?.dotDirs?.names).toEqual([".ctx"]);
     });
   });
 

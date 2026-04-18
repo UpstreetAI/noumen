@@ -159,6 +159,13 @@ export interface PermissionContext {
   mode: PermissionMode;
   rules: PermissionRule[];
   workingDirectories: string[];
+  /**
+   * Ordered list of dot-directory names (e.g. `['.noumen', '.claude']`)
+   * whose contents are treated as dangerous paths for write/edit tools.
+   * When unset, defaults to the conservative built-in list
+   * (`['.noumen', '.claude']`) so non-agent callers stay protected.
+   */
+  dotDirNames?: string[];
 }
 
 // --- Tool permission extension ---

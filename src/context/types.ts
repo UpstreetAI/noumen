@@ -1,3 +1,5 @@
+import type { DotDirConfig } from "../config/dot-dirs.js";
+
 export type ContextScope = "managed" | "user" | "project" | "local";
 
 export interface ContextFile {
@@ -21,8 +23,16 @@ export interface ProjectContextConfig {
   excludes?: string[];
   /** Maximum include depth for @ references. Default: 5. */
   maxIncludeDepth?: number;
-  /** Whether to load .claude/ files in addition to .noumen/ files. Default: true. */
-  loadClaudeMd?: boolean;
+  /**
+   * Dot-directory names to scan for `<NAME>.md`, `<NAME>.local.md`, and
+   * `<dotDir>/rules/**`. Defaults to `{ names: [".noumen", ".claude"] }`.
+   *
+   * Markdown filenames derive from the dot-dir name: `.noumen` →
+   * `NOUMEN.md` / `NOUMEN.local.md`, `.claude` → `CLAUDE.md` /
+   * `CLAUDE.local.md`. The dir name (minus the leading dot, uppercased)
+   * is the filename stem.
+   */
+  dotDirs?: DotDirConfig;
   /** Enable loading user-scope context from homeDir. Default: true. */
   loadUserContext?: boolean;
   /** Enable loading project-scope context from cwd ancestors. Default: true. */

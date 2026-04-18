@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { MockFs } from "./helpers.js";
 import { loadSkills } from "../skills/loader.js";
+import { buildUserContext } from "../prompt/context.js";
+import { createDotDirResolver } from "../config/dot-dirs.js";
 
 let fs: MockFs;
 
@@ -70,5 +72,139 @@ describe("loadSkills", () => {
     const skills = await loadSkills(fs, ["/skills"]);
     expect(skills).toHaveLength(1);
     expect(skills[0].name).toBe("Testing Skill");
+  });
+});
+
+describe("buildUserContext auto-discovery", () => {
+  it("discovers skills under <cwd>/.noumen/skills", async () => {
+    fs.files.set("/project/.noumen/skills/foo/SKILL.md", "# Foo\nFoo skill.");
+    fs.dirs.add("/project/.noumen");
+    fs.dirs.add("/project/.noumen/skills");
+    fs.dirs.add("/project/.noumen/skills/foo");
+
+    const ctx = await buildUserContext({
+      fs,
+      dotDirResolver: createDotDirResolver(),
+      cwd: "/project",
+    });
+    expect(ctx.skills.map((s) => s.name)).toEqual(["Foo"]);
+  });
+
+  it("falls back to .claude/skills when .noumen absent", async () => {
+    fs.files.set("/project/.claude/skills/bar/SKILL.md", "# Bar\nBar skill.");
+    fs.dirs.add("/project/.claude/skills");
+    fs.dirs.add("/project/.claude/skills/bar");
+
+    const ctx = await buildUserContext({
+      fs,
+      dotDirResolver: createDotDirResolver(),
+      cwd: "/project",
+    });
+    expect(ctx.skills.map((s) => s.name)).toEqual(["Bar"]);
+  });
+
+  it("noumen wins on collision with claude (same skill name)", async () => {
+    fs.files.set("/project/.noumen/skills/shared/SKILL.md", "# Shared\nNoumen version.");
+    fs.files.set("/project/.claude/skills/shared/SKILL.md", "# Shared\nClaude version.");
+    fs.dirs.add("/project/.noumen/skills");
+    fs.dirs.add("/project/.noumen/skills/shared");
+    fs.dirs.add("/project/.claude/skills");
+    fs.dirs.add("/project/.claude/skills/shared");
+
+    const ctx = await buildUserContext({
+      fs,
+      dotDirResolver: createDotDirResolver(),
+      cwd: "/project",
+    });
+    expect(ctx.skills).toHaveLength(1);
+    expect(ctx.skills[0].content).toContain("Noumen version");
+  });
+
+  it("discovers home-scope skills and stacks them under project skills", async () => {
+    fs.files.set("/home/.noumen/skills/shared/SKILL.md", "# Shared\nHome version.");
+    fs.files.set("/project/.noumen/skills/shared/SKILL.md", "# Shared\nProject version.");
+    fs.dirs.add("/home/.noumen/skills");
+    fs.dirs.add("/home/.noumen/skills/shared");
+    fs.dirs.add("/project/.noumen/skills");
+    fs.dirs.add("/project/.noumen/skills/shared");
+
+    const ctx = await buildUserContext({
+      fs,
+      dotDirResolver: createDotDirResolver(),
+      cwd: "/project",
+      homeDir: "/home",
+    });
+    expect(ctx.skills).toHaveLength(1);
+    expect(ctx.skills[0].content).toContain("Project version");
+  });
+
+  it("explicit skillsPaths stacks on top of discovered skills", async () => {
+    fs.files.set("/project/.noumen/skills/foo/SKILL.md", "# Foo\nDiscovered foo.");
+    fs.files.set("/custom/foo/SKILL.md", "# Foo\nExplicit foo.");
+    fs.dirs.add("/project/.noumen/skills");
+    fs.dirs.add("/project/.noumen/skills/foo");
+    fs.dirs.add("/custom");
+    fs.dirs.add("/custom/foo");
+
+    const ctx = await buildUserContext({
+      fs,
+      dotDirResolver: createDotDirResolver(),
+      cwd: "/project",
+      skillsPaths: ["/custom"],
+    });
+    expect(ctx.skills).toHaveLength(1);
+    expect(ctx.skills[0].content).toContain("Explicit foo");
+  });
+
+  it("inline skills beat discovered skills of the same name", async () => {
+    fs.files.set("/project/.noumen/skills/foo/SKILL.md", "# Foo\nDiscovered foo.");
+    fs.dirs.add("/project/.noumen/skills");
+    fs.dirs.add("/project/.noumen/skills/foo");
+
+    const ctx = await buildUserContext({
+      fs,
+      dotDirResolver: createDotDirResolver(),
+      cwd: "/project",
+      inlineSkills: [{ name: "Foo", content: "Inline foo." }],
+    });
+    expect(ctx.skills).toHaveLength(1);
+    expect(ctx.skills[0].content).toBe("Inline foo.");
+  });
+
+  it("dotDirs: ['.noumen'] excludes .claude/skills from auto-discovery", async () => {
+    fs.files.set("/project/.noumen/skills/noum/SKILL.md", "# Noum\nNoumen skill.");
+    fs.files.set("/project/.claude/skills/clau/SKILL.md", "# Clau\nClaude skill.");
+    fs.dirs.add("/project/.noumen/skills");
+    fs.dirs.add("/project/.noumen/skills/noum");
+    fs.dirs.add("/project/.claude/skills");
+    fs.dirs.add("/project/.claude/skills/clau");
+
+    const ctx = await buildUserContext({
+      fs,
+      dotDirResolver: createDotDirResolver({ names: [".noumen"] }),
+      cwd: "/project",
+    });
+    expect(ctx.skills.map((s) => s.name)).toEqual(["Noum"]);
+  });
+
+  it("loose <dotdir>/SKILL.md at the root is NOT picked up", async () => {
+    fs.files.set("/project/.noumen/SKILL.md", "# Loose\nLoose skill.");
+    // No /project/.noumen/skills/ directory at all.
+
+    const ctx = await buildUserContext({
+      fs,
+      dotDirResolver: createDotDirResolver(),
+      cwd: "/project",
+    });
+    expect(ctx.skills).toHaveLength(0);
+  });
+
+  it("auto-discovery is a no-op when dotDirResolver is omitted", async () => {
+    fs.files.set("/project/.noumen/skills/foo/SKILL.md", "# Foo\nFoo.");
+    fs.dirs.add("/project/.noumen/skills");
+    fs.dirs.add("/project/.noumen/skills/foo");
+
+    const ctx = await buildUserContext({ fs, cwd: "/project" });
+    expect(ctx.skills).toHaveLength(0);
   });
 });

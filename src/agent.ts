@@ -69,6 +69,7 @@ import {
   summarizeLspStatus,
 } from "./diagnostics.js";
 import { resolveAgentConfig } from "./agent-config.js";
+import type { DotDirConfig, DotDirResolver } from "./config/dot-dirs.js";
 
 export interface DiagnoseCheckResult {
   ok: boolean;
@@ -178,6 +179,14 @@ export interface AgentOptions {
     historySnip?: SnipConfig;
     /** Project context loading (NOUMEN.md / CLAUDE.md). Pass true for defaults or a config object. */
     projectContext?: ProjectContextConfig | boolean;
+    /**
+     * Dot-directory configuration — controls which hidden directories are
+     * recognized for config, sessions, tasks, checkpoints, rules, skills,
+     * MCP tokens, and worktrees. Defaults to `{ names: [".noumen", ".claude"] }`
+     * with `.noumen` as the canonical write target. Applies to both project
+     * scope (cwd ancestors) and user scope (home directory).
+     */
+    dotDirs?: DotDirConfig;
     /** Default structured output format for all threads. */
     outputFormat?: OutputFormat;
     /** Default structured output mode for all threads. */
@@ -262,6 +271,7 @@ export class Agent {
   private toolSearchEnabled: boolean;
   private projectContextConfig?: ProjectContextConfig;
   private resolvedProjectContext: ContextFile[] | null = null;
+  private dotDirResolver: DotDirResolver;
   private checkpointManager: FileCheckpointManager | null = null;
   private promptCachingConfig: CacheControlConfig | undefined;
   private fileStateCacheConfig: FileStateCacheConfig | undefined;
@@ -293,6 +303,7 @@ export class Agent {
       projectContext: opts.options?.projectContext,
       mcpServers: opts.options?.mcpServers,
       lsp: opts.options?.lsp,
+      dotDirs: opts.options?.dotDirs,
     });
 
     const resolvedSandbox = opts.sandbox ?? UnsandboxedLocal({ cwd: resolved.effectiveCwd });
@@ -300,7 +311,8 @@ export class Agent {
     this.sandbox = resolvedSandbox;
     this.fs = resolvedSandbox.fs;
     this.computer = resolvedSandbox.computer;
-    this.sessionDir = opts.options?.sessionDir ?? ".noumen/sessions";
+    this.dotDirResolver = resolved.dotDirResolver;
+    this.sessionDir = opts.options?.sessionDir ?? `${resolved.dotDirResolver.writePath(resolved.effectiveCwd)}/sessions`;
     this.skills = opts.options?.skills ?? [];
     this.skillsPaths = opts.options?.skillsPaths ?? [];
     this.tools = opts.options?.tools ?? [];
@@ -316,7 +328,7 @@ export class Agent {
     this.enableSubagents = opts.options?.enableSubagents ?? false;
     this.enableTasks = opts.options?.enableTasks ?? false;
     if (this.enableTasks) {
-      const tasksDir = opts.options?.tasksDir ?? ".noumen/tasks";
+      const tasksDir = opts.options?.tasksDir ?? `${this.dotDirResolver.writePath(resolved.effectiveCwd)}/tasks`;
       this.taskStore = new TaskStore(this.fs, tasksDir);
     }
     this.enablePlanMode = opts.options?.enablePlanMode ?? false;
@@ -352,7 +364,14 @@ export class Agent {
     this.projectContextConfig = resolved.projectContextConfig;
     this.promptCachingConfig = opts.options?.promptCaching;
     this.fileStateCacheConfig = opts.options?.fileStateCache;
-    this.toolResultStorageConfig = opts.options?.toolResultStorage;
+    this.toolResultStorageConfig = opts.options?.toolResultStorage
+      ? {
+          ...opts.options.toolResultStorage,
+          storageDir:
+            opts.options.toolResultStorage.storageDir ??
+            `${this.dotDirResolver.writePath(resolved.effectiveCwd)}/tool-results`,
+        }
+      : undefined;
     this.historySnipConfig = opts.options?.historySnip;
     this.outputFormat = opts.options?.outputFormat;
     this.structuredOutputMode = opts.options?.structuredOutputMode;
@@ -367,7 +386,12 @@ export class Agent {
     if (opts.options?.checkpoint?.enabled) {
       this.checkpointManager = new FileCheckpointManager(
         this.fs,
-        opts.options.checkpoint,
+        {
+          ...opts.options.checkpoint,
+          backupDir:
+            opts.options.checkpoint.backupDir ??
+            `${this.dotDirResolver.writePath(resolved.effectiveCwd)}/checkpoints`,
+        },
       );
     }
   }
@@ -396,10 +420,14 @@ export class Agent {
   private async getSkills(): Promise<SkillDefinition[]> {
     if (this.resolvedSkills) return this.resolvedSkills;
 
+    const homeDir = process.env.HOME ?? process.env.USERPROFILE;
     const ctx = await buildUserContext({
       fs: this.fs,
       skillsPaths: this.skillsPaths,
       inlineSkills: this.skills,
+      dotDirResolver: this.dotDirResolver,
+      cwd: this.cwd,
+      homeDir,
     });
 
     this.resolvedSkills = ctx.skills;
@@ -467,6 +495,7 @@ export class Agent {
           promptCachingEnabled: this.promptCachingConfig?.enabled ?? false,
           skipCacheWrite: true,
           projectContext: this.resolvedProjectContext ?? undefined,
+          dotDirResolver: this.dotDirResolver,
         },
         { cwd: parentCwd },
       );
@@ -538,6 +567,7 @@ export class Agent {
         promptCachingEnabled: this.promptCachingConfig?.enabled ?? false,
         mcpToolNames: this.mcpToolNames.size > 0 ? this.mcpToolNames : undefined,
         projectContext: this.resolvedProjectContext ?? undefined,
+        dotDirResolver: this.dotDirResolver,
         outputFormat: this.outputFormat,
         structuredOutputMode: this.structuredOutputMode,
       },

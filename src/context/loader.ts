@@ -1,36 +1,53 @@
 import type { VirtualFs } from "../virtual/fs.js";
 import type { ContextFile, ContextScope, ProjectContextConfig } from "./types.js";
 import { parseFrontmatter, parsePaths } from "../skills/frontmatter.js";
+import { DEFAULT_DOT_DIRS, type DotDirConfig } from "../config/dot-dirs.js";
 
 const DEFAULT_MAX_INCLUDE_DEPTH = 5;
 
-const NOUMEN_NAMES = {
-  md: "NOUMEN.md",
-  localMd: "NOUMEN.local.md",
-  dotDir: ".noumen",
-};
-
-const CLAUDE_NAMES = {
-  md: "CLAUDE.md",
-  localMd: "CLAUDE.local.md",
-  dotDir: ".claude",
-};
-
-type NameSet = typeof NOUMEN_NAMES;
+interface NameSet {
+  /** e.g. "NOUMEN.md" — loaded from the project root and dot-dir root. */
+  md: string;
+  /** e.g. "NOUMEN.local.md" — loaded from project root for local overrides. */
+  localMd: string;
+  /** The dot-dir name, e.g. ".noumen". */
+  dotDir: string;
+}
 
 /**
- * Load project context files from the hierarchical NOUMEN.md / CLAUDE.md
- * convention. Returns files ordered lowest-to-highest priority:
+ * Derive `<NAME>.md`, `<NAME>.local.md`, and dot-dir from a config entry.
+ * `.noumen` → NOUMEN.md, `.claude` → CLAUDE.md, `.foo-bar` → FOO-BAR.md.
+ */
+function deriveNameSet(dotDirName: string): NameSet {
+  const stem = dotDirName.replace(/^\./, "").toUpperCase();
+  return {
+    md: `${stem}.md`,
+    localMd: `${stem}.local.md`,
+    dotDir: dotDirName,
+  };
+}
+
+function resolveNameSets(dotDirs: DotDirConfig | undefined): NameSet[] {
+  const names = (dotDirs ?? DEFAULT_DOT_DIRS).names;
+  return names.map(deriveNameSet);
+}
+
+/**
+ * Load project context files from the hierarchical `<NAME>.md` convention.
+ * Returns files ordered lowest-to-highest priority:
  * managed -> user -> project (root first, cwd last) -> local.
+ *
+ * Within each layer, dot-dirs are iterated in config order — so with the
+ * default `['.noumen', '.claude']`, `.noumen` content is loaded first
+ * (lower precedence within the layer) and `.claude` last (higher
+ * precedence within the layer). That matches the historical behavior.
  */
 export async function loadProjectContext(
   fs: VirtualFs,
   config: ProjectContextConfig,
 ): Promise<ContextFile[]> {
   const maxDepth = config.maxIncludeDepth ?? DEFAULT_MAX_INCLUDE_DEPTH;
-  const loadClaude = config.loadClaudeMd ?? true;
-  const nameSets: NameSet[] = [NOUMEN_NAMES];
-  if (loadClaude) nameSets.push(CLAUDE_NAMES);
+  const nameSets = resolveNameSets(config.dotDirs);
 
   const excludes = config.excludes ?? [];
   const files: ContextFile[] = [];

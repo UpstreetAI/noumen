@@ -42,14 +42,37 @@ describe("loadProjectContext", () => {
     expect(files[1].path).toBe("/project/CLAUDE.md");
   });
 
-  it("skips CLAUDE.md when loadClaudeMd is false", async () => {
+  it("skips CLAUDE.md when dotDirs limits names to .noumen only", async () => {
     const fs = new MockFs({
       "/project/NOUMEN.md": "Noumen only.",
       "/project/CLAUDE.md": "Should be skipped.",
     });
-    const files = await loadProjectContext(fs, makeConfig({ loadClaudeMd: false }));
+    const files = await loadProjectContext(fs, makeConfig({ dotDirs: { names: [".noumen"] } }));
     expect(files).toHaveLength(1);
     expect(files[0].path).toBe("/project/NOUMEN.md");
+  });
+
+  it("loads context from a custom dot-dir name", async () => {
+    const fs = new MockFs({
+      "/project/MINE.md": "mine rules",
+      "/project/.mine/MINE.md": "nested mine rules",
+    });
+    const files = await loadProjectContext(fs, makeConfig({ dotDirs: { names: [".mine"] } }));
+    expect(files).toHaveLength(2);
+    expect(files[0].path).toBe("/project/MINE.md");
+    expect(files[1].path).toBe("/project/.mine/MINE.md");
+  });
+
+  it("with dotDirs: ['.mine', '.noumen', '.claude'] respects per-layer ordering", async () => {
+    const fs = new MockFs({
+      "/project/MINE.md": "mine",
+      "/project/NOUMEN.md": "noumen",
+      "/project/CLAUDE.md": "claude",
+    });
+    const files = await loadProjectContext(fs, makeConfig({
+      dotDirs: { names: [".mine", ".noumen", ".claude"] },
+    }));
+    expect(files.map((f) => f.content)).toEqual(["mine", "noumen", "claude"]);
   });
 
   it("maintains hierarchy order: managed < user < project-root < project-cwd < local", async () => {

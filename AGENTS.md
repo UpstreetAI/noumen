@@ -80,6 +80,11 @@ Run this checklist **every time** you modify any of the files listed below:
 - Update `website/docs/cli/index.mdx` headless mode section
 - Update `website/docs/server-api/index.mdx` headless CLI protocol section
 
+### If you change dot-directory handling (`src/config/dot-dirs.ts`, `DotDirConfig`, default names, or per-subsystem write paths)
+- Update `README.md` Options section (`dotDirs` field) and the Project Context + Skills sections
+- Update `website/docs/context.mdx` — the "Dot directories" section and the `ProjectContextConfig` table
+- Update `website/docs/skills.mdx` — the "Auto-discovery" section (scan paths and precedence)
+
 ## Code example rules
 
 - **Prefer the string provider shorthand** for simple examples:

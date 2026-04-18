@@ -19,7 +19,7 @@ export const writeFileTool: Tool = {
         message: "Error: UNC paths are not allowed",
       };
     }
-    if (isDangerousPath(filePath, ctx.cwd)) {
+    if (isDangerousPath(filePath, ctx.cwd, ctx.dotDirResolver?.config.names)) {
       return {
         behavior: "ask" as const,
         message: `Write targets sensitive path: ${filePath}`,

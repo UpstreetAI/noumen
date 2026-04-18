@@ -282,6 +282,15 @@ export type {
   JsonSchemaType,
 } from "./utils/zod.js";
 
+// Dot-directory resolver (controls where .noumen / .claude state lives)
+export {
+  DEFAULT_DOT_DIRS,
+  createDotDirResolver,
+  readFirstDotDir,
+  readAllDotDirs,
+} from "./config/dot-dirs.js";
+export type { DotDirConfig, DotDirResolver } from "./config/dot-dirs.js";
+
 // Skills
 export type { SkillDefinition } from "./skills/types.js";
 export { loadSkills } from "./skills/loader.js";

@@ -1,6 +1,8 @@
 import type { RetryConfig } from "./retry/types.js";
 import { DEFAULT_RETRY_CONFIG } from "./retry/types.js";
 import type { ProjectContextConfig } from "./context/types.js";
+import type { DotDirConfig, DotDirResolver } from "./config/dot-dirs.js";
+import { DEFAULT_DOT_DIRS, createDotDirResolver } from "./config/dot-dirs.js";
 
 export interface ResolvedAgentConfig {
   effectiveCwd: string;
@@ -8,6 +10,8 @@ export interface ResolvedAgentConfig {
   projectContextConfig: ProjectContextConfig | undefined;
   mcpServerConfigs: Record<string, unknown> | undefined;
   lspConfigs: Record<string, unknown> | undefined;
+  dotDirs: DotDirConfig;
+  dotDirResolver: DotDirResolver;
 }
 
 export interface AgentConfigInput {
@@ -17,6 +21,7 @@ export interface AgentConfigInput {
   projectContext?: ProjectContextConfig | boolean;
   mcpServers?: Record<string, unknown>;
   lsp?: Record<string, unknown>;
+  dotDirs?: DotDirConfig;
 }
 
 export function resolveAgentConfig(input: AgentConfigInput): ResolvedAgentConfig {
@@ -29,11 +34,17 @@ export function resolveAgentConfig(input: AgentConfigInput): ResolvedAgentConfig
     retryConfig = input.retry;
   }
 
+  const dotDirs: DotDirConfig = input.dotDirs ?? DEFAULT_DOT_DIRS;
+  const dotDirResolver = createDotDirResolver(dotDirs);
+
   let projectContextConfig: ProjectContextConfig | undefined;
   if (input.projectContext === true) {
-    projectContextConfig = { cwd: effectiveCwd };
+    projectContextConfig = { cwd: effectiveCwd, dotDirs };
   } else if (typeof input.projectContext === "object") {
-    projectContextConfig = input.projectContext;
+    projectContextConfig = {
+      ...input.projectContext,
+      dotDirs: input.projectContext.dotDirs ?? dotDirs,
+    };
   }
 
   const mcpServerConfigs = input.mcpServers && Object.keys(input.mcpServers).length > 0
@@ -50,5 +61,7 @@ export function resolveAgentConfig(input: AgentConfigInput): ResolvedAgentConfig
     projectContextConfig,
     mcpServerConfigs,
     lspConfigs,
+    dotDirs,
+    dotDirResolver,
   };
 }

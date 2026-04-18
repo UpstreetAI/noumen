@@ -269,7 +269,8 @@ async function runAgent(config: MergedConfig): Promise<void> {
       lsp: config.lsp,
       hooks: config.hooks,
       webSearch: config.webSearch,
-      sessionDir: config.sessionDir ?? ".noumen/sessions",
+      ...(config.sessionDir ? { sessionDir: config.sessionDir } : {}),
+      ...(config.dotDirs ? { dotDirs: config.dotDirs } : {}),
       projectContext: { cwd: config.cwd, homeDir: os.homedir() },
       costTracking: { enabled: true },
       retry: true,
@@ -353,7 +354,11 @@ async function listSessions(): Promise<void> {
   const agent = new Agent({
     provider: provider,
     sandbox: UnsandboxedLocal({ cwd }),
-    options: { cwd, sessionDir: merged.sessionDir ?? ".noumen/sessions" },
+    options: {
+      cwd,
+      ...(merged.sessionDir ? { sessionDir: merged.sessionDir } : {}),
+      ...(merged.dotDirs ? { dotDirs: merged.dotDirs } : {}),
+    },
   });
 
   const sessions = await agent.listSessions();
@@ -405,7 +410,8 @@ async function resumeSession(sessionId: string): Promise<void> {
       mcpServers: merged.mcpServers,
       lsp: merged.lsp,
       hooks: merged.hooks,
-      sessionDir: merged.sessionDir ?? ".noumen/sessions",
+      ...(merged.sessionDir ? { sessionDir: merged.sessionDir } : {}),
+      ...(merged.dotDirs ? { dotDirs: merged.dotDirs } : {}),
       projectContext: { cwd, homeDir: os.homedir() },
       costTracking: { enabled: true },
       retry: true,
@@ -489,7 +495,8 @@ async function runDoctor(): Promise<void> {
       model: merged.model,
       mcpServers: merged.mcpServers,
       lsp: merged.lsp,
-      sessionDir: merged.sessionDir ?? ".noumen/sessions",
+      ...(merged.sessionDir ? { sessionDir: merged.sessionDir } : {}),
+      ...(merged.dotDirs ? { dotDirs: merged.dotDirs } : {}),
     },
   });
 

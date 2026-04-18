@@ -20,7 +20,12 @@ import {
   resolveAutoModeDecision,
 } from "./helpers.js";
 
-const DANGEROUS_PATH_PATTERNS = [
+/**
+ * Patterns that are always dangerous regardless of dot-dir configuration.
+ * Dot-dir patterns (e.g. `.noumen`, `.claude`) are composed at call time
+ * from the caller-supplied `dotDirNames`.
+ */
+const BASE_DANGEROUS_PATH_PATTERNS = [
   /(?:^|\/)\.git(?:\/|$)/,
   /(?:^|\/)\.bashrc$/,
   /(?:^|\/)\.bash_profile$/,
@@ -32,14 +37,27 @@ const DANGEROUS_PATH_PATTERNS = [
   /(?:^|\/)\.npmrc$/,
   /(?:^|\/)\.vscode(?:\/|$)/,
   /(?:^|\/)\.idea(?:\/|$)/,
-  /(?:^|\/)\.claude(?:\/|$)/,
-  /(?:^|\/)\.noumen(?:\/|$)/,
   /(?:^|\/)\.gitconfig$/,
   /(?:^|\/)\.gitmodules$/,
   /(?:^|\/)\.mcp\.json$/,
   /(?:^|\/)\.ripgreprc$/,
   /(?:^|\/)\.noumen\.json$/,
 ];
+
+/** Default dot-dirs protected when the caller doesn't specify names. */
+const DEFAULT_PROTECTED_DOT_DIRS = [".noumen", ".claude"];
+
+function escapeForRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildDangerousPathPatterns(dotDirNames?: string[]): RegExp[] {
+  const names = dotDirNames && dotDirNames.length > 0 ? dotDirNames : DEFAULT_PROTECTED_DOT_DIRS;
+  const dotDirPatterns = names.map(
+    (name) => new RegExp(`(?:^|\\/)${escapeForRegex(name)}(?:\\/|$)`),
+  );
+  return [...BASE_DANGEROUS_PATH_PATTERNS, ...dotDirPatterns];
+}
 
 /**
  * Resolve the permission decision for a tool invocation.
@@ -144,7 +162,7 @@ export async function resolvePermission(
     typeof input.file_path === "string" ? input.file_path
     : typeof input.path === "string" ? input.path
     : undefined;
-  if (dangerousFilePath && isDangerousPath(dangerousFilePath, ctx.cwd)) {
+  if (dangerousFilePath && isDangerousPath(dangerousFilePath, ctx.cwd, permCtx.dotDirNames)) {
     return {
       behavior: "ask",
       message: `Path "${dangerousFilePath}" targets a sensitive location.`,
@@ -159,7 +177,7 @@ export async function resolvePermission(
       const tokens = sub.trim().split(/\s+/);
       for (const token of tokens) {
         if (token.startsWith("-")) continue;
-        if (isDangerousPath(token, ctx.cwd)) {
+        if (isDangerousPath(token, ctx.cwd, permCtx.dotDirNames)) {
           return {
             behavior: "ask",
             message: `Bash command references sensitive path "${token}".`,
@@ -415,13 +433,21 @@ export async function resolvePermission(
 /**
  * Check whether a file path targets a sensitive location that should always
  * prompt regardless of permission mode (bypass-immune safety check).
+ *
+ * Pass `dotDirNames` to override the protected dot-dir list (e.g. to
+ * reflect a custom `DotDirConfig`). Defaults to `['.noumen', '.claude']`.
  */
-export function isDangerousPath(filePath: string, basePath?: string): boolean {
+export function isDangerousPath(
+  filePath: string,
+  basePath?: string,
+  dotDirNames?: string[],
+): boolean {
   const base = basePath ?? process.cwd();
   const resolved = path.resolve(base, filePath);
   const relative = path.relative(base, resolved);
   const candidate = (relative.startsWith("..") ? resolved.replace(/^\/+/, "") : relative).toLowerCase();
-  if (DANGEROUS_PATH_PATTERNS.some((p) => p.test(candidate))) return true;
+  const patterns = buildDangerousPathPatterns(dotDirNames);
+  if (patterns.some((p) => p.test(candidate))) return true;
 
   // Also check symlink-resolved path to prevent symlink-based bypasses
   try {
@@ -429,7 +455,7 @@ export function isDangerousPath(filePath: string, basePath?: string): boolean {
     if (realPath !== resolved) {
       const realRelative = path.relative(base, realPath);
       const realCandidate = (realRelative.startsWith("..") ? realPath.replace(/^\/+/, "") : realRelative).toLowerCase();
-      if (DANGEROUS_PATH_PATTERNS.some((p) => p.test(realCandidate))) return true;
+      if (patterns.some((p) => p.test(realCandidate))) return true;
     }
   } catch {
     // Path doesn't exist yet — only the logical check applies

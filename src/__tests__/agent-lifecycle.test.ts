@@ -334,4 +334,96 @@ describe("Agent", () => {
       expect(disposed).toBe(true);
     });
   });
+
+  describe("dotDirs routing", () => {
+    it("writes sessions under the default .noumen directory", async () => {
+      const agent = new Agent({
+        provider: provider,
+        sandbox: { fs, computer },
+        cwd: "/proj",
+      });
+
+      provider.addResponse(textResponse("reply"));
+      const thread = await agent.createThread({ sessionId: "sess-default" });
+      for await (const _ of thread.run("hi")) { /* consume */ }
+
+      const sessionKeys = [...fs.files.keys()].filter((k) => k.includes("sess-default"));
+      expect(sessionKeys.length).toBeGreaterThan(0);
+      expect(sessionKeys.every((k) => k.includes("/.noumen/sessions/"))).toBe(true);
+    });
+
+    it("reroutes sessions when dotDirs.names is overridden", async () => {
+      const agent = new Agent({
+        provider: provider,
+        sandbox: { fs, computer },
+        cwd: "/proj",
+        options: { dotDirs: { names: [".mine", ".noumen"] } },
+      });
+
+      provider.addResponse(textResponse("reply"));
+      const thread = await agent.createThread({ sessionId: "sess-mine" });
+      for await (const _ of thread.run("hi")) { /* consume */ }
+
+      const sessionKeys = [...fs.files.keys()].filter((k) => k.includes("sess-mine"));
+      expect(sessionKeys.length).toBeGreaterThan(0);
+      expect(sessionKeys.every((k) => k.includes("/.mine/sessions/"))).toBe(true);
+    });
+
+    it("routes checkpoint backupDir through the resolver default", async () => {
+      fs.files.set("/proj/a.ts", "original");
+
+      const agent = new Agent({
+        provider: provider,
+        sandbox: { fs, computer },
+        cwd: "/proj",
+        options: {
+          checkpoint: { enabled: true, maxSnapshots: 5 },
+        },
+      });
+
+      provider.addResponse(textResponse("reply"));
+      const thread = await agent.createThread({ sessionId: "sess-ckpt" });
+      for await (const _ of thread.run("hi")) { /* consume */ }
+
+      const cm = (agent as any).checkpointManager;
+      expect(cm).toBeDefined();
+      expect((cm as any).backupDir).toBe("/proj/.noumen/checkpoints");
+    });
+
+    it("reroutes checkpoint backupDir when dotDirs.names overrides default", async () => {
+      const agent = new Agent({
+        provider: provider,
+        sandbox: { fs, computer },
+        cwd: "/proj",
+        options: {
+          dotDirs: { names: [".mine"] },
+          checkpoint: { enabled: true, maxSnapshots: 5 },
+        },
+      });
+
+      const cm = (agent as any).checkpointManager;
+      expect(cm).toBeDefined();
+      expect((cm as any).backupDir).toBe("/proj/.mine/checkpoints");
+    });
+
+    it("explicit sessionDir beats the resolver default", async () => {
+      const agent = new Agent({
+        provider: provider,
+        sandbox: { fs, computer },
+        cwd: "/proj",
+        options: {
+          dotDirs: { names: [".mine"] },
+          sessionDir: "/custom-sessions",
+        },
+      });
+
+      provider.addResponse(textResponse("reply"));
+      const thread = await agent.createThread({ sessionId: "sess-custom" });
+      for await (const _ of thread.run("hi")) { /* consume */ }
+
+      const sessionKeys = [...fs.files.keys()].filter((k) => k.includes("sess-custom"));
+      expect(sessionKeys.length).toBeGreaterThan(0);
+      expect(sessionKeys.every((k) => k.startsWith("/custom-sessions/"))).toBe(true);
+    });
+  });
 });

@@ -38,7 +38,10 @@ export const enterWorktreeTool: Tool = {
     const slug = sanitizeWorktreeSlug(
       (args.name as string) || `noumen-${Date.now()}`,
     );
-    const worktreePath = `${repoRoot}/.noumen/worktrees/${slug}`;
+    const worktreeBase = ctx.dotDirResolver
+      ? ctx.dotDirResolver.writePath(repoRoot)
+      : `${repoRoot}/.noumen`;
+    const worktreePath = `${worktreeBase}/worktrees/${slug}`;
     const branchName = `worktree-${slug}`;
 
     const result = await createWorktree(

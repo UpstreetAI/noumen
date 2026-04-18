@@ -44,7 +44,7 @@ That's it. The agent now sees your project instructions in every conversation.
 
 ## How it works
 
-The loader scans four layers in order, from lowest to highest priority. Each layer checks for both `NOUMEN.*` and `CLAUDE.*` variants:
+The loader scans four layers in order, from lowest to highest priority. Each layer generates filename variants from the configured `dotDirs` list (defaults: `[".noumen", ".claude"]`, which yields `NOUMEN.*` and `CLAUDE.*`):
 
 | Layer | Scope | Files scanned |
 |-------|-------|---------------|
@@ -54,6 +54,22 @@ The loader scans four layers in order, from lowest to highest priority. Each lay
 | **Local** | Gitignored | `<dir>/NOUMEN.local.md`, `<dir>/CLAUDE.local.md` (same ancestor walk) |
 
 Files loaded later in the list have higher priority. This means your project-level `NOUMEN.md` at the repo root overrides user-level defaults, and `NOUMEN.local.md` (which you gitignore for personal overrides) has the highest priority of all.
+
+### Customizing or restricting the dot-directory list
+
+`dotDirs` accepts any ordered list of directory names. Names earlier in the list also win for tooling writes (`sessions`, `checkpoints`, `config.json`, etc.) — see the [Dot Directories](#dot-directories) section below.
+
+```typescript
+// Only scan .noumen (ignore .claude entirely):
+options: {
+  projectContext: { cwd: "/my/project", dotDirs: { names: [".noumen"] } },
+}
+
+// Use a custom name first, fall back to .noumen:
+options: {
+  projectContext: { cwd: "/my/project", dotDirs: { names: [".mine", ".noumen"] } },
+}
+```
 
 ## CLAUDE.md compatibility
 
@@ -124,14 +140,14 @@ options: {
   // Full control:
   projectContext: {
     cwd: "/my/project",
-    homeDir: "/home/user",           // for sandboxed environments
-    managedDir: "/etc/noumen",       // enterprise managed settings
-    loadClaudeMd: true,              // load .claude/ files (default: true)
-    loadUserContext: true,            // load from homeDir (default: true)
-    loadProjectContext: true,         // load from cwd ancestors (default: true)
-    loadLocalContext: true,           // load *.local.md files (default: true)
-    excludes: ["**/secret.md"],      // glob patterns to skip
-    maxIncludeDepth: 5,              // @ include depth limit (default: 5)
+    homeDir: "/home/user",                        // for sandboxed environments
+    managedDir: "/etc/noumen",                    // enterprise managed settings
+    dotDirs: { names: [".noumen", ".claude"] },   // which dot-dir names to scan
+    loadUserContext: true,                        // load from homeDir (default: true)
+    loadProjectContext: true,                     // load from cwd ancestors (default: true)
+    loadLocalContext: true,                       // load *.local.md files (default: true)
+    excludes: ["**/secret.md"],                   // glob patterns to skip
+    maxIncludeDepth: 5,                           // @ include depth limit (default: 5)
   },
 }
 ```
@@ -143,12 +159,34 @@ options: {
 | `cwd` | `string` | *required* | Working directory (project root) |
 | `homeDir` | `string` | — | User home directory. Pass explicitly for sandboxed environments. |
 | `managedDir` | `string` | — | Enterprise/MDM settings directory |
-| `loadClaudeMd` | `boolean` | `true` | Also scan for `.claude/` and `CLAUDE.md` files |
+| `dotDirs` | `DotDirConfig` | `{ names: [".noumen", ".claude"] }` | Ordered list of dot-dir names to scan. Each name produces matching `<NAME>.md` / `.<name>/rules/` variants. |
 | `loadUserContext` | `boolean` | `true` | Load user-scope context from `homeDir` |
 | `loadProjectContext` | `boolean` | `true` | Load project-scope context from `cwd` ancestors |
 | `loadLocalContext` | `boolean` | `true` | Load `*.local.md` files |
 | `excludes` | `string[]` | `[]` | Glob patterns to exclude |
 | `maxIncludeDepth` | `number` | `5` | Maximum `@` include recursion depth |
+
+## Dot directories
+
+Noumen uses "dot directories" — `.noumen/` and `.claude/` by default — for agent-managed state: skills, rules, sessions, checkpoints, tool-result spillover, worktrees, OAuth tokens, and the CLI `config.json`. The same ordered list controls both **reads** (first match wins, with later fallbacks) and **writes** (always to `dotDirs.names[0]`).
+
+Configure the list once at the Agent level and every subsystem follows:
+
+```typescript
+const agent = new Agent({
+  provider,
+  sandbox,
+  options: {
+    // Default — same as omitting this field:
+    dotDirs: { names: [".noumen", ".claude"] },
+
+    // Or: write to .mine, fall back to .noumen and .claude for reads:
+    // dotDirs: { names: [".mine", ".noumen", ".claude"] },
+  },
+});
+```
+
+Reads (`NOUMEN.md`/`CLAUDE.md`, skills, config.json, OAuth tokens) check each directory in order. Writes (new sessions, checkpoints, `noumen init`, token refresh) always target `dotDirs.names[0]`. Dangerous-path protection in the tool permissions pipeline is also built from this list — every configured name is treated as protected.
 
 ## ContextFile type
 

@@ -648,8 +648,14 @@ const agent = new Agent({
     autoCompactThreshold: 100_000,  // token threshold for auto-compact
     systemPrompt: "...",            // override the built-in system prompt
     skills: [{ name: "...", content: "..." }],
-    skillsPaths: [".claude/skills"],   // paths to SKILL.md files on the sandbox filesystem
+    skillsPaths: [".claude/skills"],   // extra paths to SKILL.md files (adds to auto-discovered .noumen/skills + .claude/skills)
     projectContext: true,              // load NOUMEN.md / CLAUDE.md from project
+
+    // Dot-directory layout (controls where .noumen / .claude state lives).
+    // Default: [".noumen", ".claude"]. First name wins for writes; all names
+    // are scanned for reads, and every name is protected by the dangerous-path
+    // permission check.
+    dotDirs: { names: [".noumen", ".claude"] },
 
     // Extended thinking / reasoning (see below)
     thinking: { type: "enabled", budgetTokens: 10000 },
@@ -875,7 +881,7 @@ const agent = new Agent({
 
 ## Skills
 
-Skills are markdown instructions injected into the system prompt. Provide them inline or load from `SKILL.md` files on the virtual filesystem:
+Skills are markdown instructions injected into the system prompt. They are auto-discovered from `<cwd>/.noumen/skills/` and `<cwd>/.claude/skills/` (and the same paths under `$HOME`), and can also be provided inline or loaded from explicit paths:
 
 ```typescript
 const agent = new Agent({
@@ -885,13 +891,15 @@ const agent = new Agent({
     skills: [
       { name: "Testing", content: "Always write vitest tests for new code." },
     ],
-    skillsPaths: [".claude/skills", "~/.config/skills"],
+    skillsPaths: ["~/.config/skills"], // additive to auto-discovery
   },
 });
 
 // If using skillsPaths, call init() to pre-load them
 await agent.init();
 ```
+
+Auto-discovery follows the configured `dotDirs` list (default `[".noumen", ".claude"]`). On name collisions, project skills win over home skills, and the **first** dot-dir in the list wins within a scope — so `.noumen/skills/foo` overrides `.claude/skills/foo`. Only `<dot-dir>/skills/<name>/SKILL.md` is discovered; loose `SKILL.md` files at the dot-dir root are ignored.
 
 ## Project Context (NOUMEN.md / CLAUDE.md)
 
@@ -906,6 +914,8 @@ This is a TypeScript monorepo. Use strict mode. Write vitest tests for all new c
 Enable it with `projectContext: true` in your `Agent` options. The loader discovers context files from four layers — managed (enterprise), user (`~/.noumen/`), project (repo ancestors), and local (`.local.md`, gitignored) — so you can scope instructions at any level.
 
 This is fully compatible with `CLAUDE.md`. If your project already has one, noumen picks it up automatically. Both `NOUMEN.md` and `CLAUDE.md` can coexist in the same directory. The format supports `@path` includes, conditional rules via `paths:` frontmatter in `.noumen/rules/` directories, and hierarchical overriding.
+
+The set of dot-directory names is configurable via `dotDirs` (default `[".noumen", ".claude"]`). The same list drives `NOUMEN.md`/`CLAUDE.md` discovery, auto-discovered skills (under `<dot-dir>/skills/`), CLI config lookup (`<dot-dir>/config.json`), and agent-managed state (sessions, checkpoints, worktrees, OAuth tokens). Writes always go to the **first** name in the list; reads fall back through the rest in order.
 
 See **[noumen.dev/docs/context](https://noumen.dev/docs/context)** for full configuration options.
 

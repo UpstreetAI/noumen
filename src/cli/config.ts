@@ -5,6 +5,12 @@ import type { McpServerConfig } from "../mcp/types.js";
 import type { LspServerConfig } from "../lsp/types.js";
 import type { HookDefinition } from "../hooks/types.js";
 import type { WebSearchConfig } from "../tools/web-search.js";
+import {
+  DEFAULT_DOT_DIRS,
+  createDotDirResolver,
+  type DotDirConfig,
+  type DotDirResolver,
+} from "../config/dot-dirs.js";
 
 export interface CliConfig {
   provider?: string;
@@ -27,38 +33,64 @@ export interface CliConfig {
   maxTurns?: number;
   systemPrompt?: string;
   sessionDir?: string;
+  /**
+   * Dot-directory configuration for the CLI. Controls which hidden
+   * directories are read for config and written to on init.
+   */
+  dotDirs?: DotDirConfig;
 }
 
 /**
- * Load global config from ~/.noumen/config.json.
- * Returns empty object if not found or invalid.
+ * First-hit-wins read of `<base>/<dotdir>/<rel>` across the resolver's
+ * candidate dirs. Returns parsed JSON or `null` if none found.
  */
-export function loadGlobalConfig(): CliConfig {
-  const globalPath = path.join(os.homedir(), ".noumen", "config.json");
-  try {
-    const raw = fs.readFileSync(globalPath, "utf-8");
-    return JSON.parse(raw) as CliConfig;
-  } catch {
-    return {};
-  }
-}
-
-/**
- * Walk up from `cwd` looking for `.noumen/config.json`.
- * Returns parsed config or empty object if none found.
- */
-function loadProjectConfig(cwd: string): CliConfig {
-  let dir = path.resolve(cwd);
-  const root = path.parse(dir).root;
-
-  while (true) {
-    const candidate = path.join(dir, ".noumen", "config.json");
+function readFirstJson(resolver: DotDirResolver, base: string, rel: string): CliConfig | null {
+  for (const candidate of resolver.joinRead(base, rel)) {
     try {
       const raw = fs.readFileSync(candidate, "utf-8");
       return JSON.parse(raw) as CliConfig;
     } catch {
-      // not found or invalid — keep walking
+      // keep walking
     }
+  }
+  return null;
+}
+
+/**
+ * Bootstrap resolver for the initial config load. We read global config
+ * first to discover any `dotDirs` override, then rebuild the resolver and
+ * reload. This lets users put `{ "dotDirs": { "names": [".custom"] } }`
+ * in a default location (`.noumen/config.json`) to reroute everything.
+ */
+function resolverFromConfigs(...configs: CliConfig[]): DotDirResolver {
+  for (const cfg of configs) {
+    if (cfg.dotDirs) return createDotDirResolver(cfg.dotDirs);
+  }
+  return createDotDirResolver(DEFAULT_DOT_DIRS);
+}
+
+/**
+ * Load global config from the first hit across `~/<dotdir>/config.json`
+ * candidates. Returns empty object if not found or invalid.
+ */
+export function loadGlobalConfig(resolver?: DotDirResolver): CliConfig {
+  const r = resolver ?? createDotDirResolver(DEFAULT_DOT_DIRS);
+  return readFirstJson(r, os.homedir(), "config.json") ?? {};
+}
+
+/**
+ * Walk up from `cwd` looking for `<ancestor>/<dotdir>/config.json`. At
+ * each ancestor, all candidate dot-dirs are probed in preference order
+ * before moving up. Returns parsed config or empty object if none found.
+ */
+function loadProjectConfig(cwd: string, resolver?: DotDirResolver): CliConfig {
+  const r = resolver ?? createDotDirResolver(DEFAULT_DOT_DIRS);
+  let dir = path.resolve(cwd);
+  const root = path.parse(dir).root;
+
+  while (true) {
+    const hit = readFirstJson(r, dir, "config.json");
+    if (hit) return hit;
     const parent = path.dirname(dir);
     if (parent === dir || dir === root) break;
     dir = parent;
@@ -68,13 +100,34 @@ function loadProjectConfig(cwd: string): CliConfig {
 }
 
 /**
- * Load config with layering: global (~/.noumen/config.json) < project < flags.
- * Project-level values override global values.
+ * Load config with layering: global (home scope) < project < flags. If
+ * either layer specifies a `dotDirs` override, that override is used for
+ * any subsequent reads. Project-level values override global values.
  */
 export function loadCliConfig(cwd: string): CliConfig {
-  const global = loadGlobalConfig();
-  const project = loadProjectConfig(cwd);
-  return { ...global, ...project };
+  // Phase 1: probe with default resolver so we can discover dotDirs overrides.
+  const bootstrapResolver = createDotDirResolver(DEFAULT_DOT_DIRS);
+  const globalBootstrap = loadGlobalConfig(bootstrapResolver);
+  const projectBootstrap = loadProjectConfig(cwd, bootstrapResolver);
+
+  // Phase 2: if any layer declared dotDirs, rebuild the resolver and reload.
+  const override = projectBootstrap.dotDirs ?? globalBootstrap.dotDirs;
+  if (override) {
+    const resolver = createDotDirResolver(override);
+    const global = loadGlobalConfig(resolver);
+    const project = loadProjectConfig(cwd, resolver);
+    return { ...global, ...project };
+  }
+
+  return { ...globalBootstrap, ...projectBootstrap };
+}
+
+/**
+ * Resolve the CLI dot-dir resolver after layering. Used by code paths
+ * that need to write (e.g. init) or locate auxiliary dirs.
+ */
+export function resolveCliDotDirs(config: CliConfig): DotDirResolver {
+  return resolverFromConfigs(config);
 }
 
 export interface MergedConfig extends CliConfig {

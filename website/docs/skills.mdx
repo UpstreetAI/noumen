@@ -3,7 +3,31 @@ title: Skills
 description: Inject domain-specific instructions into the agent via markdown SKILL.md files with YAML frontmatter.
 ---
 
-Skills are markdown instructions that guide the agent's behavior for specific tasks or codebases. They can be provided inline, loaded from `SKILL.md` files on the virtual filesystem, or activated conditionally based on file paths.
+Skills are markdown instructions that guide the agent's behavior for specific tasks or codebases. They can be provided inline, loaded from `SKILL.md` files on the virtual filesystem, auto-discovered from dot-directories, or activated conditionally based on file paths.
+
+## Auto-discovery
+
+By default, the agent automatically discovers skills from `.noumen/skills/` and `.claude/skills/` in:
+
+- **Home scope**: `~/.noumen/skills/`, `~/.claude/skills/`
+- **Project scope**: every ancestor from the filesystem root down to `cwd`, e.g. `<dir>/.noumen/skills/`, `<dir>/.claude/skills/`
+
+Each subdirectory containing a `SKILL.md` is loaded as one skill. Loose `SKILL.md` files at the dot-dir root (e.g. `.noumen/SKILL.md`) are ignored — skills must live under `skills/`, mirroring how `rules/` works. Same-named skills are deduplicated with later (higher-precedence) scopes winning: project beats home, and within a scope the **first** name in `dotDirs.names` (default: `.noumen`) wins over the rest.
+
+Auto-discovery is additive to `skills` and `skillsPaths` — explicit definitions still override discovered skills by name.
+
+Narrow or rename the set of directories scanned via [`dotDirs`](/docs/context#dot-directories):
+
+```typescript
+const agent = new Agent({
+  provider,
+  sandbox,
+  options: {
+    // Only scan .noumen/skills/ (ignore .claude):
+    dotDirs: { names: [".noumen"] },
+  },
+});
+```
 
 ## Inline skills
 

@@ -3,6 +3,7 @@ import * as path from "node:path";
 import * as readline from "node:readline/promises";
 import chalk from "chalk";
 import { SUPPORTED_PROVIDERS, DEFAULT_MODELS, isOllamaRunning, ollamaBaseURL } from "./provider-factory.js";
+import { loadCliConfig, resolveCliDotDirs } from "./config.js";
 
 const PERMISSION_MODES = ["default", "plan", "acceptEdits", "auto", "bypassPermissions"];
 
@@ -58,7 +59,9 @@ export async function runInit(): Promise<void> {
     if (model !== defaultModel) config.model = model;
     if (permissions !== "default") config.permissions = permissions;
 
-    const dir = path.join(process.cwd(), ".noumen");
+    const existing = loadCliConfig(process.cwd());
+    const resolver = resolveCliDotDirs(existing);
+    const dir = resolver.writePath(process.cwd());
     fs.mkdirSync(dir, { recursive: true });
 
     const configPath = path.join(dir, "config.json");

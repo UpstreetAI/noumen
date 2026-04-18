@@ -70,6 +70,11 @@ export interface ToolContext {
   notifyHook?: (event: string, input: Record<string, unknown>) => Promise<void>;
   /** Abort signal — tools should check this to terminate early on user abort. */
   signal?: AbortSignal;
+  /**
+   * Dot-directory resolver — lets tools honor custom dot-dir configurations
+   * (e.g. Worktree writes under `<dotdir>/worktrees/<slug>`).
+   */
+  dotDirResolver?: import("../config/dot-dirs.js").DotDirResolver;
 }
 
 export interface ToolParameterProperty {

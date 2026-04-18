@@ -834,6 +834,71 @@ describe("new dangerous path patterns", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Dot-dir-driven dangerous paths
+// ---------------------------------------------------------------------------
+describe("isDangerousPath with dotDirNames override", () => {
+  it("treats .cursor as dangerous when dotDirNames = ['.cursor']", () => {
+    expect(isDangerousPath(".cursor/config", undefined, [".cursor"])).toBe(true);
+  });
+
+  it("does NOT flag .noumen when dotDirNames = ['.cursor']", () => {
+    expect(isDangerousPath(".noumen/foo", undefined, [".cursor"])).toBe(false);
+  });
+
+  it("falls back to default protected list when dotDirNames is empty", () => {
+    expect(isDangerousPath(".noumen/foo", undefined, [])).toBe(true);
+    expect(isDangerousPath(".claude/foo", undefined, [])).toBe(true);
+  });
+
+  it("still protects static patterns (.git, .ssh) regardless of dotDirNames", () => {
+    expect(isDangerousPath(".git/HEAD", undefined, [".cursor"])).toBe(true);
+    expect(isDangerousPath(".ssh/id_rsa", undefined, [".cursor"])).toBe(true);
+  });
+
+  it("resolvePermission honors permCtx.dotDirNames for dangerous path checks", async () => {
+    const tool: Tool = {
+      name: "WriteFile",
+      description: "Write a file",
+      parameters: {
+        type: "object" as const,
+        properties: { file_path: { type: "string" } },
+      },
+      async call() { return { content: "ok" }; },
+    };
+    const permCtx: PermissionContext = {
+      mode: "default",
+      rules: [],
+      workingDirectories: [],
+      dotDirNames: [".cursor"],
+    };
+    const toolCtx = {
+      fs: new MockFs(),
+      computer: new MockComputer(),
+      cwd: "/project",
+    } as any;
+
+    const cursorDecision = await resolvePermission(
+      tool,
+      { file_path: ".cursor/config" },
+      toolCtx,
+      permCtx,
+    );
+    expect(cursorDecision.behavior).toBe("ask");
+    expect(cursorDecision.reason).toBe("safetyCheck");
+
+    const noumenDecision = await resolvePermission(
+      tool,
+      { file_path: ".noumen/foo" },
+      toolCtx,
+      permCtx,
+    );
+    // With custom dotDirNames, .noumen is no longer protected — falls
+    // through to the normal ask/allow pipeline for WriteFile.
+    expect(noumenDecision.reason).not.toBe("safetyCheck");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Gap coverage: auto mode without provider
 // ---------------------------------------------------------------------------
 describe("auto mode without provider", () => {

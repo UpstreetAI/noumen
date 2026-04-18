@@ -145,6 +145,8 @@ export interface ThreadConfig {
   mcpToolNames?: ReadonlySet<string>;
   /** Loaded project context files (NOUMEN.md / CLAUDE.md) for system prompt injection. */
   projectContext?: ContextFile[];
+  /** Dot-directory resolver — threaded to tools that write under dotdirs (e.g. worktrees). */
+  dotDirResolver?: import("./config/dot-dirs.js").DotDirResolver;
   /** Default structured output format for all runs on this thread. */
   outputFormat?: OutputFormat;
   /** Default structured output mode for all runs on this thread. */
@@ -206,6 +208,7 @@ export class Thread {
         mode: config.permissions.mode ?? "default",
         rules: [...(config.permissions.rules ?? [])],
         workingDirectories: [...(config.permissions.workingDirectories ?? [])],
+        dotDirNames: config.dotDirResolver?.config.names,
       };
       this.permissionHandler = config.permissions.handler ?? null;
       if (config.permissions.denialTracking) {
@@ -364,6 +367,7 @@ export class Thread {
         notifyHook: this.hooks.length > 0
           ? (event, input) => runNotificationHooks(this.hooks, event as import("./hooks/types.js").HookEvent, input as import("./hooks/types.js").HookInput)
           : undefined,
+        dotDirResolver: this.config.dotDirResolver,
       };
 
       const turnUsage: ChatCompletionUsage = {
