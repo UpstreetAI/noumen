@@ -417,6 +417,7 @@ describe("Retry in Thread", () => {
   it("yields retry_attempt events when retries occur", async () => {
     let callCount = 0;
     const failingProvider = {
+      defaultModel: "mock-model",
       async *chat() {
         callCount++;
         if (callCount === 1) {

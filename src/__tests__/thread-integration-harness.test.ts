@@ -703,6 +703,7 @@ describe("Integration: Thread.run scenarios", () => {
     });
 
     const compactProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat(params: ChatParams) {
         callIdx++;
         const isCompact = params.system?.includes("summariz");
@@ -752,6 +753,7 @@ describe("Integration: Thread.run scenarios", () => {
   it("provider error before first chunk triggers retry and recovers", async () => {
     let callCount = 0;
     const failingProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat() {
         callCount++;
         if (callCount === 1) {
@@ -783,6 +785,7 @@ describe("Integration: Thread.run scenarios", () => {
 
   it("provider error mid-stream persists partial assistant and yields error event", async () => {
     const failingProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat() {
         yield textChunk("partial ");
         yield textChunk("content");
@@ -853,6 +856,7 @@ describe("Integration: Thread.run scenarios", () => {
   it("switches to fallback model after consecutive overloaded errors", async () => {
     let callCount = 0;
     const overloadedProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat(params: ChatParams) {
         callCount++;
         if (callCount <= 3) {
@@ -903,6 +907,7 @@ describe("Integration: Thread.run scenarios", () => {
 
     let callCount = 0;
     const errAfterToolsProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat() {
         callCount++;
         if (callCount === 1) {
@@ -1006,6 +1011,7 @@ describe("Integration: abort, error, and resume lifecycle", () => {
   it("provider error mid-stream preserves completed streaming tool results", async () => {
     let callCount = 0;
     const errorProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat() {
         callCount++;
         if (callCount === 1) {
@@ -1096,6 +1102,7 @@ describe("Integration: abort, error, and resume lifecycle", () => {
   it("model switch during retry clears accumulated state", async () => {
     let callCount = 0;
     const switchingProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat() {
         callCount++;
         // Throw overloaded immediately (before first chunk) so the retry
@@ -1161,6 +1168,7 @@ describe("Integration: microcompact savings reach current API call", () => {
     const providerCallMessages: ChatMessage[][] = [];
     let callIdx = 0;
     const spyProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat(params: ChatParams) {
         providerCallMessages.push([...params.messages]);
         callIdx++;
@@ -1226,6 +1234,7 @@ describe("Integration: content_filter preserves completed streaming tool results
 
     let callCount = 0;
     const contentFilterProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat() {
         callCount++;
         if (callCount === 1) {

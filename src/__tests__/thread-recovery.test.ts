@@ -202,6 +202,7 @@ describe("Thread", () => {
       };
 
       const cfProvider: AIProvider = {
+        defaultModel: "mock-model",
         async *chat() {
           yield toolCallStartChunk("tc_cf", "Dangerous");
           yield toolCallArgChunk('{"x":"val"}');
@@ -246,6 +247,7 @@ describe("Thread", () => {
 
       let callCount = 0;
       const truncatedProvider: AIProvider = {
+        defaultModel: "mock-model",
         async *chat() {
           callCount++;
           if (callCount === 1) {
@@ -279,6 +281,7 @@ describe("Thread", () => {
     it("text-only truncation still triggers output token recovery", async () => {
       let callCount = 0;
       const truncatedProvider: AIProvider = {
+        defaultModel: "mock-model",
         async *chat() {
           callCount++;
           if (callCount === 1) {
@@ -316,6 +319,7 @@ describe("hasAttemptedReactiveCompact resets on text-only replies", () => {
   it("reactive compact can fire again after a text-only turn", async () => {
     let chatCallCount = 0;
     const overflowProvider: AIProvider = {
+      defaultModel: "mock-model",
       chat(params: ChatParams): AsyncIterable<ChatStreamChunk> {
         chatCallCount++;
         if (chatCallCount === 1) {
@@ -381,6 +385,7 @@ describe("batched path preventContinuation", () => {
 
     let callIdx = 0;
     const hookProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat() {
         callIdx++;
         if (callIdx === 1) {
@@ -412,6 +417,7 @@ describe("thinking signatures stripped on model fallback", () => {
   it("model_switch event strips thinking_signature from messages", async () => {
     let callIdx = 0;
     const fallbackProvider: AIProvider = {
+      defaultModel: "mock-model",
       chat(params: ChatParams): AsyncIterable<ChatStreamChunk> {
         callIdx++;
         if (callIdx === 1) {
@@ -487,6 +493,7 @@ describe("model switch clears accumulated state", () => {
   it("does not carry over thinking signatures from failed model to fallback model", async () => {
     let callCount = 0;
     const switchProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat(params: ChatParams) {
         callCount++;
         if (callCount <= 3) {
@@ -527,6 +534,7 @@ describe("model switch clears accumulated state", () => {
 
   it("mid-stream error persists partial text and tool calls as partial assistant", async () => {
     const midStreamErrorProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat() {
         yield textChunk("Partial answer so far... ");
         yield toolCallStartChunk("tc_partial", "ReadFile");
@@ -562,6 +570,7 @@ describe("model switch clears accumulated state", () => {
   it("retries and succeeds after transient errors", async () => {
     let callCount = 0;
     const retryProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat() {
         callCount++;
         if (callCount === 1) {

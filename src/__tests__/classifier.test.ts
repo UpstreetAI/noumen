@@ -82,6 +82,7 @@ describe("classifyPermission", () => {
   it("fails closed when abort signal fires mid-stream", async () => {
     const controller = new AbortController();
     const provider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat() {
         yield makeChunk('{"shouldBlock": false');
         controller.abort();
@@ -99,6 +100,7 @@ describe("classifyPermission", () => {
 
   it("fails closed when provider.chat throws", async () => {
     const provider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat() {
         throw new Error("network failure");
       },
@@ -113,6 +115,7 @@ describe("classifyPermission", () => {
   it("accepts custom classifier prompt", async () => {
     let capturedSystem: string | undefined;
     const provider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat(params) {
         capturedSystem = params.system;
         yield makeChunk('{"shouldBlock": false, "reason": "allowed"}');
@@ -132,6 +135,7 @@ describe("classifyPermission", () => {
       content: `message ${i}`,
     }));
     const provider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat(params) {
         capturedMessages = params.messages;
         yield makeChunk('{"shouldBlock": false, "reason": "ok"}');

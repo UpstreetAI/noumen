@@ -152,6 +152,7 @@ describe("tryReactiveCompact", () => {
     const abortController = new AbortController();
 
     const abortingProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat(_params: ChatParams): AsyncIterable<ChatStreamChunk> {
         yield {
           id: "chunk-1",

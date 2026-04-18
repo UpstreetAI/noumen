@@ -336,6 +336,7 @@ describe("Multi-turn cost tracking", () => {
 
     let callCount = 0;
     const multiTurnProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat(_params: ChatParams) {
         callCount++;
         if (callCount === 1) {

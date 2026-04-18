@@ -127,6 +127,7 @@ describe("integration: abort during streaming", () => {
     const ac = new AbortController();
 
     const slowProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat() {
         yield textChunk("Hello ");
         yield textChunk("world");
@@ -199,6 +200,7 @@ describe("integration: auto-compact during multi-turn", () => {
     let callIdx = 0;
 
     const compactProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat(params: ChatParams) {
         callIdx++;
         const isCompact = params.system?.includes("summariz");

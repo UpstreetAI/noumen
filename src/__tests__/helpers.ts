@@ -239,6 +239,11 @@ export class MockAIProvider implements AIProvider {
 export class ErroringAIProvider implements AIProvider {
   private responses: Array<{ chunks: ChatStreamChunk[]; errorAfter?: number; error?: Error }> = [];
   calls: ChatParams[] = [];
+  /**
+   * Mirrors `AIProvider.defaultModel` so Thread constructors that resolve
+   * a model from the provider don't force every test to pass one.
+   */
+  defaultModel = "mock-model";
 
   /**
    * Queue a response that yields `chunks[0..errorAfter-1]` then throws.

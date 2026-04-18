@@ -130,6 +130,7 @@ describe("Multi-turn integration tests", () => {
       const longPrompt = "x".repeat(800);
       let callCount = 0;
       const compactProvider: AIProvider = {
+        defaultModel: "mock-model",
         async *chat(params: ChatParams) {
           callCount++;
           const isCompact = params.system?.includes("summariz");
@@ -173,6 +174,7 @@ describe("Multi-turn integration tests", () => {
     it("persists partial results and generates synthetic tool results", async () => {
       let abortReject: (() => void) | undefined;
       const slowProvider: AIProvider = {
+        defaultModel: "mock-model",
         async *chat() {
           for (const c of toolCallResponse("tc_slow", "Bash", { command: "sleep 10" })) {
             yield c;
@@ -273,6 +275,7 @@ describe("Multi-turn integration tests", () => {
     it("strips thinking signatures and produces valid messages", async () => {
       let callCount = 0;
       const fallbackProvider: AIProvider = {
+        defaultModel: "mock-model",
         async *chat(params: ChatParams) {
           callCount++;
           if (callCount === 1) {
@@ -312,6 +315,7 @@ describe("Multi-turn integration tests", () => {
     it("resumes with synthetic tool results for interrupted turn", async () => {
       // First run: model calls a tool, we abort before it completes
       const firstRunProvider: AIProvider = {
+        defaultModel: "mock-model",
         async *chat() {
           for (const c of toolCallResponse("tc_crash", "Bash", { command: "echo hi" })) {
             yield c;

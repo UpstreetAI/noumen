@@ -222,6 +222,7 @@ describe("abort signal propagation to streaming executor", () => {
     const ac = new AbortController();
     let callIdx = 0;
     const abortProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat() {
         callIdx++;
         if (callIdx === 1) {
@@ -288,6 +289,7 @@ describe("abort signal propagation to streaming executor", () => {
 
     const ac = new AbortController();
     const abortProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat() {
         yield {
           id: "c1", model: "m",

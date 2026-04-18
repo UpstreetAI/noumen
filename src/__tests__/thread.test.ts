@@ -237,6 +237,7 @@ describe("Thread", () => {
       let compactCallIdx = 0;
       const callContexts: string[] = [];
       const compactProvider: AIProvider = {
+        defaultModel: "mock-model",
         async *chat(params: ChatParams) {
           const isCompactCall = params.system?.includes("summariz");
           callContexts.push(isCompactCall ? "compact" : "regular");
@@ -639,6 +640,7 @@ describe("Thread", () => {
       // Create a provider that errors after yielding a tool call
       let callCount = 0;
       const errorProvider: AIProvider = {
+        defaultModel: "mock-model",
         async *chat(_params) {
           callCount++;
           if (callCount === 1) {

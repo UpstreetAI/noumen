@@ -109,6 +109,7 @@ describe("Cross-cutting scenarios", () => {
     });
 
     const compactProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat(params: ChatParams) {
         callIdx++;
         const isCompact = params.system?.includes("tasked with summarizing");
@@ -177,6 +178,7 @@ describe("Cross-cutting scenarios", () => {
     let callIdx = 0;
 
     const mixedProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat(params: ChatParams) {
         callIdx++;
         if (params.system?.includes("tasked with summarizing")) {
@@ -235,6 +237,7 @@ describe("Cross-cutting scenarios", () => {
   it("model switch then resume: new thread loads correctly", async () => {
     let callCount = 0;
     const switchProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat(params: ChatParams) {
         callCount++;
         if (callCount <= 3) {
@@ -306,6 +309,7 @@ describe("Cross-cutting scenarios", () => {
 
     let chatCallCount = 0;
     const overflowProvider: AIProvider = {
+      defaultModel: "mock-model",
       chat(params: ChatParams): AsyncIterable<ChatStreamChunk> {
         chatCallCount++;
         if (chatCallCount === 1) {
@@ -374,6 +378,7 @@ describe("Cross-cutting scenarios", () => {
     // Turn 2: use a new thread with resume + failing compact provider
     let normalCallIdx = 0;
     const failingCompactProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat(params: ChatParams) {
         if (params.system?.includes("tasked with summarizing")) {
           throw new Error("Compact model unavailable");
@@ -430,6 +435,7 @@ describe("Cross-cutting scenarios", () => {
     let callIdx = 0;
 
     const spyProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat(params: ChatParams) {
         providerCallMessages.push([...params.messages]);
         callIdx++;
@@ -500,6 +506,7 @@ describe("Cross-cutting scenarios", () => {
 
     let callIdx = 0;
     const budgetProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat(params: ChatParams) {
         callIdx++;
         if (params.system?.includes("tasked with summarizing")) {
@@ -596,6 +603,7 @@ describe("Cross-cutting scenarios", () => {
     // Turn 1 provider: tool call (will be aborted)
     let callIdx = 0;
     const turn1Provider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat() {
         callIdx++;
         if (callIdx === 1) {
@@ -674,6 +682,7 @@ describe("Cross-cutting scenarios", () => {
   it("length finish -> escalated maxTokens -> compact: all work in sequence", async () => {
     let callIdx = 0;
     const lengthProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat(params: ChatParams) {
         callIdx++;
         const isCompact = params.system?.includes("tasked with summarizing");
@@ -747,6 +756,7 @@ describe("Cross-cutting scenarios", () => {
 
     let callCount = 0;
     const overloadProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat(params: ChatParams) {
         callCount++;
         if (callCount === 1) {
@@ -826,6 +836,7 @@ describe("Cross-cutting scenarios", () => {
 
     let chatCallCount = 0;
     const errorProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat(params: ChatParams) {
         chatCallCount++;
         if (chatCallCount === 1) {
@@ -902,6 +913,7 @@ describe("Cross-cutting scenarios", () => {
 
     let callIdx = 0;
     const stressProvider: AIProvider = {
+      defaultModel: "mock-model",
       async *chat(params: ChatParams) {
         callIdx++;
         if (params.system?.includes("tasked with summarizing")) {

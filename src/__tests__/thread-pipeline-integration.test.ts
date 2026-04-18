@@ -108,6 +108,7 @@ describe("Pipeline seam integration", () => {
 
       let chatCallCount = 0;
       const overflowProvider: AIProvider = {
+        defaultModel: "mock-model",
         chat(params: ChatParams): AsyncIterable<ChatStreamChunk> {
           chatCallCount++;
           if (chatCallCount === 1) {
@@ -155,6 +156,7 @@ describe("Pipeline seam integration", () => {
     it("persists partial assistant with tool_calls and synthetic error results when provider throws", async () => {
       let callCount = 0;
       const errorProvider: AIProvider = {
+        defaultModel: "mock-model",
         async *chat() {
           callCount++;
           if (callCount === 1) {
@@ -203,6 +205,7 @@ describe("Pipeline seam integration", () => {
     it("escalates max_tokens and persists continue message on finish_reason length", async () => {
       let callCount = 0;
       const truncProvider: AIProvider = {
+        defaultModel: "mock-model",
         async *chat(params: ChatParams) {
           callCount++;
           if (callCount === 1) {
@@ -251,6 +254,7 @@ describe("Pipeline seam integration", () => {
     it("discards accumulated state from failed model and responds only from fallback", async () => {
       let callCount = 0;
       const switchProvider: AIProvider = {
+        defaultModel: "mock-model",
         async *chat(params: ChatParams) {
           callCount++;
           if (callCount <= 3) {
@@ -323,6 +327,7 @@ describe("Pipeline seam integration", () => {
 
       const ac = new AbortController();
       const abortProvider: AIProvider = {
+        defaultModel: "mock-model",
         async *chat() {
           yield textChunk("Starting... ");
           yield toolCallStartChunk("tc_slow", "SlowTool");
@@ -384,6 +389,7 @@ describe("Pipeline seam integration", () => {
 
       let callCount = 0;
       const multiProvider: AIProvider = {
+        defaultModel: "mock-model",
         async *chat() {
           callCount++;
           if (callCount === 1) {
@@ -509,6 +515,7 @@ describe("Pipeline seam integration", () => {
     it("emits structured_output event and stops on StructuredOutput tool call", async () => {
       let callCount = 0;
       const soProvider: AIProvider = {
+        defaultModel: "mock-model",
         async *chat() {
           callCount++;
           if (callCount === 1) {
@@ -543,6 +550,7 @@ describe("Pipeline seam integration", () => {
 
     it("emits structured_output with raw args when inner data parse succeeds but has no data key", async () => {
       const soProvider: AIProvider = {
+        defaultModel: "mock-model",
         async *chat() {
           yield toolCallStartChunk("tc_so2", "StructuredOutput");
           yield toolCallArgChunk('{"answer":"direct"}');
@@ -569,6 +577,7 @@ describe("Pipeline seam integration", () => {
     it("treats malformed-JSON StructuredOutput args as a malformed tool call", async () => {
       let callCount = 0;
       const soProvider: AIProvider = {
+        defaultModel: "mock-model",
         async *chat() {
           callCount++;
           if (callCount === 1) {
@@ -614,6 +623,7 @@ describe("Pipeline seam integration", () => {
 
     it("emits structured_output when model text is valid JSON", async () => {
       const jsonProvider: AIProvider = {
+        defaultModel: "mock-model",
         async *chat() {
           yield textChunk('{"result": 99}');
           yield stopChunk();
@@ -639,6 +649,7 @@ describe("Pipeline seam integration", () => {
 
     it("does not emit structured_output when model text is not valid JSON", async () => {
       const plainProvider: AIProvider = {
+        defaultModel: "mock-model",
         async *chat() {
           yield textChunk("This is plain text, not JSON");
           yield stopChunk();
