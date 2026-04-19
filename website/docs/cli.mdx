@@ -269,7 +269,8 @@ The `--thinking` flag maps to provider-specific extended thinking:
 The CLI is a thin wrapper (~500 lines) over the `Agent` and `Thread` APIs. Every config option maps directly to `AgentOptions`. If you need more control, use the library directly:
 
 ```typescript
-import { Agent, LocalSandbox } from "noumen";
+import { Agent } from "noumen";
+import { LocalSandbox } from "noumen/local";
 import { AnthropicProvider } from "noumen/anthropic";
 
 const code = new Agent({

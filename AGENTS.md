@@ -37,10 +37,12 @@ Run this checklist **every time** you modify any of the files listed below:
 - Update `README.md` Stream Events table
 - Update `website/docs/stream-events/index.mdx` event reference
 
-### If you add/remove/rename a sandbox factory (`src/virtual/sandbox.ts`)
-- Update `README.md` Sandboxes section
-- Update `website/docs/virtual/index.mdx`
+### If you add/remove/rename a sandbox factory (`src/virtual/local-sandbox.ts`, `src/virtual/unsandboxed.ts`, or a remote backend in `src/virtual/*-sandbox.ts`)
+- Add a subpath entry in `src/` (e.g. `src/<backend>.ts`) and register it in `tsup.config.ts` + `package.json` `exports`
+- Update `README.md` Sandboxes section (import table + per-backend example)
+- Update `website/docs/virtual.mdx` (import table + per-backend example)
 - Update `website/src/app/page.tsx` FEATURES array (sandbox count in "Seven sandbox backends")
+- Update `website/src/components/AdapterStack.tsx` (`LOCAL_SANDBOXES` or `REMOTE_SANDBOXES`) so the picker emits the right import line
 
 ### If you change RunOptions (`src/session/types.ts`)
 - Update `website/docs/stream-events/index.mdx` RunOptions table
@@ -93,6 +95,9 @@ Run this checklist **every time** you modify any of the files listed below:
   ```
 - **Use the `sandbox` pattern** when showing explicit sandbox configuration:
   ```typescript
+  import { Agent } from "noumen";
+  import { LocalSandbox } from "noumen/local";
+
   const agent = new Agent({
     provider,
     sandbox: LocalSandbox({ cwd: "/my/project" }),
@@ -104,18 +109,24 @@ Run this checklist **every time** you modify any of the files listed below:
   import { OpenAIProvider } from "noumen/openai";     // correct
   import { OpenAIProvider } from "noumen";              // wrong — providers are not re-exported from main
   ```
-- **Import remote sandbox factories from subpaths**, mirroring the provider convention. Only local factories (`LocalSandbox`, `UnsandboxedLocal`) live on the root barrel. Remote backends live on subpaths so their optional peer deps do not enter the module graph unless opted into:
+- **Import every sandbox factory from its own subpath**, mirroring the provider convention. The root barrel does not export any sandbox factory — only the `Sandbox` / `VirtualFs` / `VirtualComputer` interface types — so every sandbox is opted into by import and optional peer deps never enter the module graph unless requested:
   ```typescript
-  import { DockerSandbox }    from "noumen/docker";    // requires `dockerode`
-  import { E2BSandbox }       from "noumen/e2b";       // requires `e2b`
-  import { FreestyleSandbox } from "noumen/freestyle"; // requires `freestyle-sandboxes`
-  import { SshSandbox }       from "noumen/ssh";       // requires `ssh2`
-  import { SpritesSandbox }   from "noumen/sprites";   // no peer dep
+  import { LocalSandbox }     from "noumen/local";        // OS-level sandboxing
+  import { UnsandboxedLocal } from "noumen/unsandboxed";  // raw host access, no isolation
+  import { DockerSandbox }    from "noumen/docker";       // requires `dockerode`
+  import { E2BSandbox }       from "noumen/e2b";          // requires `e2b`
+  import { FreestyleSandbox } from "noumen/freestyle";    // requires `freestyle-sandboxes`
+  import { SshSandbox }       from "noumen/ssh";          // requires `ssh2`
+  import { SpritesSandbox }   from "noumen/sprites";      // no peer dep
   ```
-  A vitest invariant at `src/__tests__/barrel-cold-start.test.ts` mocks every optional peer to throw on import and asserts the root barrel still loads. If you add a new optional peer, add it to the list there.
-- **Import the Agent and local sandbox factories from the main barrel**:
+  A vitest invariant at `src/__tests__/barrel-cold-start.test.ts` mocks every optional peer to throw on import, asserts the root barrel still loads, and asserts no sandbox factory or adapter is reachable from it. If you add a new optional peer, add it to the list there.
+- **Local adapter primitives** (`LocalFs`, `LocalComputer`, `SandboxedLocalComputer`) live on `noumen/local` next to `LocalSandbox`:
   ```typescript
-  import { Agent, LocalSandbox, UnsandboxedLocal } from "noumen";
+  import { LocalFs } from "noumen/local";
+  ```
+- **Import the Agent and interface types from the main barrel**:
+  ```typescript
+  import { Agent, type Sandbox } from "noumen";
   ```
 
 ## Counts to keep accurate

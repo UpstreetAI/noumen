@@ -8,7 +8,8 @@ noumen ships a built-in server (`noumen/server`) that exposes the agent over HTT
 ## Standalone server
 
 ```typescript
-import { Agent, LocalSandbox } from "noumen";
+import { Agent } from "noumen";
+import { LocalSandbox } from "noumen/local";
 import { createServer } from "noumen/server";
 import { AnthropicProvider } from "noumen/anthropic";
 
@@ -253,7 +254,8 @@ Mount the agent on an existing HTTP server using `createRequestHandler()`:
 
 ```typescript
 import express from "express";
-import { Agent, LocalSandbox } from "noumen";
+import { Agent } from "noumen";
+import { LocalSandbox } from "noumen/local";
 import { createRequestHandler } from "noumen/server";
 import { OpenAIProvider } from "noumen/openai";
 

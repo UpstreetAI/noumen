@@ -129,7 +129,7 @@ Every noumen agent needs two things: an **AI provider** and a **sandbox**.
     A sandbox bundles a filesystem and a shell into one object. All tool I/O routes through it. `LocalSandbox` uses OS-level sandboxing via `@anthropic-ai/sandbox-runtime`. For raw host access with no OS sandbox boundary, use `UnsandboxedLocal` instead.
 
     ```typescript
-    import { LocalSandbox } from "noumen";
+    import { LocalSandbox } from "noumen/local";
 
     const sandbox = LocalSandbox({ cwd: "/path/to/your/project" });
     ```
@@ -193,7 +193,8 @@ Every noumen agent needs two things: an **AI provider** and a **sandbox**.
 ## Full example
 
 ```typescript
-import { Agent, LocalSandbox } from "noumen";
+import { Agent } from "noumen";
+import { LocalSandbox } from "noumen/local";
 import { OpenAIProvider } from "noumen/openai";
 
 const code = new Agent({

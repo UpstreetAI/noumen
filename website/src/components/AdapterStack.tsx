@@ -62,12 +62,14 @@ const LOCAL_SANDBOXES: AdapterOption[] = [
     id: "local",
     name: "Local",
     importName: "LocalSandbox",
+    importPath: "noumen/local",
     code: 'LocalSandbox({ cwd: "/my/project" })',
   },
   {
     id: "unsandboxed",
     name: "Unsandboxed",
     importName: "UnsandboxedLocal",
+    importPath: "noumen/unsandboxed",
     code: 'UnsandboxedLocal({ cwd: "/my/project" })',
   },
   {

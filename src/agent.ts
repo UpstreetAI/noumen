@@ -4,7 +4,8 @@ import type { AIProvider, OutputFormat, ChatCompletionUsage } from "./providers/
 import type { ProviderName } from "./providers/resolve.js";
 import type { VirtualFs } from "./virtual/fs.js";
 import type { VirtualComputer } from "./virtual/computer.js";
-import { UnsandboxedLocal, type Sandbox } from "./virtual/sandbox.js";
+import type { Sandbox } from "./virtual/sandbox.js";
+import { UnsandboxedLocal } from "./virtual/unsandboxed.js";
 import type {
   StreamEvent,
   RunOptions,

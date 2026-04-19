@@ -8,7 +8,8 @@ The retry engine wraps provider calls with automatic retry logic. It handles rat
 ## Configuration
 
 ```typescript
-import { Agent, LocalSandbox } from "noumen";
+import { Agent } from "noumen";
+import { LocalSandbox } from "noumen/local";
 
 const code = new Agent({
   provider,

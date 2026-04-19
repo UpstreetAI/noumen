@@ -57,8 +57,6 @@ describe("root barrel is structurally lightweight", () => {
     // Core surface should be present.
     expect(mod.Agent).toBeTypeOf("function");
     expect(mod.Thread).toBeTypeOf("function");
-    expect(mod.LocalSandbox).toBeTypeOf("function");
-    expect(mod.UnsandboxedLocal).toBeTypeOf("function");
     expect(mod.codingAgent).toBeTypeOf("function");
     expect(mod.planningAgent).toBeTypeOf("function");
     expect(mod.reviewAgent).toBeTypeOf("function");
@@ -71,8 +69,17 @@ describe("root barrel is structurally lightweight", () => {
     expect(mod.OTelTracer).toBeTypeOf("function");
   });
 
-  it("does not re-export remote sandbox factories from the barrel", async () => {
+  it("does not re-export any sandbox factory or adapter from the barrel", async () => {
     const mod = (await import("../index.js")) as unknown as Record<string, unknown>;
+
+    // Local sandbox factories live on their own subpaths now.
+    expect(mod.LocalSandbox).toBeUndefined();
+    expect(mod.UnsandboxedLocal).toBeUndefined();
+
+    // Local adapter primitives move with the LocalSandbox factory.
+    expect(mod.LocalFs).toBeUndefined();
+    expect(mod.LocalComputer).toBeUndefined();
+    expect(mod.SandboxedLocalComputer).toBeUndefined();
 
     // Remote sandbox bindings live on subpaths only.
     expect(mod.DockerSandbox).toBeUndefined();
@@ -81,7 +88,7 @@ describe("root barrel is structurally lightweight", () => {
     expect(mod.SshSandbox).toBeUndefined();
     expect(mod.SpritesSandbox).toBeUndefined();
 
-    // Adapter primitives also move to subpaths.
+    // Remote adapter primitives also live on subpaths only.
     expect(mod.DockerFs).toBeUndefined();
     expect(mod.DockerComputer).toBeUndefined();
     expect(mod.E2BFs).toBeUndefined();
@@ -92,6 +99,20 @@ describe("root barrel is structurally lightweight", () => {
     expect(mod.SshComputer).toBeUndefined();
     expect(mod.SpritesFs).toBeUndefined();
     expect(mod.SpritesComputer).toBeUndefined();
+  });
+
+  it("exposes local sandbox factories on their dedicated subpaths", async () => {
+    const localMod = (await import("../local.js")) as unknown as Record<string, unknown>;
+    expect(localMod.LocalSandbox).toBeTypeOf("function");
+    expect(localMod.LocalFs).toBeTypeOf("function");
+    expect(localMod.LocalComputer).toBeTypeOf("function");
+    expect(localMod.SandboxedLocalComputer).toBeTypeOf("function");
+
+    const unsandboxedMod = (await import("../unsandboxed.js")) as unknown as Record<string, unknown>;
+    expect(unsandboxedMod.UnsandboxedLocal).toBeTypeOf("function");
+    // The unsandboxed subpath must not drag the sandboxed computer along.
+    expect(unsandboxedMod.SandboxedLocalComputer).toBeUndefined();
+    expect(unsandboxedMod.LocalSandbox).toBeUndefined();
   });
 
   it("provider subpaths remain pure types at the barrel level", async () => {

@@ -24,7 +24,8 @@ const agent = new Agent({ provider: "anthropic", cwd: "." });
     description:
       "Swap one line to change the isolation boundary — local to cloud to SSH.",
     filename: "index.ts",
-    code: `import { Agent, LocalSandbox } from "noumen";
+    code: `import { Agent } from "noumen";
+import { LocalSandbox } from "noumen/local";
 import { SshSandbox } from "noumen/ssh";
 
 // local development
@@ -98,7 +99,8 @@ const QUICKSTART_STEPS = [
   {
     title: "Configure",
     description: "Pick a provider and a sandbox.",
-    code: `import { Agent, LocalSandbox } from "noumen";
+    code: `import { Agent } from "noumen";
+import { LocalSandbox } from "noumen/local";
 
 const agent = new Agent({
   provider: "anthropic",

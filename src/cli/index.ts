@@ -8,7 +8,9 @@ import { startRepl } from "./repl.js";
 import { renderEvent, createRenderState, promptPermission } from "./render.js";
 import { runInit } from "./init.js";
 import * as os from "node:os";
-import { Agent, LocalSandbox, UnsandboxedLocal, type Sandbox, type DiagnoseResult, type DiagnoseCheckResult } from "../index.js";
+import { Agent, type Sandbox, type DiagnoseResult, type DiagnoseCheckResult } from "../index.js";
+import { LocalSandbox, type LocalSandboxOptions } from "../virtual/local-sandbox.js";
+import { UnsandboxedLocal } from "../virtual/unsandboxed.js";
 import type { ThinkingConfig } from "../thinking/types.js";
 import type { PermissionMode } from "../permissions/types.js";
 
@@ -48,7 +50,7 @@ function createCliSandbox(config: MergedConfig): Sandbox {
     return UnsandboxedLocal({ cwd: config.cwd });
   }
 
-  const sandboxOpts: import("../index.js").LocalSandboxOptions = {
+  const sandboxOpts: LocalSandboxOptions = {
     cwd: config.cwd,
   };
 

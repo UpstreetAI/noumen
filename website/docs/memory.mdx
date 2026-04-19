@@ -8,7 +8,8 @@ The memory system lets agents retain knowledge across sessions. Memories are sto
 ## Configuration
 
 ```typescript
-import { Agent, LocalSandbox, FileMemoryProvider, LocalFs } from "noumen";
+import { Agent, FileMemoryProvider } from "noumen";
+import { LocalSandbox, LocalFs } from "noumen/local";
 
 const memoryFs = new LocalFs({ basePath: ".noumen/memory" });
 
@@ -46,7 +47,8 @@ interface MemoryProvider {
 The built-in `FileMemoryProvider` stores memories as markdown files on a `VirtualFs`. Each memory is a `.md` file with YAML frontmatter containing metadata, and a `MEMORY.md` index file lists all entries.
 
 ```typescript
-import { FileMemoryProvider, LocalFs } from "noumen";
+import { FileMemoryProvider } from "noumen";
+import { LocalFs } from "noumen/local";
 
 const provider = new FileMemoryProvider(
   new LocalFs({ basePath: ".noumen/memory" }),

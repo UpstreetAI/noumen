@@ -26,7 +26,8 @@ This is a TypeScript monorepo using pnpm workspaces.
 2. Enable project context loading in your `Agent` options:
 
 ```typescript
-import { Agent, LocalSandbox } from "noumen";
+import { Agent } from "noumen";
+import { LocalSandbox } from "noumen/local";
 import { OpenAIProvider } from "noumen/openai";
 
 const code = new Agent({
@@ -208,7 +209,7 @@ You can use the loader and formatter independently of `Agent`, for example to bu
 
 ```typescript
 import { loadProjectContext, buildProjectContextSection } from "noumen";
-import { LocalFs } from "noumen";
+import { LocalFs } from "noumen/local";
 
 const fs = new LocalFs({ basePath: "/" });
 

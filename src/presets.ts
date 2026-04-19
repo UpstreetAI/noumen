@@ -1,6 +1,7 @@
 import { Agent } from "./agent.js";
 import type { AIProvider } from "./providers/types.js";
-import { UnsandboxedLocal, type Sandbox } from "./virtual/sandbox.js";
+import type { Sandbox } from "./virtual/sandbox.js";
+import { UnsandboxedLocal } from "./virtual/unsandboxed.js";
 import type { HookDefinition } from "./hooks/types.js";
 import type { McpServerConfig } from "./mcp/types.js";
 import type { AutoTitleConfig } from "./session/auto-title.js";

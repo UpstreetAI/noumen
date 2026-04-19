@@ -19,11 +19,12 @@ noumen ships seven sandbox factories. The five remote backends (Sprites, Docker,
 
 ### Import paths
 
-The two local factories live on the root barrel. Each remote backend lives on its own subpath so its optional peer dependency (e.g. `dockerode`, `e2b`, `ssh2`) only enters the module graph when you opt in — `import { Agent } from "noumen"` stays lean regardless of which backends are installed.
+Every sandbox factory lives on its own subpath so its optional peer dependency (e.g. `dockerode`, `e2b`, `ssh2`) only enters the module graph when you opt in. `import { Agent } from "noumen"` stays lean regardless of which backends are installed, and every sandbox — including the local ones — shows up as its own explicit import line.
 
 | Factory | Import | Peer dep |
 | --- | --- | --- |
-| `LocalSandbox`, `UnsandboxedLocal` | `noumen` | `@anthropic-ai/sandbox-runtime` (bundled) |
+| `LocalSandbox` | `noumen/local` | `@anthropic-ai/sandbox-runtime` (bundled) |
+| `UnsandboxedLocal` | `noumen/unsandboxed` | — |
 | `SpritesSandbox` | `noumen/sprites` | — (uses global `fetch`) |
 | `DockerSandbox` | `noumen/docker` | `dockerode` |
 | `E2BSandbox` | `noumen/e2b` | `e2b` |
@@ -39,7 +40,7 @@ pnpm add @anthropic-ai/sandbox-runtime
 ```
 
 ```typescript
-import { LocalSandbox } from "noumen";
+import { LocalSandbox } from "noumen/local";
 
 const sandbox = LocalSandbox({ cwd: "/my/project" });
 ```
@@ -89,7 +90,7 @@ const sandbox = LocalSandbox({
 Backed by `node:fs/promises` and `node:child_process` with no OS-level restrictions. The agent can access anything the host process can.
 
 ```typescript
-import { UnsandboxedLocal } from "noumen";
+import { UnsandboxedLocal } from "noumen/unsandboxed";
 
 const sandbox = UnsandboxedLocal({ cwd: "/my/project" });
 ```

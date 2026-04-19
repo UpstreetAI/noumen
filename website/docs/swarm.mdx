@@ -8,7 +8,8 @@ The swarm system lets you run multiple agents concurrently, each with its own co
 ## Quick start
 
 ```typescript
-import { Agent, SwarmManager, InProcessBackend, LocalSandbox } from "noumen";
+import { Agent, SwarmManager, InProcessBackend } from "noumen";
+import { LocalSandbox } from "noumen/local";
 
 const sandbox = LocalSandbox();
 const code = new Agent({ provider, sandbox });

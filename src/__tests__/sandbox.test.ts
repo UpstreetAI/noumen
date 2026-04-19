@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { UnsandboxedLocal, LocalSandbox } from "../virtual/sandbox.js";
+import { UnsandboxedLocal } from "../virtual/unsandboxed.js";
+import { LocalSandbox } from "../virtual/local-sandbox.js";
 import { SpritesSandbox } from "../virtual/sprites-sandbox.js";
 import { LocalFs } from "../virtual/local-fs.js";
 import { LocalComputer } from "../virtual/local-computer.js";

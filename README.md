@@ -52,7 +52,8 @@ console.log(`Done — ${result.toolCalls} tool calls`);
 ### Full control
 
 ```typescript
-import { Agent, LocalSandbox } from "noumen";
+import { Agent } from "noumen";
+import { LocalSandbox } from "noumen/local";
 import { OpenAIProvider } from "noumen/openai";
 
 const agent = new Agent({
@@ -377,9 +378,12 @@ A `Sandbox` bundles a `VirtualFs` (filesystem) and `VirtualComputer` (shell exec
 
 Local factories live on the root barrel; each remote backend ships on its own subpath so its optional peer dep only enters the module graph when you opt in:
 
+Every sandbox factory lives on its own subpath, so importing `noumen` never drags a backend's peer deps into the module graph.
+
 | Factory | Import | Peer dep |
 | --- | --- | --- |
-| `LocalSandbox`, `UnsandboxedLocal` | `noumen` | `@anthropic-ai/sandbox-runtime` (bundled) |
+| `LocalSandbox` | `noumen/local` | `@anthropic-ai/sandbox-runtime` (bundled) |
+| `UnsandboxedLocal` | `noumen/unsandboxed` | — |
 | `SpritesSandbox` | `noumen/sprites` | — |
 | `DockerSandbox` | `noumen/docker` | `dockerode` |
 | `E2BSandbox` | `noumen/e2b` | `e2b` |
@@ -395,7 +399,7 @@ pnpm add @anthropic-ai/sandbox-runtime
 ```
 
 ```typescript
-import { LocalSandbox } from "noumen";
+import { LocalSandbox } from "noumen/local";
 
 const sandbox = LocalSandbox({ cwd: "/my/project" });
 
@@ -416,7 +420,7 @@ Defaults: writes allowed only in `cwd`, reads allowed everywhere, network unrest
 Backed by `fs/promises` and `child_process` with no OS-level restrictions. Use for development or trusted environments:
 
 ```typescript
-import { UnsandboxedLocal } from "noumen";
+import { UnsandboxedLocal } from "noumen/unsandboxed";
 
 const sandbox = UnsandboxedLocal({ cwd: "/my/project" });
 ```
@@ -1017,7 +1021,8 @@ await swarm.waitForAll();
 Persist knowledge across sessions:
 
 ```typescript
-import { FileMemoryProvider, LocalFs } from "noumen";
+import { FileMemoryProvider } from "noumen";
+import { LocalFs } from "noumen/local";
 
 options: {
   memory: {

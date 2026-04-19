@@ -23,6 +23,8 @@ export default defineConfig({
     "src/freestyle.ts",
     "src/ssh.ts",
     "src/sprites.ts",
+    "src/local.ts",
+    "src/unsandboxed.ts",
   ],
   format: ["esm"],
   dts: true,

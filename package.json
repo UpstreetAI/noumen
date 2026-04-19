@@ -89,6 +89,14 @@
     "./sprites": {
       "import": "./dist/sprites.js",
       "types": "./dist/sprites.d.ts"
+    },
+    "./local": {
+      "import": "./dist/local.js",
+      "types": "./dist/local.d.ts"
+    },
+    "./unsandboxed": {
+      "import": "./dist/unsandboxed.js",
+      "types": "./dist/unsandboxed.d.ts"
     }
   },
   "files": [

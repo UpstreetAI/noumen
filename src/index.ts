@@ -47,26 +47,27 @@ export type { OllamaProviderOptions } from "./providers/ollama.js";
 
 // Sandbox (bundled VirtualFs + VirtualComputer)
 //
-// The barrel only exports the local-only factories. Remote backends live
-// on subpaths so that importing `noumen` never pulls their optional peer
-// deps into the module graph:
-//   import { DockerSandbox }    from "noumen/docker"     // requires `dockerode`
-//   import { E2BSandbox }       from "noumen/e2b"        // requires `e2b`
-//   import { FreestyleSandbox } from "noumen/freestyle"  // requires `freestyle-sandboxes`
-//   import { SshSandbox }       from "noumen/ssh"        // requires `ssh2`
-//   import { SpritesSandbox }   from "noumen/sprites"    // no peer dep
-export {
-  LocalSandbox,
-  UnsandboxedLocal,
-  type Sandbox,
-  type LocalSandboxOptions,
-  type UnsandboxedLocalOptions,
-  type SandboxConfig,
-} from "./virtual/sandbox.js";
+// Every sandbox factory lives on its own subpath so that importing `noumen`
+// never pulls a backend's optional peer deps (or the local adapter
+// primitives) into the module graph. Pick the one you want:
+//   import { LocalSandbox }     from "noumen/local"        // OS-level sandboxing
+//   import { UnsandboxedLocal } from "noumen/unsandboxed"  // raw host access
+//   import { DockerSandbox }    from "noumen/docker"       // requires `dockerode`
+//   import { E2BSandbox }       from "noumen/e2b"          // requires `e2b`
+//   import { FreestyleSandbox } from "noumen/freestyle"    // requires `freestyle-sandboxes`
+//   import { SshSandbox }       from "noumen/ssh"          // requires `ssh2`
+//   import { SpritesSandbox }   from "noumen/sprites"      // no peer dep
+//
+// The root barrel only exports the `Sandbox` interface type (plus the
+// underlying `VirtualFs` / `VirtualComputer` types) so custom sandboxes
+// can be typed without pulling in any backend code.
+export type { Sandbox } from "./virtual/sandbox.js";
 
-// Virtual infrastructure (sandboxing primitives)
+// Virtual infrastructure (sandboxing primitives — type-only)
 // VirtualFs and VirtualComputer are the isolation boundary — all tool I/O
 // routes through them. Swap implementations to control the sandbox level.
+// Concrete local implementations (LocalFs, LocalComputer,
+// SandboxedLocalComputer) live on the `noumen/local` subpath.
 export type {
   VirtualFs,
   FileEntry,
@@ -78,15 +79,6 @@ export type {
   ExecOptions,
   CommandResult,
 } from "./virtual/computer.js";
-export { LocalFs, type LocalFsOptions } from "./virtual/local-fs.js";
-export {
-  LocalComputer,
-  type LocalComputerOptions,
-} from "./virtual/local-computer.js";
-export {
-  SandboxedLocalComputer,
-  type SandboxedLocalComputerOptions,
-} from "./virtual/sandboxed-local-computer.js";
 
 // File State Cache
 export type { FileState, FileStateCacheConfig } from "./file-state/types.js";

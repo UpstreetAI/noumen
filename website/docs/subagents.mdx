@@ -12,7 +12,8 @@ Subagents are disabled by default because each spawned child runs a full convers
 ## Configuration
 
 ```typescript
-import { Agent, LocalSandbox } from "noumen";
+import { Agent } from "noumen";
+import { LocalSandbox } from "noumen/local";
 
 const code = new Agent({
   provider,

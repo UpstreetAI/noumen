@@ -10,7 +10,8 @@ noumen is designed as a library first. Whether you're building a VS Code extensi
 The simplest integration: import `Agent`, create a thread, and iterate over events.
 
 ```typescript
-import { Agent, LocalSandbox } from "noumen";
+import { Agent } from "noumen";
+import { LocalSandbox } from "noumen/local";
 import { AnthropicProvider } from "noumen/anthropic";
 
 const code = new Agent({
@@ -136,7 +137,8 @@ Use `result.overall` as a gate before accepting user prompts in production.
 Expose the agent over HTTP using the built-in server. Clients connect via Server-Sent Events for streaming.
 
 ```typescript
-import { Agent, LocalSandbox } from "noumen";
+import { Agent } from "noumen";
+import { LocalSandbox } from "noumen/local";
 import { createServer } from "noumen/server";
 import { AnthropicProvider } from "noumen/anthropic";
 
@@ -182,7 +184,8 @@ Mount the agent on an existing Express, Fastify, or Hono server using `createReq
 
 ```typescript
 import express from "express";
-import { Agent, LocalSandbox } from "noumen";
+import { Agent } from "noumen";
+import { LocalSandbox } from "noumen/local";
 import { createRequestHandler } from "noumen/server";
 import { OpenAIProvider } from "noumen/openai";
 
@@ -250,7 +253,8 @@ Stream agent events to the browser via a Next.js route handler:
 
 ```typescript
 // app/api/agent/route.ts
-import { Agent, LocalSandbox } from "noumen";
+import { Agent } from "noumen";
+import { LocalSandbox } from "noumen/local";
 import { OpenAIProvider } from "noumen/openai";
 
 const code = new Agent({

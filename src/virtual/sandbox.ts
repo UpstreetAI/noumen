@@ -1,19 +1,23 @@
 import type { VirtualFs } from "./fs.js";
 import type { VirtualComputer } from "./computer.js";
-import { LocalFs } from "./local-fs.js";
-import { LocalComputer } from "./local-computer.js";
-import { SandboxedLocalComputer, type SandboxConfig } from "./sandboxed-local-computer.js";
-
-export type { SandboxConfig } from "./sandboxed-local-computer.js";
 
 /**
  * Bundled sandbox: a `VirtualFs` and `VirtualComputer` paired together.
  *
- * Use one of the built-in factories (`LocalSandbox`, `UnsandboxedLocal`)
- * or import a remote backend from its subpath
- * (`noumen/docker`, `noumen/e2b`, `noumen/freestyle`, `noumen/ssh`,
- * `noumen/sprites`). You can also supply any object that satisfies this
- * shape for custom sandboxes (in-memory, custom cloud backends, etc.).
+ * Every concrete backend lives on its own subpath so that importing `noumen`
+ * never pulls a backend's optional peer deps into the module graph. Pick the
+ * one you want:
+ *
+ *   import { LocalSandbox }     from "noumen/local"        // OS-level sandboxing
+ *   import { UnsandboxedLocal } from "noumen/unsandboxed"  // raw host access
+ *   import { DockerSandbox }    from "noumen/docker"       // requires `dockerode`
+ *   import { E2BSandbox }       from "noumen/e2b"          // requires `e2b`
+ *   import { FreestyleSandbox } from "noumen/freestyle"    // requires `freestyle-sandboxes`
+ *   import { SshSandbox }       from "noumen/ssh"          // requires `ssh2`
+ *   import { SpritesSandbox }   from "noumen/sprites"      // no peer dep
+ *
+ * You can also supply any object that satisfies this shape for custom
+ * sandboxes (in-memory, custom cloud backends, etc.).
  */
 export interface Sandbox {
   fs: VirtualFs;
@@ -41,84 +45,4 @@ export interface Sandbox {
    * that don't support reconnection.
    */
   sandboxId?(): string | undefined;
-}
-
-// ---------------------------------------------------------------------------
-// UnsandboxedLocal — raw host access, no isolation
-// ---------------------------------------------------------------------------
-
-export interface UnsandboxedLocalOptions {
-  /** Working directory for both file resolution and command execution. */
-  cwd?: string;
-  /** Default timeout (ms) for shell commands. */
-  defaultTimeout?: number;
-}
-
-/**
- * Create a `Sandbox` backed by the host filesystem and shell with **no
- * OS-level isolation**. The agent can access anything the host process can.
- *
- * Use this for development or fully-trusted environments where sandboxing
- * overhead is unwanted. For production use, prefer `LocalSandbox()` (which
- * wraps commands with `@anthropic-ai/sandbox-runtime`).
- */
-export function UnsandboxedLocal(opts?: UnsandboxedLocalOptions): Sandbox {
-  const cwd = opts?.cwd;
-  return {
-    fs: new LocalFs({ basePath: cwd }),
-    computer: new LocalComputer({
-      defaultCwd: cwd,
-      defaultTimeout: opts?.defaultTimeout,
-    }),
-  };
-}
-
-// ---------------------------------------------------------------------------
-// LocalSandbox — OS-level sandboxing via @anthropic-ai/sandbox-runtime
-// ---------------------------------------------------------------------------
-
-export interface LocalSandboxOptions {
-  /** Working directory for both file resolution and command execution. */
-  cwd?: string;
-  /** Default timeout (ms) for shell commands. */
-  defaultTimeout?: number;
-  /**
-   * Sandbox restrictions. Defaults: writes allowed only in `cwd`,
-   * reads allowed everywhere, network unrestricted.
-   */
-  sandbox?: SandboxConfig;
-}
-
-/**
- * Create a `Sandbox` with OS-level isolation via `@anthropic-ai/sandbox-runtime`.
- *
- * - **macOS**: Seatbelt (`sandbox-exec`) profiles restrict filesystem and network.
- * - **Linux**: bubblewrap (`bwrap`) + socat for namespace-based isolation.
- *
- * Filesystem operations (`VirtualFs`) use the host `node:fs` — the sandbox
- * boundary is enforced on shell commands (`VirtualComputer`), which is where
- * the agent executes arbitrary code.
- *
- * Requires `@anthropic-ai/sandbox-runtime` as a peer dependency.
- */
-export function LocalSandbox(opts?: LocalSandboxOptions): Sandbox {
-  const cwd = opts?.cwd ?? process.cwd();
-  const computer = new SandboxedLocalComputer({
-    defaultCwd: cwd,
-    defaultTimeout: opts?.defaultTimeout,
-    sandbox: {
-      filesystem: {
-        allowWrite: [cwd, ...(opts?.sandbox?.filesystem?.allowWrite ?? [])],
-        denyWrite: opts?.sandbox?.filesystem?.denyWrite,
-        denyRead: opts?.sandbox?.filesystem?.denyRead,
-        allowRead: opts?.sandbox?.filesystem?.allowRead,
-      },
-      network: opts?.sandbox?.network,
-    },
-  });
-  return {
-    fs: new LocalFs({ basePath: cwd }),
-    computer,
-    dispose: () => computer.dispose(),
-  };
 }
