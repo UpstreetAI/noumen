@@ -6,38 +6,46 @@ description: Configure the OpenRouter provider to access hundreds of models thro
 ## Setup
 
 ```bash
-pnpm add openai
+pnpm add @openrouter/ai-sdk-provider
 ```
 
 ```typescript
-import { OpenRouterProvider } from "noumen/openrouter";
+import { AiSdkProvider } from "noumen";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 
-const provider = new OpenRouterProvider({
-  apiKey: "sk-or-...",
-  model: "anthropic/claude-sonnet-4",  // default model
+const openrouter = createOpenRouter({
+  apiKey: process.env.OPENROUTER_API_KEY!,
+});
+
+const provider = new AiSdkProvider({
+  model: openrouter.chat("anthropic/claude-opus-4.6"),
 });
 ```
 
 ## Options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `apiKey` | `string` | required | OpenRouter API key |
-| `model` | `string` | `"anthropic/claude-sonnet-4"` | Default model for all calls |
-| `appName` | `string` | — | Your app name, shown on openrouter.ai rankings (sent as `X-Title` header) |
-| `appUrl` | `string` | — | Your app URL, used for openrouter.ai rankings (sent as `HTTP-Referer` header) |
+All connection-level options come from [`createOpenRouter`](https://github.com/OpenRouterTeam/ai-sdk-provider).
+
+| Option | Source | Description |
+|--------|--------|-------------|
+| `apiKey` | `createOpenRouter` | OpenRouter API key. |
+| `baseURL` | `createOpenRouter` | Override the API base URL. Defaults to `https://openrouter.ai/api/v1`. |
+| `headers` | `createOpenRouter` | Custom headers — use this for OpenRouter's ranking headers: `HTTP-Referer` (your app URL) and `X-Title` (your app name). |
+| `extraBody` | `createOpenRouter` | Extra fields to merge into every request body (for OpenRouter's provider preferences, transforms, etc.). |
 
 ## App identification
 
 OpenRouter optionally accepts headers to identify your app on their leaderboards:
 
 ```typescript
-import { OpenRouterProvider } from "noumen/openrouter";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 
-const provider = new OpenRouterProvider({
-  apiKey: "sk-or-...",
-  appName: "My Coding Agent",
-  appUrl: "https://myapp.com",
+const openrouter = createOpenRouter({
+  apiKey: process.env.OPENROUTER_API_KEY!,
+  headers: {
+    "HTTP-Referer": "https://myapp.com",
+    "X-Title": "My Coding Agent",
+  },
 });
 ```
 
@@ -45,19 +53,18 @@ const provider = new OpenRouterProvider({
 
 OpenRouter gives you access to models from every major provider through a single API. Pass any model ID listed on [openrouter.ai/models](https://openrouter.ai/models):
 
-- `anthropic/claude-sonnet-4` — Claude Sonnet 4
-- `anthropic/claude-opus-4` — Claude Opus 4
+- `anthropic/claude-opus-4.6` — Claude Opus
+- `anthropic/claude-sonnet-4` — Claude Sonnet
+- `openai/gpt-5` — GPT-5
 - `openai/gpt-4o` — GPT-4o
-- `openai/gpt-4.1` — GPT-4.1
-- `google/gemini-2.5-flash` — Gemini 2.5 Flash
 - `google/gemini-2.5-pro` — Gemini 2.5 Pro
 - `deepseek/deepseek-r1` — DeepSeek R1
 - `meta-llama/llama-4-maverick` — Llama 4 Maverick
 
 ## How it works
 
-`OpenRouterProvider` extends `OpenAIProvider` under the hood — OpenRouter exposes an OpenAI-compatible API. The provider pre-configures the base URL (`https://openrouter.ai/api/v1`) and optional ranking headers so you don't have to.
+`@openrouter/ai-sdk-provider` speaks the AI SDK `LanguageModelV2` protocol exposing OpenRouter's OpenAI-compatible API under the hood. `AiSdkProvider` sees a generic OpenAI-family model and forwards `reasoningEffort` via `providerOptions.openai.reasoningEffort`. If you're calling Claude models through OpenRouter and want Anthropic-specific cache breakpoints, pass `providerFamily: "anthropic"` and `cacheConfig: { enabled: true }` explicitly — OpenRouter accepts Anthropic-style `cache_control` markers for supported models.
 
 ## Streaming
 
-Streaming works identically to the OpenAI provider. No additional configuration is needed.
+Streaming works identically to any other AI SDK provider. No additional configuration is needed.

@@ -20,12 +20,14 @@ Run this checklist **every time** you modify any of the files listed below:
 - Update `website/docs/getting-started/index.mdx` Agent constructor examples
 - Update the specific feature's docs page (e.g., if you add a new option for compaction, update `website/docs/compaction/index.mdx`)
 
-### If you add/remove/rename a provider (`src/providers/*.ts`)
-- Update `README.md` Providers section
+### If you add/remove/rename a provider (i.e. add a new vendor to `SUPPORTED_PROVIDERS` in `src/providers/resolve.ts` or wire a new `@ai-sdk/*` factory into the CLI resolver)
+- Update `README.md` Providers section (add a new subsection using the standard `AiSdkProvider` + `@ai-sdk/<vendor>` pattern)
 - Update `website/docs/providers/index.mdx` (card list, description counts)
-- Create or update the provider's dedicated docs page in `website/docs/providers/`
-- Update `website/docs/getting-started/index.mdx` provider tabs
-- Update `website/src/app/page.tsx` FEATURES array (provider count in "Six providers, one interface")
+- Update `website/docs/providers/meta.json` to register the new page
+- Create or update the provider's dedicated docs page in `website/docs/providers/` following the `AiSdkProvider` + `createX(...)` template used by the existing pages
+- Update `website/docs/getting-started.mdx` provider tabs
+- Update `website/src/app/page.tsx` FEATURES array (provider count in "Seven providers, one interface")
+- Update `website/src/components/AdapterStack.tsx` `PROVIDERS` array (importName = the `createX` factory, importPath = the `@ai-sdk/<vendor>` package)
 - Update `website/docs/index.mdx` provider descriptions
 
 ### If you add/remove/rename a tool (`src/tools/*.ts`)
@@ -114,11 +116,31 @@ Run this checklist **every time** you modify any of the files listed below:
   const agent = LocalAgent({ provider: "anthropic", cwd: "." });
   ```
   These accept the full `AgentOptions` shape minus `sandbox`, plus an optional `localSandbox` / `unsandboxed` block for forwarding extra options to the underlying sandbox factory. Remote sandboxes have no shortcut — keep them on `new Agent({ provider, sandbox })` because their config (tokens, templates, connection state) is clearer at the call site.
-- **Import providers from subpaths**, not from the main barrel:
+- **Use `AiSdkProvider` + a Vercel AI SDK factory** for every vendor example. noumen no longer ships per-vendor provider classes — each vendor is just a thin `@ai-sdk/<vendor>` package hooked up to the unified adapter:
   ```typescript
-  import { OpenAIProvider } from "noumen/openai";     // correct
-  import { OpenAIProvider } from "noumen";              // wrong — providers are not re-exported from main
+  import { AiSdkProvider } from "noumen";
+  import { createAnthropic } from "@ai-sdk/anthropic";
+
+  const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const provider = new AiSdkProvider({
+    model: anthropic("claude-opus-4.6"),
+    providerFamily: "anthropic",
+    cacheConfig: { enabled: true },
+  });
   ```
+  Provider-family mapping table used in the docs:
+  - OpenAI / Azure / OpenAI-compatible proxies → `createOpenAI(...).chat(id)` (pin to chat/completions) or `createOpenAI(...)(id)` (Responses API). `providerFamily` is inferred as `"openai"`.
+  - Anthropic → `createAnthropic(...)(id)`, `providerFamily: "anthropic"`, `cacheConfig: { enabled: true }`.
+  - Google Gemini → `createGoogleGenerativeAI(...)(id)`, `providerFamily: "google"`.
+  - OpenRouter → `createOpenRouter(...).chat(id)` from `@openrouter/ai-sdk-provider`.
+  - AWS Bedrock → `createAmazonBedrock(...)(id)`, `providerFamily: "anthropic"` for Claude.
+  - Google Vertex → `createVertex(...).anthropic(id)` for Claude, `createVertex(...)(id)` for Gemini.
+  - Ollama → `createOllama(...)(id)` from `ollama-ai-provider-v2`.
+- **Import `AiSdkProvider` from the main barrel**:
+  ```typescript
+  import { AiSdkProvider } from "noumen";
+  ```
+- **No more `noumen/openai`, `noumen/anthropic`, `noumen/gemini`, `noumen/openrouter`, `noumen/bedrock`, `noumen/vertex`, or `noumen/ollama` subpaths** — these were removed in the 0.8 migration. Do not reintroduce them in docs, code, or examples.
 - **Import every sandbox factory from its own subpath**, mirroring the provider convention. The root barrel does not export any sandbox factory — only the `Sandbox` / `VirtualFs` / `VirtualComputer` interface types — so every sandbox is opted into by import and optional peer deps never enter the module graph unless requested:
   ```typescript
   import { LocalSandbox }     from "noumen/local";        // OS-level sandboxing

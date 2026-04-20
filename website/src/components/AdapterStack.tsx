@@ -23,37 +23,37 @@ const PROVIDERS: AdapterOption[] = [
   {
     id: "openai",
     name: "OpenAI",
-    importName: "OpenAIProvider",
-    importPath: "noumen/openai",
-    code: "new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY })",
+    importName: "createOpenAI",
+    importPath: "@ai-sdk/openai",
+    code: 'new AiSdkProvider({ model: createOpenAI({ apiKey: process.env.OPENAI_API_KEY }).chat("gpt-5") })',
   },
   {
     id: "anthropic",
     name: "Anthropic",
-    importName: "AnthropicProvider",
-    importPath: "noumen/anthropic",
-    code: "new AnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY })",
+    importName: "createAnthropic",
+    importPath: "@ai-sdk/anthropic",
+    code: 'new AiSdkProvider({ model: createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY })("claude-opus-4.6"), providerFamily: "anthropic", cacheConfig: { enabled: true } })',
   },
   {
     id: "gemini",
     name: "Gemini",
-    importName: "GeminiProvider",
-    importPath: "noumen/gemini",
-    code: "new GeminiProvider({ apiKey: process.env.GEMINI_API_KEY })",
+    importName: "createGoogleGenerativeAI",
+    importPath: "@ai-sdk/google",
+    code: 'new AiSdkProvider({ model: createGoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY })("gemini-2.5-flash"), providerFamily: "google" })',
   },
   {
     id: "openrouter",
     name: "OpenRouter",
-    importName: "OpenRouterProvider",
-    importPath: "noumen/openrouter",
-    code: "new OpenRouterProvider({ apiKey: process.env.OPENROUTER_API_KEY })",
+    importName: "createOpenRouter",
+    importPath: "@openrouter/ai-sdk-provider",
+    code: 'new AiSdkProvider({ model: createOpenRouter({ apiKey: process.env.OPENROUTER_API_KEY }).chat("anthropic/claude-opus-4.6") })',
   },
   {
     id: "ollama",
     name: "Ollama",
-    importName: "OllamaProvider",
-    importPath: "noumen/ollama",
-    code: 'new OllamaProvider({ model: "qwen2.5-coder:32b" })',
+    importName: "createOllama",
+    importPath: "ollama-ai-provider-v2",
+    code: 'new AiSdkProvider({ model: createOllama()("qwen2.5-coder:32b") })',
   },
 ];
 
@@ -173,9 +173,11 @@ export function AdapterStack() {
   const swapKey = FIELDS.map((f) => `${selected[f].rowIdx}-${selected[f].optIdx}`).join("_");
 
   // Group imports by their path. Root-barrel imports merge with the default
-  // `Agent` import; subpath imports emit one `import` line each.
+  // `Agent` / `AiSdkProvider` imports; subpath imports emit one `import` line
+  // each. `AiSdkProvider` is always imported because every provider option
+  // constructs one in the `provider:` slot.
   const BARREL = "noumen";
-  const barrelImports = ["Agent"];
+  const barrelImports = ["Agent", "AiSdkProvider"];
   const subpathImports: { path: string; names: string[] }[] = [];
   for (const f of FIELDS) {
     const opt = activeByField[f];

@@ -1,60 +1,95 @@
 ---
 title: OpenAI
-description: Configure the OpenAI provider for GPT-4o and compatible APIs.
+description: Configure the OpenAI provider for GPT-5, GPT-4o, and compatible APIs.
 ---
 
 ## Setup
 
 ```bash
-pnpm add openai
+pnpm add @ai-sdk/openai
 ```
 
 ```typescript
-import { OpenAIProvider } from "noumen/openai";
+import { AiSdkProvider } from "noumen";
+import { createOpenAI } from "@ai-sdk/openai";
 
-const provider = new OpenAIProvider({
-  apiKey: "sk-...",
-  model: "gpt-4o",           // default model
-  baseURL: "https://...",     // optional, for compatible APIs
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY!,
+  baseURL: "https://...",          // optional, for Azure / proxies / compatible APIs
+});
+
+const provider = new AiSdkProvider({
+  // `.chat(id)` pins the call to the chat/completions endpoint.
+  // Drop `.chat(...)` to use the Responses API instead.
+  model: openai.chat("gpt-5"),
 });
 ```
 
 ## Options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `apiKey` | `string` | required | OpenAI API key |
-| `model` | `string` | `"gpt-4o"` | Default model for all calls |
-| `baseURL` | `string` | — | Override the API base URL (for Azure, proxies, or compatible APIs) |
-| `defaultHeaders` | `Record<string, string \| undefined>` | — | Custom headers sent with every request (useful for proxies, auth, or tracking) |
+All connection-level options (API key, base URL, custom headers, organization, project) come straight from [`createOpenAI`](https://sdk.vercel.ai/providers/ai-sdk-providers/openai). noumen does not re-export them — whatever the AI SDK ships, you can pass.
+
+| Option | Source | Description |
+|--------|--------|-------------|
+| `apiKey` | `createOpenAI` | OpenAI API key. |
+| `baseURL` | `createOpenAI` | Override the API base URL (for Azure, proxies, or compatible APIs). |
+| `headers` | `createOpenAI` | Custom headers sent with every request (useful for proxies, auth, or tracking). |
+| `organization`, `project` | `createOpenAI` | OpenAI organization and project IDs. |
 
 ## Compatible APIs
 
 The `baseURL` option lets you use any OpenAI-compatible API. This includes:
 
-- **Azure OpenAI** -- point to your Azure endpoint
-- **OpenRouter** -- use `https://openrouter.ai/api/v1`
-- **Local models** -- use Ollama, vLLM, or other local servers
+- **Azure OpenAI** — point to your Azure endpoint.
+- **OpenRouter** — or use the dedicated [OpenRouter page](/docs/providers/openrouter) for rank-tracking headers.
+- **Local models** — Ollama, vLLM, or other local servers.
 
 ```typescript
-import { OpenAIProvider } from "noumen/openai";
+import { AiSdkProvider } from "noumen";
+import { createOpenAI } from "@ai-sdk/openai";
 
-const provider = new OpenAIProvider({
-  apiKey: "your-key",
+const openrouter = createOpenAI({
+  apiKey: process.env.OPENROUTER_API_KEY!,
   baseURL: "https://openrouter.ai/api/v1",
-  model: "anthropic/claude-sonnet-4",
+});
+
+const provider = new AiSdkProvider({
+  model: openrouter.chat("anthropic/claude-sonnet-4"),
+});
+```
+
+## Chat vs Responses API
+
+`createOpenAI()(modelId)` returns a **Responses API** model by default. That endpoint is the most feature-rich (structured output, stateful tool use, image generation), but some OpenAI-compatible proxies only implement chat/completions. When you're pointing at a proxy, pin to chat/completions:
+
+```typescript
+const provider = new AiSdkProvider({ model: openai.chat("gpt-5") });
+```
+
+Use the default `openai("gpt-5")` for the Responses API.
+
+## Reasoning / thinking
+
+GPT-5 and o-series models support reasoning effort. Pass it on `AgentOptions.thinking` (mapped to `reasoning_effort: "high"`) or directly via `reasoningEffort: "low" | "medium" | "high" | "minimal"` on `ChatParams`:
+
+```typescript
+const agent = new Agent({
+  provider,
+  sandbox: LocalSandbox({ cwd: "." }),
+  options: { thinking: { type: "enabled", budgetTokens: 10_000 } },
 });
 ```
 
 ## Streaming
 
-The OpenAI provider uses `stream: true` and `stream_options: { include_usage: true }` to get token usage on the final chunk. No additional configuration is needed.
+`AiSdkProvider` uses `stream: true` and surfaces `include_usage` metadata automatically. No additional configuration is needed.
 
 ## Models
 
-Any model available through the OpenAI chat completions API works. Common choices:
+Any model available through the OpenAI API works. Common choices:
 
-- `gpt-4o` -- fast, capable, good default
-- `gpt-4.1` -- latest generation
-- `gpt-4o-mini` -- cheaper, faster for simpler tasks
-- `o3-mini` -- reasoning model
+- `gpt-5` — latest flagship
+- `gpt-4o` — fast, capable, good default
+- `gpt-4.1` — previous generation
+- `gpt-4o-mini` — cheaper, faster for simpler tasks
+- `o3-mini` / `o4-mini` — reasoning models

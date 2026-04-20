@@ -269,12 +269,18 @@ The `--thinking` flag maps to provider-specific extended thinking:
 The CLI is a thin wrapper (~500 lines) over the `Agent` and `Thread` APIs. Every config option maps directly to `AgentOptions`. If you need more control, use the library directly:
 
 ```typescript
-import { Agent } from "noumen";
+import { Agent, AiSdkProvider } from "noumen";
 import { LocalSandbox } from "noumen/local";
-import { AnthropicProvider } from "noumen/anthropic";
+import { createAnthropic } from "@ai-sdk/anthropic";
+
+const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 
 const code = new Agent({
-  provider: new AnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY! }),
+  provider: new AiSdkProvider({
+    model: anthropic("claude-opus-4.6"),
+    providerFamily: "anthropic",
+    cacheConfig: { enabled: true },
+  }),
   sandbox: LocalSandbox({ cwd: process.cwd() }),
   options: { projectContext: true, costTracking: { enabled: true } },
 });

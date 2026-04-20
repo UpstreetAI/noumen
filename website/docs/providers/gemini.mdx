@@ -6,44 +6,80 @@ description: Configure the Gemini provider for Google's AI models.
 ## Setup
 
 ```bash
-pnpm add @google/genai
+pnpm add @ai-sdk/google
 ```
 
 ```typescript
-import { GeminiProvider } from "noumen/gemini";
+import { AiSdkProvider } from "noumen";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
 
-const provider = new GeminiProvider({
-  apiKey: "...",                // Google AI Studio API key
-  model: "gemini-2.5-flash",   // default
+const google = createGoogleGenerativeAI({
+  apiKey: process.env.GEMINI_API_KEY!,
+});
+
+const provider = new AiSdkProvider({
+  model: google("gemini-2.5-flash"),
+  providerFamily: "google",
 });
 ```
 
 ## Options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `apiKey` | `string` | required | Google AI Studio API key |
-| `model` | `string` | `"gemini-2.5-flash"` | Default model |
+All connection-level options come from [`createGoogleGenerativeAI`](https://sdk.vercel.ai/providers/ai-sdk-providers/google-generative-ai).
+
+| Option | Source | Description |
+|--------|--------|-------------|
+| `apiKey` | `createGoogleGenerativeAI` | Google AI Studio API key. |
+| `baseURL` | `createGoogleGenerativeAI` | Override the API base URL. |
+| `headers` | `createGoogleGenerativeAI` | Custom headers sent with every request. |
 
 ## Streaming
 
-The Gemini provider uses `generateContentStream` from the `@google/genai` SDK. It maps Gemini's response format to noumen's OpenAI-compatible chunks:
+`AiSdkProvider` routes through the AI SDK's `doStream()`. Gemini-specific mapping is handled by `@ai-sdk/google`:
 
-- Text parts become `content` deltas
-- `functionCall` parts become `tool_calls` deltas
-- `usageMetadata` on chunks is captured for token usage
+- Text parts become `content` deltas.
+- `functionCall` parts become `tool_calls` deltas (with JSON repair applied).
+- Usage metadata is emitted on `finish`.
 
 ## Message conversion
 
-Gemini has a unique message format. The provider handles the mapping:
+Handled by the AI SDK's `convertToModelMessages`:
 
-- System messages become the `systemInstruction` config parameter
-- OpenAI-style `tool` messages are converted to `functionResponse` parts
-- Tool call ID to function name resolution is handled automatically
-- Multiple tool results are batched into a single `user` turn
+- System messages become the `systemInstruction` config parameter.
+- OpenAI-style `tool` messages are converted to `functionResponse` parts.
+- Tool call ID to function name resolution is handled automatically.
+- Multiple tool results are batched into a single `user` turn.
+
+## Thinking budget
+
+Gemini 2.5 supports `thinkingConfig`. Enable it via `AgentOptions.thinking`:
+
+```typescript
+const agent = new Agent({
+  provider,
+  sandbox: LocalSandbox({ cwd: "." }),
+  options: { thinking: { type: "enabled", budgetTokens: 8_000 } },
+});
+```
+
+`AiSdkProvider` maps this to `providerOptions.google.thinkingConfig = { thinkingBudget: 8000 }`.
+
+## Gemini behind an OpenAI-compatible proxy
+
+If you route Gemini traffic through an OpenAI-compatible gateway (e.g. your own metered proxy that exposes `/v1/chat/completions`), wrap it with `@ai-sdk/openai` and pin to `.chat(...)` — noumen will classify it as the `openai` family and map reasoning effort accordingly:
+
+```typescript
+import { createOpenAI } from "@ai-sdk/openai";
+
+const gateway = createOpenAI({
+  baseURL: "https://my-proxy.example.com/google",
+  apiKey: userJwt,
+});
+const provider = new AiSdkProvider({ model: gateway.chat("gemini-2.5-flash") });
+```
 
 ## Models
 
-- `gemini-2.5-flash` -- fast, good default for coding tasks
-- `gemini-2.5-pro` -- higher capability for complex tasks
-- `gemini-2.0-flash` -- previous generation, still capable
+- `gemini-2.5-flash` — fast, good default for coding tasks.
+- `gemini-2.5-pro` — higher capability for complex tasks.
+- `gemini-2.0-flash` — previous generation, still capable.

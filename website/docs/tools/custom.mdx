@@ -28,10 +28,12 @@ Where:
 Pass tools in the `Agent` options:
 
 ```typescript
-import { Agent } from "noumen";
+import { Agent, AiSdkProvider } from "noumen";
 import { LocalSandbox } from "noumen/local";
-import { OpenAIProvider } from "noumen/openai";
+import { createOpenAI } from "@ai-sdk/openai";
 import type { Tool, ToolContext, ToolResult } from "noumen";
+
+const openai = createOpenAI({ apiKey: "..." });
 
 const fetchUrlTool: Tool = {
   name: "FetchURL",
@@ -56,7 +58,7 @@ const fetchUrlTool: Tool = {
 };
 
 const code = new Agent({
-  provider: new OpenAIProvider({ apiKey: "..." }),
+  provider: new AiSdkProvider({ model: openai.chat("gpt-5") }),
   sandbox: LocalSandbox({ cwd: "." }),
   options: {
     tools: [fetchUrlTool],

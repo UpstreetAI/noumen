@@ -26,12 +26,14 @@ This is a TypeScript monorepo using pnpm workspaces.
 2. Enable project context loading in your `Agent` options:
 
 ```typescript
-import { Agent } from "noumen";
+import { Agent, AiSdkProvider } from "noumen";
 import { LocalSandbox } from "noumen/local";
-import { OpenAIProvider } from "noumen/openai";
+import { createOpenAI } from "@ai-sdk/openai";
+
+const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const code = new Agent({
-  provider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY }),
+  provider: new AiSdkProvider({ model: openai.chat("gpt-5") }),
   sandbox: LocalSandbox({ cwd: "/my/project" }),
   options: {
     projectContext: true,

@@ -10,13 +10,17 @@ noumen is designed as a library first. Whether you're building a VS Code extensi
 The simplest integration: import `Agent`, create a thread, and iterate over events.
 
 ```typescript
-import { Agent } from "noumen";
+import { Agent, AiSdkProvider } from "noumen";
 import { LocalSandbox } from "noumen/local";
-import { AnthropicProvider } from "noumen/anthropic";
+import { createAnthropic } from "@ai-sdk/anthropic";
+
+const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 
 const code = new Agent({
-  provider: new AnthropicProvider({
-    apiKey: process.env.ANTHROPIC_API_KEY!,
+  provider: new AiSdkProvider({
+    model: anthropic("claude-opus-4.6"),
+    providerFamily: "anthropic",
+    cacheConfig: { enabled: true },
   }),
   sandbox: LocalSandbox({ cwd: "/my/project" }),
   options: {
@@ -79,12 +83,14 @@ console.log(`Done — ${result.toolCalls} tool calls, ${result.usage.total_token
 For quicker setup, use a preset that configures sensible defaults:
 
 ```typescript
-import { codingAgent } from "noumen";
+import { codingAgent, AiSdkProvider } from "noumen";
 import { LocalSandbox } from "noumen/local";
-import { OpenAIProvider } from "noumen/openai";
+import { createOpenAI } from "@ai-sdk/openai";
+
+const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
 const code = codingAgent({
-  provider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY! }),
+  provider: new AiSdkProvider({ model: openai.chat("gpt-5") }),
   cwd: "/my/project",
   sandbox: LocalSandbox({ cwd: "/my/project" }),
 });
@@ -143,13 +149,18 @@ Use `result.overall` as a gate before accepting user prompts in production.
 Expose the agent over HTTP using the built-in server. Clients connect via Server-Sent Events for streaming.
 
 ```typescript
-import { Agent } from "noumen";
+import { Agent, AiSdkProvider } from "noumen";
 import { LocalSandbox } from "noumen/local";
 import { createServer } from "noumen/server";
-import { AnthropicProvider } from "noumen/anthropic";
+import { createAnthropic } from "@ai-sdk/anthropic";
+
+const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 
 const code = new Agent({
-  provider: new AnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY! }),
+  provider: new AiSdkProvider({
+    model: anthropic("claude-opus-4.6"),
+    providerFamily: "anthropic",
+  }),
   sandbox: LocalSandbox({ cwd: "/workspace" }),
   options: { permissions: { mode: "bypassPermissions" } },
 });
@@ -190,13 +201,15 @@ Mount the agent on an existing Express, Fastify, or Hono server using `createReq
 
 ```typescript
 import express from "express";
-import { Agent } from "noumen";
+import { Agent, AiSdkProvider } from "noumen";
 import { LocalSandbox } from "noumen/local";
 import { createRequestHandler } from "noumen/server";
-import { OpenAIProvider } from "noumen/openai";
+import { createOpenAI } from "@ai-sdk/openai";
+
+const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
 const code = new Agent({
-  provider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY! }),
+  provider: new AiSdkProvider({ model: openai.chat("gpt-5") }),
   sandbox: LocalSandbox({ cwd: "/workspace" }),
   options: { permissions: { mode: "bypassPermissions" } },
 });
@@ -259,12 +272,14 @@ Stream agent events to the browser via a Next.js route handler:
 
 ```typescript
 // app/api/agent/route.ts
-import { Agent } from "noumen";
+import { Agent, AiSdkProvider } from "noumen";
 import { LocalSandbox } from "noumen/local";
-import { OpenAIProvider } from "noumen/openai";
+import { createOpenAI } from "@ai-sdk/openai";
+
+const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
 const code = new Agent({
-  provider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY! }),
+  provider: new AiSdkProvider({ model: openai.chat("gpt-5") }),
   sandbox: LocalSandbox({ cwd: process.env.WORKSPACE_DIR! }),
   options: { permissions: { mode: "bypassPermissions" } },
 });
@@ -301,13 +316,18 @@ Run the agent in Electron's main process and communicate with the renderer via I
 ```typescript
 // main.ts
 import { app, ipcMain } from "electron";
-import { codingAgent } from "noumen";
+import { codingAgent, AiSdkProvider } from "noumen";
 import { LocalSandbox } from "noumen/local";
-import { AnthropicProvider } from "noumen/anthropic";
+import { createAnthropic } from "@ai-sdk/anthropic";
 
+const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 const cwd = app.getPath("documents");
 const code = codingAgent({
-  provider: new AnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY! }),
+  provider: new AiSdkProvider({
+    model: anthropic("claude-opus-4.6"),
+    providerFamily: "anthropic",
+    cacheConfig: { enabled: true },
+  }),
   cwd,
   sandbox: LocalSandbox({ cwd }),
 });
@@ -334,16 +354,17 @@ Integrate the agent into a VS Code extension:
 ```typescript
 // extension.ts
 import * as vscode from "vscode";
-import { codingAgent } from "noumen";
+import { codingAgent, AiSdkProvider } from "noumen";
 import { LocalSandbox } from "noumen/local";
-import { OpenAIProvider } from "noumen/openai";
+import { createOpenAI } from "@ai-sdk/openai";
 
 export function activate(context: vscode.ExtensionContext) {
   const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const openai = createOpenAI({
+    apiKey: vscode.workspace.getConfiguration("noumen").get("apiKey")!,
+  });
   const code = codingAgent({
-    provider: new OpenAIProvider({
-      apiKey: vscode.workspace.getConfiguration("noumen").get("apiKey")!,
-    }),
+    provider: new AiSdkProvider({ model: openai.chat("gpt-5") }),
     cwd,
     sandbox: LocalSandbox({ cwd }),
   });

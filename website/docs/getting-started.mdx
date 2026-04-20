@@ -19,89 +19,104 @@ Every noumen agent needs two things: an **AI provider** and a **sandbox**.
   <Step>
     ### Choose a provider
 
-    noumen ships seven providers. Cloud providers take an API key; Ollama runs locally with no key needed.
+    noumen wraps any Vercel AI SDK `LanguageModel` via `AiSdkProvider`. Install the vendor SDK for the provider you want and hand its model instance to noumen. Cloud providers take an API key; Ollama runs locally with no key needed.
 
     <Tabs items={["OpenAI", "Anthropic", "Gemini", "OpenRouter", "Bedrock", "Vertex", "Ollama"]}>
       <Tab value="OpenAI">
         ```bash
-        pnpm add openai
+        pnpm add @ai-sdk/openai
         ```
 
         ```typescript
-        import { OpenAIProvider } from "noumen/openai";
+        import { AiSdkProvider } from "noumen";
+        import { createOpenAI } from "@ai-sdk/openai";
 
-        const provider = new OpenAIProvider({
-          apiKey: process.env.OPENAI_API_KEY!,
-          model: "gpt-4o", // default
-        });
+        const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+        const provider = new AiSdkProvider({ model: openai.chat("gpt-5") });
         ```
       </Tab>
       <Tab value="Anthropic">
         ```bash
-        pnpm add @anthropic-ai/sdk
+        pnpm add @ai-sdk/anthropic
         ```
 
         ```typescript
-        import { AnthropicProvider } from "noumen/anthropic";
+        import { AiSdkProvider } from "noumen";
+        import { createAnthropic } from "@ai-sdk/anthropic";
 
-        const provider = new AnthropicProvider({
-          apiKey: process.env.ANTHROPIC_API_KEY!,
-          model: "claude-sonnet-4", // default
+        const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
+        const provider = new AiSdkProvider({
+          model: anthropic("claude-opus-4.6"),
+          providerFamily: "anthropic",
+          cacheConfig: { enabled: true },
         });
         ```
       </Tab>
       <Tab value="Gemini">
         ```bash
-        pnpm add @google/genai
+        pnpm add @ai-sdk/google
         ```
 
         ```typescript
-        import { GeminiProvider } from "noumen/gemini";
+        import { AiSdkProvider } from "noumen";
+        import { createGoogleGenerativeAI } from "@ai-sdk/google";
 
-        const provider = new GeminiProvider({
-          apiKey: process.env.GEMINI_API_KEY!,
-          model: "gemini-2.5-flash", // default
+        const google = createGoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY! });
+        const provider = new AiSdkProvider({
+          model: google("gemini-2.5-flash"),
+          providerFamily: "google",
         });
         ```
       </Tab>
       <Tab value="OpenRouter">
         ```bash
-        pnpm add openai
+        pnpm add @openrouter/ai-sdk-provider
         ```
 
         ```typescript
-        import { OpenRouterProvider } from "noumen/openrouter";
+        import { AiSdkProvider } from "noumen";
+        import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 
-        const provider = new OpenRouterProvider({
-          apiKey: process.env.OPENROUTER_API_KEY!,
-          model: "anthropic/claude-sonnet-4", // default
+        const openrouter = createOpenRouter({ apiKey: process.env.OPENROUTER_API_KEY! });
+        const provider = new AiSdkProvider({
+          model: openrouter.chat("anthropic/claude-opus-4.6"),
         });
         ```
       </Tab>
       <Tab value="Bedrock">
         ```bash
-        pnpm add @anthropic-ai/bedrock-sdk
+        pnpm add @ai-sdk/amazon-bedrock
         ```
 
         ```typescript
-        import { BedrockAnthropicProvider } from "noumen/bedrock";
+        import { AiSdkProvider } from "noumen";
+        import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 
-        const provider = new BedrockAnthropicProvider({
-          region: "us-east-1", // default
+        const bedrock = createAmazonBedrock({ region: process.env.AWS_REGION });
+        const provider = new AiSdkProvider({
+          model: bedrock("us.anthropic.claude-opus-4.6-v1:0"),
+          providerFamily: "anthropic",
+          cacheConfig: { enabled: true },
         });
         ```
       </Tab>
       <Tab value="Vertex">
         ```bash
-        pnpm add @anthropic-ai/vertex-sdk google-auth-library
+        pnpm add @ai-sdk/google-vertex
         ```
 
         ```typescript
-        import { VertexAnthropicProvider } from "noumen/vertex";
+        import { AiSdkProvider } from "noumen";
+        import { createVertex } from "@ai-sdk/google-vertex";
 
-        const provider = new VertexAnthropicProvider({
-          projectId: "my-gcp-project",
-          region: "us-east5", // default
+        const vertex = createVertex({
+          project: process.env.GOOGLE_CLOUD_PROJECT,
+          location: "us-east5",
+        });
+        const provider = new AiSdkProvider({
+          model: vertex.anthropic("claude-opus-4.6"),
+          providerFamily: "anthropic",
+          cacheConfig: { enabled: true },
         });
         ```
       </Tab>
@@ -110,17 +125,20 @@ Every noumen agent needs two things: an **AI provider** and a **sandbox**.
 
         ```bash
         ollama pull qwen2.5-coder:32b
+        pnpm add ollama-ai-provider-v2
         ```
 
         ```typescript
-        import { OllamaProvider } from "noumen/ollama";
+        import { AiSdkProvider } from "noumen";
+        import { createOllama } from "ollama-ai-provider-v2";
 
-        const provider = new OllamaProvider({
-          model: "qwen2.5-coder:32b", // default
-        });
+        const ollama = createOllama();
+        const provider = new AiSdkProvider({ model: ollama("qwen2.5-coder:32b") });
         ```
       </Tab>
     </Tabs>
+
+    Prefer a one-liner? The string shorthand still works — pass `provider: "anthropic"` (or any other provider name) and noumen dynamically imports the matching `@ai-sdk/*` package for you.
   </Step>
 
   <Step>
@@ -150,7 +168,7 @@ Every noumen agent needs two things: an **AI provider** and a **sandbox**.
       sandbox,
       options: {
         sessionDir: ".noumen/sessions",
-        model: "gpt-4o",
+        model: "gpt-5",
         maxTokens: 8192,
         autoCompact: true,
         projectContext: true,
@@ -193,12 +211,14 @@ Every noumen agent needs two things: an **AI provider** and a **sandbox**.
 ## Full example
 
 ```typescript
-import { Agent } from "noumen";
+import { Agent, AiSdkProvider } from "noumen";
 import { LocalSandbox } from "noumen/local";
-import { OpenAIProvider } from "noumen/openai";
+import { createOpenAI } from "@ai-sdk/openai";
+
+const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
 const code = new Agent({
-  provider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY! }),
+  provider: new AiSdkProvider({ model: openai.chat("gpt-5") }),
   sandbox: LocalSandbox({ cwd: process.cwd() }),
   options: {
     sessionDir: ".noumen/sessions",
@@ -219,12 +239,14 @@ for await (const event of thread.run("Add input validation to the signup handler
 For the fastest setup, use a preset instead of configuring `Agent` manually:
 
 ```typescript
-import { codingAgent } from "noumen";
+import { codingAgent, AiSdkProvider } from "noumen";
 import { LocalSandbox } from "noumen/local";
-import { OpenAIProvider } from "noumen/openai";
+import { createOpenAI } from "@ai-sdk/openai";
+
+const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
 const code = codingAgent({
-  provider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY! }),
+  provider: new AiSdkProvider({ model: openai.chat("gpt-5") }),
   cwd: process.cwd(),
   sandbox: LocalSandbox({ cwd: process.cwd() }),
 });

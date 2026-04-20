@@ -8,13 +8,18 @@ noumen ships a built-in server (`noumen/server`) that exposes the agent over HTT
 ## Standalone server
 
 ```typescript
-import { Agent } from "noumen";
+import { Agent, AiSdkProvider } from "noumen";
 import { LocalSandbox } from "noumen/local";
 import { createServer } from "noumen/server";
-import { AnthropicProvider } from "noumen/anthropic";
+import { createAnthropic } from "@ai-sdk/anthropic";
+
+const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 
 const code = new Agent({
-  provider: new AnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY! }),
+  provider: new AiSdkProvider({
+    model: anthropic("claude-opus-4.6"),
+    providerFamily: "anthropic",
+  }),
   sandbox: LocalSandbox({ cwd: "/workspace" }),
   options: { permissions: { mode: "bypassPermissions" } },
 });
@@ -254,13 +259,15 @@ Mount the agent on an existing HTTP server using `createRequestHandler()`:
 
 ```typescript
 import express from "express";
-import { Agent } from "noumen";
+import { Agent, AiSdkProvider } from "noumen";
 import { LocalSandbox } from "noumen/local";
 import { createRequestHandler } from "noumen/server";
-import { OpenAIProvider } from "noumen/openai";
+import { createOpenAI } from "@ai-sdk/openai";
+
+const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
 const code = new Agent({
-  provider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY! }),
+  provider: new AiSdkProvider({ model: openai.chat("gpt-5") }),
   sandbox: LocalSandbox({ cwd: "/workspace" }),
   options: { permissions: { mode: "bypassPermissions" } },
 });

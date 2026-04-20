@@ -12,34 +12,42 @@ ollama pull qwen2.5-coder:32b
 ollama serve
 ```
 
-No provider SDK is required — `OllamaProvider` uses the `openai` package under the hood (already a peer dependency).
+Add the Vercel AI SDK provider for Ollama:
 
 ```bash
-pnpm add openai
+pnpm add ollama-ai-provider-v2
 ```
 
 ```typescript
-import { OllamaProvider } from "noumen/ollama";
+import { AiSdkProvider } from "noumen";
+import { createOllama } from "ollama-ai-provider-v2";
 
-const provider = new OllamaProvider({
-  model: "qwen2.5-coder:32b",  // default model
+const ollama = createOllama({
+  // Point at a remote Ollama server by overriding baseURL:
+  // baseURL: "http://192.168.1.10:11434/api",
+});
+
+const provider = new AiSdkProvider({
+  model: ollama("qwen2.5-coder:32b"),
 });
 ```
 
 ## Options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `baseURL` | `string` | `"http://localhost:11434/v1"` | Ollama server URL (OpenAI-compatible endpoint) |
-| `model` | `string` | `"qwen2.5-coder:32b"` | Default model for all calls |
+All connection-level options come from [`createOllama`](https://github.com/nordwestt/ollama-ai-provider-v2).
+
+| Option | Source | Description |
+|--------|--------|-------------|
+| `baseURL` | `createOllama` | Ollama server URL. Defaults to `http://localhost:11434/api`. |
+| `headers` | `createOllama` | Custom headers sent with every request. |
 
 ## Environment variables
 
 | Variable | Description |
 |----------|-------------|
-| `OLLAMA_HOST` | Override the Ollama server address (e.g. `http://192.168.1.10:11434`) |
+| `OLLAMA_HOST` | Override the Ollama server address (e.g. `http://192.168.1.10:11434`). The CLI shorthand (`provider: "ollama"`) reads this to derive `baseURL`. |
 
-When `OLLAMA_HOST` is set, the CLI auto-detects Ollama as the provider and appends `/v1` to form the base URL.
+When `OLLAMA_HOST` is set, the CLI auto-detects Ollama as the provider.
 
 ## CLI usage
 
@@ -57,17 +65,13 @@ noumen -p ollama -m llama3.1:70b "explain this code"
 
 Ollama models must support OpenAI-compatible function calling for the full agent loop. Recommended models:
 
-- `qwen2.5-coder:32b` — strong coding and tool-calling (default)
-- `qwen2.5-coder:14b` — lighter alternative with good tool-calling
-- `llama3.1:70b` — general-purpose with function calling
-- `llama3.1:8b` — fast local option for simpler tasks
-- `mistral:7b` — compact with tool support
-- `command-r:35b` — Cohere's model with native tool use
-
-## How it works
-
-`OllamaProvider` extends `OpenAIProvider` — Ollama exposes an OpenAI-compatible API at `/v1`. The provider pre-configures the base URL and removes the API key requirement, so no additional setup is needed beyond having Ollama running.
+- `qwen2.5-coder:32b` — strong coding and tool-calling (default).
+- `qwen2.5-coder:14b` — lighter alternative with good tool-calling.
+- `llama3.1:70b` — general-purpose with function calling.
+- `llama3.1:8b` — fast local option for simpler tasks.
+- `mistral:7b` — compact with tool support.
+- `command-r:35b` — Cohere's model with native tool use.
 
 ## Streaming
 
-Streaming works identically to the OpenAI provider. No additional configuration is needed.
+`ollama-ai-provider-v2` speaks `LanguageModelV2` directly — no OpenAI-compat layer, no HTTP-level translation in noumen. Streaming, tool calls, and structured output work identically to any other AI SDK provider.

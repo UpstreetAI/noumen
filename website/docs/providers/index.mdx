@@ -1,21 +1,64 @@
 ---
 title: Providers
-description: noumen supports OpenAI, Anthropic, Google Gemini, OpenRouter, AWS Bedrock, Google Vertex AI, and Ollama as AI providers, all behind a unified interface.
+description: noumen wraps any Vercel AI SDK LanguageModel — OpenAI, Anthropic, Google Gemini, OpenRouter, AWS Bedrock, Google Vertex AI, and Ollama are all first-class behind a single unified adapter.
 ---
 
-noumen is provider-agnostic. Every provider implements the `AIProvider` interface, which accepts OpenAI-compatible chat parameters and returns an async iterable of streaming chunks. You can swap providers without changing any application code.
+noumen is provider-agnostic. Instead of shipping one class per vendor, noumen exposes a single [`AiSdkProvider`](https://github.com/UpstreetAI/noumen/blob/main/src/providers/ai-sdk/provider.ts) adapter that wraps any Vercel AI SDK `LanguageModel` instance (`@ai-sdk/openai`, `@ai-sdk/anthropic`, `@ai-sdk/google`, `@openrouter/ai-sdk-provider`, `@ai-sdk/amazon-bedrock`, `@ai-sdk/google-vertex`, `ollama-ai-provider-v2`, …). Because every vendor SDK implements the same `LanguageModelV2` / `V3` contract, noumen only has to translate once and every new Vercel-supported provider works out of the box.
 
 ## Supported providers
 
 <Cards>
-  <Card title="OpenAI" description="GPT-4o, GPT-4.1, and any OpenAI-compatible API" href="/docs/providers/openai" />
+  <Card title="OpenAI" description="GPT-5, GPT-4o, GPT-4.1, and any OpenAI-compatible API" href="/docs/providers/openai" />
   <Card title="Anthropic" description="Claude Sonnet, Opus, and Haiku models" href="/docs/providers/anthropic" />
   <Card title="Google Gemini" description="Gemini 2.5 Flash and Pro models" href="/docs/providers/gemini" />
   <Card title="OpenRouter" description="Hundreds of models from every provider through a single API" href="/docs/providers/openrouter" />
   <Card title="AWS Bedrock" description="Route Anthropic models through AWS Bedrock" href="/docs/providers/bedrock" />
-  <Card title="Google Vertex AI" description="Route Anthropic models through Google Cloud Vertex AI" href="/docs/providers/vertex" />
+  <Card title="Google Vertex AI" description="Route Anthropic or Gemini models through Google Cloud Vertex AI" href="/docs/providers/vertex" />
   <Card title="Ollama" description="Run models locally — no API key, no cloud dependency" href="/docs/providers/ollama" />
 </Cards>
+
+## The pattern
+
+Every provider follows the same three lines:
+
+```typescript
+import { AiSdkProvider } from "noumen";
+import { createOpenAI } from "@ai-sdk/openai";
+
+const provider = new AiSdkProvider({
+  model: createOpenAI({ apiKey: process.env.OPENAI_API_KEY })("gpt-5"),
+});
+```
+
+Swap `@ai-sdk/openai` for `@ai-sdk/anthropic`, `@ai-sdk/google`, `@openrouter/ai-sdk-provider`, `@ai-sdk/amazon-bedrock`, `@ai-sdk/google-vertex`, or `ollama-ai-provider-v2` — the rest of your agent code is identical.
+
+For quick CLI-style usage, the string shorthand still works and auto-imports the right AI SDK package:
+
+```typescript
+import { LocalAgent } from "noumen/local";
+
+const agent = LocalAgent({ provider: "anthropic", cwd: "." });
+// ↳ dynamically imports @ai-sdk/anthropic and wraps it in AiSdkProvider for you.
+```
+
+## AiSdkProvider options
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `model` | `LanguageModelV2 \| V3` | Any AI SDK model instance — the only required option. |
+| `defaultModel` | `string` | Override the model id reported by `provider.defaultModel`. Defaults to `model.modelId`. |
+| `providerFamily` | `"openai" \| "anthropic" \| "google"` | Override the vendor family classifier. Set this when you route Anthropic traffic through a custom proxy that reports a different `provider` string, so noumen keeps applying Anthropic cache breakpoints, thinking-budget knobs, etc. |
+| `cacheConfig` | `CacheControlConfig` | Anthropic prompt-cache configuration. `{ enabled: true }` inserts a single `cacheControl: { type: "ephemeral" }` breakpoint and honors `ChatParams.skipCacheWrite`. No-op for non-Anthropic families. |
+
+## Provider-specific options
+
+Per-call settings like reasoning effort, thinking budget, structured output schemas, or cache breakpoints are configured through `ChatParams` (the existing noumen API) — `AiSdkProvider` maps them to the right `providerOptions.*` entry based on the detected family:
+
+- **Anthropic models** → `providerOptions.anthropic.{ thinking, cacheControl, signature, redactedData }`
+- **OpenAI / OpenRouter / Gemini-via-OpenAI-proxy** → `providerOptions.openai.reasoningEffort`
+- **Native Gemini (`@ai-sdk/google`)** → `providerOptions.google.thinkingConfig`
+
+No configuration required — use `thinking: { type: "enabled", budgetTokens: 10_000 }` or `reasoningEffort: "high"` on your `AgentOptions` exactly like before and noumen routes it correctly.
 
 ## The AIProvider interface
 
@@ -31,17 +74,18 @@ The `ChatParams` type includes:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `model` | `string` | Model identifier |
-| `messages` | `ChatMessage[]` | Conversation history |
-| `tools` | `ToolDefinition[]` | Available tool definitions |
-| `max_tokens` | `number` | Maximum output tokens |
-| `system` | `string` | System prompt |
-| `temperature` | `number` | Sampling temperature |
-| `thinking` | `ThinkingConfig` | Extended thinking configuration (budget tokens, enabled/disabled) |
-| `outputFormat` | `OutputFormat` | Constrain the model to produce structured output (JSON schema or JSON object mode) |
-| `skipCacheWrite` | `boolean` | Place the cache breakpoint on the second-to-last message instead of the last (used by subagent forks) |
+| `model` | `string` | Model identifier (overrides the one baked into the SDK model instance). |
+| `messages` | `ChatMessage[]` | Conversation history. |
+| `tools` | `ToolDefinition[]` | Available tool definitions. |
+| `max_tokens` | `number` | Maximum output tokens. |
+| `system` | `string` | System prompt. |
+| `temperature` | `number` | Sampling temperature. |
+| `thinking` | `ThinkingConfig` | Extended thinking configuration (budget tokens, enabled/disabled). |
+| `reasoningEffort` | `"minimal" \| "low" \| "medium" \| "high"` | OpenAI-style reasoning effort knob. |
+| `outputFormat` | `OutputFormat` | Constrain the model to produce structured output (JSON schema or JSON object mode). |
+| `skipCacheWrite` | `boolean` | Place the Anthropic cache breakpoint on the second-to-last message instead of the last (used by subagent forks). |
 
-Each provider internally converts these to their native SDK format and normalizes the streaming output back to a common `ChatStreamChunk` shape.
+`AiSdkProvider` internally converts these to Vercel AI SDK `LanguageModelV2CallOptions` and normalizes the streaming output back to a common `ChatStreamChunk` shape. The adapter applies `sanitizeToolCallInput` + `tryRepairJson` to tool-call JSON and `fixTypelessProperties` to tool schemas so flaky provider output doesn't leak into your agent.
 
 ## Token usage
 
@@ -52,7 +96,28 @@ interface ChatCompletionUsage {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+  thinking_tokens?: number;
+  cache_read_tokens?: number;
+  cache_creation_tokens?: number;
 }
 ```
 
 This is automatically captured by the Thread and emitted as `usage` and `turn_complete` stream events. See [Stream Events](/docs/stream-events) for details.
+
+## Custom providers
+
+Want to proxy traffic through your own backend (for auth, metering, or fallbacks)? Construct any AI SDK factory with a custom `baseURL` and `apiKey` — noumen doesn't care:
+
+```typescript
+import { AiSdkProvider } from "noumen";
+import { createOpenAI } from "@ai-sdk/openai";
+
+const gateway = createOpenAI({
+  baseURL: "https://my-metered-proxy.example.com/openai",
+  apiKey: userJwt, // forwarded as Authorization: Bearer <jwt>
+});
+
+const provider = new AiSdkProvider({ model: gateway.chat("gpt-5") });
+```
+
+Or for fully custom vendors, implement `AiSdkLanguageModel` (a minimal structural subset of `LanguageModelV2`) directly — no AI SDK dependency required at all.

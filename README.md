@@ -14,14 +14,19 @@ Any provider. Any sandbox. One package.
 pnpm add noumen
 ```
 
-Then install the provider SDK you need:
+Then install the Vercel AI SDK package for the provider you want:
 
 ```bash
-pnpm add openai           # for OpenAI / OpenRouter / Ollama
-pnpm add @anthropic-ai/sdk  # for Anthropic
-pnpm add @google/genai      # for Gemini
-# Ollama requires no SDK — just install https://ollama.com
+pnpm add @ai-sdk/openai              # OpenAI
+pnpm add @ai-sdk/anthropic           # Anthropic
+pnpm add @ai-sdk/google              # Google Gemini
+pnpm add @openrouter/ai-sdk-provider # OpenRouter
+pnpm add @ai-sdk/amazon-bedrock      # AWS Bedrock
+pnpm add @ai-sdk/google-vertex       # Google Vertex AI
+pnpm add ollama-ai-provider-v2       # Ollama (local)
 ```
+
+noumen wraps any Vercel AI SDK `LanguageModel` via a single `AiSdkProvider` adapter — install only the packages for the providers you actually use.
 
 ## Quick Start
 
@@ -56,12 +61,14 @@ console.log(`Done — ${result.toolCalls} tool calls`);
 ### Full control
 
 ```typescript
-import { Agent } from "noumen";
+import { Agent, AiSdkProvider } from "noumen";
 import { LocalSandbox } from "noumen/local";
-import { OpenAIProvider } from "noumen/openai";
+import { createOpenAI } from "@ai-sdk/openai";
+
+const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const agent = new Agent({
-  provider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY }),
+  provider: new AiSdkProvider({ model: openai.chat("gpt-5") }),
   sandbox: LocalSandbox({ cwd: "/my/project" }),
 });
 
@@ -87,12 +94,14 @@ for await (const event of thread.run("Refactor the auth module")) {
 For zero-config setup, use a preset that configures everything for you:
 
 ```typescript
-import { codingAgent } from "noumen";
+import { codingAgent, AiSdkProvider } from "noumen";
 import { LocalSandbox } from "noumen/local";
-import { OpenAIProvider } from "noumen/openai";
+import { createOpenAI } from "@ai-sdk/openai";
+
+const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
 const agent = codingAgent({
-  provider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY! }),
+  provider: new AiSdkProvider({ model: openai.chat("gpt-5") }),
   cwd: "/my/project",
   sandbox: LocalSandbox({ cwd: "/my/project" }),
 });
@@ -258,127 +267,208 @@ npx noumen doctor
 
 ## Providers
 
-### OpenAI
+noumen wraps any [Vercel AI SDK](https://sdk.vercel.ai) `LanguageModel` via a single `AiSdkProvider` adapter. Install the `@ai-sdk/*` package for the vendor you want, hand its model instance to `AiSdkProvider`, and pass the result to `Agent`. Every provider follows the same three-line pattern:
 
 ```typescript
-import { OpenAIProvider } from "noumen/openai";
+import { AiSdkProvider } from "noumen";
+import { createOpenAI } from "@ai-sdk/openai";
 
-const provider = new OpenAIProvider({
-  apiKey: "sk-...",
-  model: "gpt-4o",      // default
-  baseURL: "https://...", // optional, for compatible APIs
+const provider = new AiSdkProvider({
+  model: createOpenAI({ apiKey: process.env.OPENAI_API_KEY })("gpt-5"),
 });
+```
+
+| Option on `AiSdkProvider` | Description |
+| --- | --- |
+| `model` | Any AI SDK `LanguageModelV2` / `V3` instance. Required. |
+| `defaultModel` | Override the model id reported by `provider.defaultModel`. |
+| `providerFamily` | `"openai" \| "anthropic" \| "google"` — controls how noumen maps thinking / reasoning / cache options. Inferred from the model by default; set explicitly when going through a custom proxy. |
+| `cacheConfig` | `{ enabled: true }` inserts an Anthropic `cache_control` breakpoint and honors `ChatParams.skipCacheWrite`. No-op for non-Anthropic families. |
+
+Per-call options (`thinking`, `reasoningEffort`, `outputFormat`, `skipCacheWrite`, etc.) continue to flow through `ChatParams` / `AgentOptions` exactly like before — the adapter routes them to the right `providerOptions.*` entry for the detected family.
+
+### OpenAI
+
+```bash
+pnpm add @ai-sdk/openai
+```
+
+```typescript
+import { AiSdkProvider } from "noumen";
+import { createOpenAI } from "@ai-sdk/openai";
+
+const openai = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+  baseURL: "https://...",  // optional, for Azure / proxies / compatible APIs
+});
+
+// `.chat(id)` pins to chat/completions. Drop it to use the Responses API.
+const provider = new AiSdkProvider({ model: openai.chat("gpt-5") });
 ```
 
 ### Anthropic
 
-```typescript
-import { AnthropicProvider } from "noumen/anthropic";
+```bash
+pnpm add @ai-sdk/anthropic
+```
 
-const provider = new AnthropicProvider({
-  apiKey: "sk-ant-...",
-  model: "claude-sonnet-4", // default
+```typescript
+import { AiSdkProvider } from "noumen";
+import { createAnthropic } from "@ai-sdk/anthropic";
+
+const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+const provider = new AiSdkProvider({
+  model: anthropic("claude-opus-4.6"),
+  providerFamily: "anthropic",
+  cacheConfig: { enabled: true }, // prompt caching
 });
 ```
 
 ### Google Gemini
 
-```typescript
-import { GeminiProvider } from "noumen/gemini";
+```bash
+pnpm add @ai-sdk/google
+```
 
-const provider = new GeminiProvider({
-  apiKey: "...",                   // Google AI Studio API key
-  model: "gemini-2.5-flash",      // default
+```typescript
+import { AiSdkProvider } from "noumen";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
+
+const google = createGoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY });
+
+const provider = new AiSdkProvider({
+  model: google("gemini-2.5-flash"),
+  providerFamily: "google",
 });
 ```
 
 ### OpenRouter
 
-```typescript
-import { OpenRouterProvider } from "noumen/openrouter";
-
-const provider = new OpenRouterProvider({
-  apiKey: "sk-or-...",
-  model: "anthropic/claude-sonnet-4",  // default
-  appName: "My Agent",                 // optional, for openrouter.ai rankings
-  appUrl: "https://myapp.com",         // optional
-});
-```
-
-### AWS Bedrock (Anthropic)
-
-Route Anthropic models through AWS Bedrock. Requires `@anthropic-ai/bedrock-sdk`:
-
 ```bash
-pnpm add @anthropic-ai/bedrock-sdk
+pnpm add @openrouter/ai-sdk-provider
 ```
 
 ```typescript
-import { BedrockAnthropicProvider } from "noumen/bedrock";
+import { AiSdkProvider } from "noumen";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 
-const provider = new BedrockAnthropicProvider({
-  region: "us-west-2",                                     // default: us-east-1
-  model: "us.anthropic.claude-sonnet-4-v1:0",               // default
-  credentials: {                                            // optional, falls back to default chain
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
-    sessionToken: process.env.AWS_SESSION_TOKEN,
+const openrouter = createOpenRouter({
+  apiKey: process.env.OPENROUTER_API_KEY,
+  headers: {
+    "HTTP-Referer": "https://myapp.com",  // optional, for openrouter.ai rankings
+    "X-Title": "My Agent",                 // optional
   },
-  cacheControl: { enabled: true },                          // optional prompt caching
+});
+
+const provider = new AiSdkProvider({
+  model: openrouter.chat("anthropic/claude-opus-4.6"),
 });
 ```
 
-When `credentials` is omitted, the SDK uses the standard AWS credential chain (env vars, `~/.aws/credentials`, IAM roles, etc.).
+### AWS Bedrock
 
-### Google Vertex AI (Anthropic)
-
-Route Anthropic models through Google Cloud Vertex AI. Requires `@anthropic-ai/vertex-sdk` and `google-auth-library`:
+Route Claude (and any other Bedrock-hosted model) through AWS Bedrock.
 
 ```bash
-pnpm add @anthropic-ai/vertex-sdk google-auth-library
+pnpm add @ai-sdk/amazon-bedrock
 ```
 
 ```typescript
-import { VertexAnthropicProvider } from "noumen/vertex";
+import { AiSdkProvider } from "noumen";
+import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 
-const provider = new VertexAnthropicProvider({
-  projectId: "my-gcp-project",
-  region: "us-east5",                     // default
-  model: "claude-sonnet-4",               // default
-  cacheControl: { enabled: true },        // optional prompt caching
+const bedrock = createAmazonBedrock({
+  region: process.env.AWS_REGION ?? "us-east-1",
+  // Credentials resolved from the standard AWS credential chain
+  // (env vars, ~/.aws/credentials, IAM roles) unless you pass
+  // explicit accessKeyId / secretAccessKey / sessionToken.
+});
+
+const provider = new AiSdkProvider({
+  model: bedrock("us.anthropic.claude-opus-4.6-v1:0"),
+  providerFamily: "anthropic",
+  cacheConfig: { enabled: true },
 });
 ```
 
-When `googleAuth` is omitted, the provider creates a `GoogleAuth` instance using application default credentials. You can pass your own `googleAuth` instance for custom authentication:
+### Google Vertex AI
+
+Route Claude or native Gemini through Google Cloud Vertex AI.
+
+```bash
+pnpm add @ai-sdk/google-vertex
+```
 
 ```typescript
-import { GoogleAuth } from "google-auth-library";
+import { AiSdkProvider } from "noumen";
+import { createVertex } from "@ai-sdk/google-vertex";
 
-const provider = new VertexAnthropicProvider({
-  projectId: "my-project",
-  googleAuth: new GoogleAuth({ keyFile: "/path/to/service-account.json" }),
+const vertex = createVertex({
+  project: process.env.GOOGLE_CLOUD_PROJECT,
+  location: "us-east5",
+  // googleAuthOptions: { keyFile: "/path/to/service-account.json" },
+});
+
+// Claude on Vertex
+const claudeProvider = new AiSdkProvider({
+  model: vertex.anthropic("claude-opus-4.6"),
+  providerFamily: "anthropic",
+  cacheConfig: { enabled: true },
+});
+
+// Native Gemini on Vertex
+const geminiProvider = new AiSdkProvider({
+  model: vertex("gemini-2.5-pro"),
+  providerFamily: "google",
 });
 ```
 
 ### Ollama (Local)
 
-Run models locally with [Ollama](https://ollama.com). No API key needed — just install Ollama and pull a model:
+Run models locally with [Ollama](https://ollama.com). No API key needed — just install Ollama, pull a model, and add the Vercel AI SDK provider:
 
 ```bash
 ollama pull qwen2.5-coder:32b
 ollama serve
+pnpm add ollama-ai-provider-v2
 ```
 
 ```typescript
-import { OllamaProvider } from "noumen/ollama";
+import { AiSdkProvider } from "noumen";
+import { createOllama } from "ollama-ai-provider-v2";
 
-const provider = new OllamaProvider({
-  model: "qwen2.5-coder:32b",   // default
-  baseURL: "http://localhost:11434/v1",  // default
+const ollama = createOllama({
+  // baseURL: "http://192.168.1.10:11434/api", // override for remote Ollama
 });
+
+const provider = new AiSdkProvider({ model: ollama("qwen2.5-coder:32b") });
 ```
 
 The CLI auto-detects a running Ollama server when no cloud API keys are set, so you can simply run `noumen` with Ollama serving in the background.
+
+### String shorthand
+
+For quick setup and the CLI, pass a provider name string — noumen dynamically imports the right `@ai-sdk/*` package and wraps it in `AiSdkProvider` for you:
+
+```typescript
+const agent = LocalAgent({ provider: "anthropic", cwd: "." });
+// Equivalent to manually constructing AiSdkProvider with @ai-sdk/anthropic.
+```
+
+Supported names: `openai`, `anthropic`, `gemini`, `openrouter`, `bedrock`, `vertex`, `ollama`.
+
+### Custom / metered proxies
+
+Any AI SDK factory accepts a `baseURL` and custom headers, so routing through your own metered gateway is a one-liner:
+
+```typescript
+const gateway = createOpenAI({
+  baseURL: "https://my-proxy.example.com/openai",
+  apiKey: userJwt, // forwarded as Authorization: Bearer <jwt>
+});
+const provider = new AiSdkProvider({ model: gateway.chat("gpt-5") });
+```
 
 ## Sandboxes
 

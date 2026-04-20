@@ -6,43 +6,53 @@ description: Route Anthropic models through AWS Bedrock for enterprise deploymen
 ## Setup
 
 ```bash
-pnpm add @anthropic-ai/bedrock-sdk
+pnpm add @ai-sdk/amazon-bedrock
 ```
 
 ```typescript
-import { BedrockAnthropicProvider } from "noumen/bedrock";
+import { AiSdkProvider } from "noumen";
+import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 
-const provider = new BedrockAnthropicProvider({
-  region: "us-east-1",                                     // default
-  model: "us.anthropic.claude-sonnet-4-v1:0",               // default
+const bedrock = createAmazonBedrock({
+  region: process.env.AWS_REGION ?? "us-east-1",
+  // Credentials resolved from the standard AWS credential chain by default.
+});
+
+const provider = new AiSdkProvider({
+  model: bedrock("us.anthropic.claude-opus-4.6-v1:0"),
+  providerFamily: "anthropic",
+  cacheConfig: { enabled: true },
 });
 ```
 
 ## Options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `region` | `string` | `"us-east-1"` | AWS region |
-| `model` | `string` | `"us.anthropic.claude-sonnet-4-v1:0"` | Default model in Bedrock format |
-| `credentials` | `object` | — | Explicit AWS credentials (`accessKeyId`, `secretAccessKey`, optional `sessionToken`). Falls back to the default credential chain when omitted. |
-| `baseURL` | `string` | — | Custom base URL for a Bedrock-compatible endpoint |
-| `cacheControl` | `CacheControlConfig` | — | Enable prompt caching |
-| `client` | `AnthropicBedrock` | — | Pre-constructed client instance. When provided, all other connection options are ignored. |
+All connection-level options come from [`createAmazonBedrock`](https://sdk.vercel.ai/providers/ai-sdk-providers/amazon-bedrock).
+
+| Option | Source | Description |
+|--------|--------|-------------|
+| `region` | `createAmazonBedrock` | AWS region. Falls back to `AWS_REGION` / `AWS_DEFAULT_REGION`. |
+| `accessKeyId`, `secretAccessKey`, `sessionToken` | `createAmazonBedrock` | Explicit AWS credentials. Omit to use the standard AWS credential chain (env vars, `~/.aws/credentials`, IAM roles, etc.). |
+| `credentialProvider` | `createAmazonBedrock` | Pass your own AWS SDK credential provider for SSO / custom flows. |
+| `baseURL` | `createAmazonBedrock` | Custom endpoint for a Bedrock-compatible service. |
+
+### `AiSdkProvider` options for Bedrock
+
+| Option | Description |
+|--------|-------------|
+| `providerFamily: "anthropic"` | Required for Claude-on-Bedrock so noumen applies Anthropic thinking/cache mappings. |
+| `cacheConfig: { enabled: true }` | Inject Anthropic prompt-cache breakpoints (supported by Claude on Bedrock). |
 
 ## Authentication
 
-When `credentials` is omitted, the SDK uses the standard AWS credential chain (environment variables, `~/.aws/credentials`, IAM roles, etc.).
-
-For explicit credentials:
+When `accessKeyId` / `secretAccessKey` are omitted, `@ai-sdk/amazon-bedrock` uses the AWS SDK's standard credential chain (environment variables, `~/.aws/credentials`, IAM instance roles, SSO, etc.).
 
 ```typescript
-const provider = new BedrockAnthropicProvider({
+const bedrock = createAmazonBedrock({
   region: "us-west-2",
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
-    sessionToken: process.env.AWS_SESSION_TOKEN,
-  },
+  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  sessionToken: process.env.AWS_SESSION_TOKEN,
 });
 ```
 
@@ -51,19 +61,21 @@ const provider = new BedrockAnthropicProvider({
 Enable prompt caching to reduce costs on repeated system prompts:
 
 ```typescript
-const provider = new BedrockAnthropicProvider({
-  cacheControl: { enabled: true },
+const provider = new AiSdkProvider({
+  model: bedrock("us.anthropic.claude-opus-4.6-v1:0"),
+  providerFamily: "anthropic",
+  cacheConfig: { enabled: true },
 });
 ```
 
 ## Streaming
 
-The Bedrock provider uses the shared Anthropic streaming layer. It maps Bedrock's response events to noumen's OpenAI-compatible chunk format identically to the direct Anthropic provider.
+Bedrock traffic goes through the AI SDK's `doStream()` and noumen's shared Anthropic-family mapping. `thinking`, `signature`, and `redactedData` flow through unmodified.
 
 ## Models
 
 Use Bedrock model IDs. Common choices:
 
-- `us.anthropic.claude-sonnet-4-v1:0` -- balanced speed and capability
-- `us.anthropic.claude-opus-4-v1:0` -- highest capability
-- `us.anthropic.claude-haiku-3-v1:0` -- fastest, most affordable
+- `us.anthropic.claude-opus-4.6-v1:0` — highest capability (default for the `"bedrock"` CLI shorthand).
+- `us.anthropic.claude-sonnet-4-v1:0` — balanced speed and capability.
+- `us.anthropic.claude-haiku-3-v1:0` — fastest, most affordable.

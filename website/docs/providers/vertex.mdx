@@ -1,67 +1,89 @@
 ---
 title: Google Vertex AI
-description: Route Anthropic models through Google Cloud Vertex AI.
+description: Route Anthropic or Gemini models through Google Cloud Vertex AI.
 ---
 
 ## Setup
 
 ```bash
-pnpm add @anthropic-ai/vertex-sdk google-auth-library
+pnpm add @ai-sdk/google-vertex
 ```
 
 ```typescript
-import { VertexAnthropicProvider } from "noumen/vertex";
+import { AiSdkProvider } from "noumen";
+import { createVertex } from "@ai-sdk/google-vertex";
 
-const provider = new VertexAnthropicProvider({
-  projectId: "my-gcp-project",
-  region: "us-east5",                     // default
-  model: "claude-sonnet-4",               // default
+const vertex = createVertex({
+  project: process.env.GOOGLE_CLOUD_PROJECT ?? "my-gcp-project",
+  location: process.env.GOOGLE_CLOUD_LOCATION ?? "us-central1",
+});
+
+// Claude via Vertex:
+const claudeProvider = new AiSdkProvider({
+  model: vertex.anthropic("claude-opus-4.6"),
+  providerFamily: "anthropic",
+  cacheConfig: { enabled: true },
+});
+
+// Native Gemini via Vertex:
+const geminiProvider = new AiSdkProvider({
+  model: vertex("gemini-2.5-pro"),
+  providerFamily: "google",
 });
 ```
 
 ## Options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `projectId` | `string` | — | GCP project ID. If omitted, inferred from application default credentials. |
-| `region` | `string` | `"us-east5"` | GCP region |
-| `model` | `string` | `"claude-sonnet-4"` | Default model in Vertex format |
-| `googleAuth` | `GoogleAuth` | — | Custom `GoogleAuth` instance. If omitted, the provider creates one using application default credentials. |
-| `cacheControl` | `CacheControlConfig` | — | Enable prompt caching |
-| `client` | `AnthropicVertex` | — | Pre-constructed client instance. When provided, all other connection options are ignored. |
+All connection-level options come from [`createVertex`](https://sdk.vercel.ai/providers/ai-sdk-providers/google-vertex).
+
+| Option | Source | Description |
+|--------|--------|-------------|
+| `project` | `createVertex` | GCP project ID. Falls back to application default credentials. |
+| `location` | `createVertex` | GCP region (e.g. `us-central1`, `us-east5`). |
+| `googleAuthOptions` | `createVertex` | Options forwarded to the `google-auth-library` `GoogleAuth` constructor. |
+| `headers`, `baseURL` | `createVertex` | Custom headers and endpoint override. |
+
+### `AiSdkProvider` options
+
+Set `providerFamily: "anthropic"` when using `vertex.anthropic(...)` so noumen routes thinking/cache config through Anthropic's format. Use `providerFamily: "google"` for native Gemini-on-Vertex. The CLI shorthand (`provider: "vertex"`) auto-selects based on whether the model id contains `"claude"`.
 
 ## Authentication
 
-When `googleAuth` is omitted, the provider creates a `GoogleAuth` instance using application default credentials. You can pass your own instance for custom authentication:
+When `googleAuthOptions` is omitted, the provider uses application default credentials. Pass your own `GoogleAuth`-style options for custom authentication:
 
 ```typescript
-import { GoogleAuth } from "google-auth-library";
-
-const provider = new VertexAnthropicProvider({
-  projectId: "my-project",
-  googleAuth: new GoogleAuth({ keyFile: "/path/to/service-account.json" }),
+const vertex = createVertex({
+  project: "my-project",
+  googleAuthOptions: { keyFile: "/path/to/service-account.json" },
 });
 ```
 
 ## Prompt caching
 
-Enable prompt caching to reduce costs on repeated system prompts:
+Claude-on-Vertex supports Anthropic-style prompt caching:
 
 ```typescript
-const provider = new VertexAnthropicProvider({
-  projectId: "my-project",
-  cacheControl: { enabled: true },
+const provider = new AiSdkProvider({
+  model: vertex.anthropic("claude-opus-4.6"),
+  providerFamily: "anthropic",
+  cacheConfig: { enabled: true },
 });
 ```
 
 ## Streaming
 
-The Vertex provider uses the shared Anthropic streaming layer. It maps Vertex's response events to noumen's OpenAI-compatible chunk format identically to the direct Anthropic provider.
+Vertex traffic goes through the AI SDK's `doStream()` and noumen's shared family-specific mapping. For Claude-on-Vertex, `thinking`, `signature`, and `redactedData` flow through unmodified.
 
 ## Models
 
-Use Vertex model IDs. Common choices:
+Vertex accepts both Anthropic and Google Gemini model IDs:
 
-- `claude-sonnet-4` -- balanced speed and capability
-- `claude-opus-4` -- highest capability
-- `claude-haiku-3` -- fastest, most affordable
+**Claude (via `vertex.anthropic(...)`)**
+- `claude-opus-4.6` — highest capability (default for the `"vertex"` CLI shorthand).
+- `claude-sonnet-4` — balanced speed and capability.
+- `claude-haiku-3` — fastest, most affordable.
+
+**Gemini (via `vertex(...)`)**
+- `gemini-2.5-pro`
+- `gemini-2.5-flash`
+- `gemini-2.0-flash`
