@@ -852,6 +852,124 @@ describe("OpenAI o-series max_completion_tokens", () => {
 });
 
 // ---------------------------------------------------------------------------
+// OpenAI reasoning-model routing (GPT-5 family + o-series)
+//
+// Guards the single regex in openai.ts that decides whether a request
+// goes down the reasoning contract (`max_completion_tokens`,
+// `reasoning_effort`, no `temperature`) vs the classical contract
+// (`max_tokens`, `temperature`). The GPT-5 family was missed by the
+// original `^o[1-9]` pattern and produced a 400 from OpenAI at runtime.
+// ---------------------------------------------------------------------------
+describe("OpenAI reasoning-model routing", () => {
+  async function runWithModel(
+    model: string,
+    extra: Record<string, unknown> = {},
+  ): Promise<Record<string, unknown>> {
+    vi.resetModules();
+    let capturedParams: Record<string, unknown> = {};
+    const mockCreate = vi.fn().mockImplementation((params: Record<string, unknown>) => {
+      capturedParams = params;
+      return Promise.resolve(
+        (async function* () {
+          yield {
+            id: "c1",
+            model,
+            choices: [{ index: 0, delta: { content: "ok" }, finish_reason: "stop" }],
+          };
+        })(),
+      );
+    });
+    vi.doMock("openai", () => ({
+      default: class {
+        chat = { completions: { create: mockCreate } };
+      },
+    }));
+    const { OpenAIProvider } = await import("../providers/openai.js");
+    const provider = new OpenAIProvider({ apiKey: "test" });
+    for await (const _ of provider.chat({
+      model,
+      messages: [{ role: "user", content: "hi" }],
+      max_tokens: 60,
+      temperature: 0.5,
+      ...extra,
+    })) {
+      // drain
+    }
+    return capturedParams;
+  }
+
+  it.each([
+    ["gpt-5"],
+    ["gpt-5-mini"],
+    ["gpt-5-nano"],
+    ["gpt-5.4"],
+    ["gpt-5.4-nano"],
+    ["GPT-5.4-NANO"], // case-insensitive
+    ["o1"],
+    ["o1-mini"],
+    ["o3"],
+    ["o4-mini"],
+  ])(
+    "%s goes down the reasoning contract (max_completion_tokens, no temperature)",
+    async (model) => {
+      const params = await runWithModel(model);
+      expect(params.max_completion_tokens).toBe(60);
+      expect(params.max_tokens).toBeUndefined();
+      // temperature is rejected by OpenAI for reasoning models, so the
+      // provider must drop it even when the caller passed one.
+      expect(params.temperature).toBeUndefined();
+    },
+  );
+
+  it.each([
+    ["gpt-4o"],
+    ["gpt-4o-mini"],
+    ["gpt-4.1"],
+    ["gpt-4.1-mini"],
+    ["gpt-4.1-nano"],
+    ["gpt-3.5-turbo"],
+  ])(
+    "%s stays on the classical contract (max_tokens + temperature)",
+    async (model) => {
+      const params = await runWithModel(model);
+      expect(params.max_tokens).toBe(60);
+      expect(params.temperature).toBe(0.5);
+      expect(params.max_completion_tokens).toBeUndefined();
+      expect(params.reasoning_effort).toBeUndefined();
+    },
+  );
+
+  it("threads reasoningEffort through as reasoning_effort on reasoning models", async () => {
+    const params = await runWithModel("gpt-5.4-nano", {
+      reasoningEffort: "minimal",
+    });
+    expect(params.reasoning_effort).toBe("minimal");
+  });
+
+  it("reasoningEffort takes precedence over thinking.type === enabled", async () => {
+    const params = await runWithModel("o3", {
+      reasoningEffort: "low",
+      thinking: { type: "enabled", budgetTokens: 1024 },
+    });
+    expect(params.reasoning_effort).toBe("low");
+  });
+
+  it("falls back to reasoning_effort=high when thinking is enabled and no explicit effort given", async () => {
+    const params = await runWithModel("o3", {
+      thinking: { type: "enabled", budgetTokens: 1024 },
+    });
+    expect(params.reasoning_effort).toBe("high");
+  });
+
+  it("omits reasoning_effort on classical models even when reasoningEffort is passed", async () => {
+    const params = await runWithModel("gpt-4o", {
+      reasoningEffort: "minimal",
+    });
+    expect(params.reasoning_effort).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Gemini incomplete stream detection
 // ---------------------------------------------------------------------------
 describe("Gemini incomplete stream detection", () => {
@@ -1109,4 +1227,68 @@ describe("Gemini blocked finish reasons", () => {
       expect(filtered).toBeDefined();
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Gemini thinkingConfig — honors explicit `{ type: "disabled" }` so
+// Gemini 2.5-flash (thinking-on by default) doesn't burn the caller's
+// maxOutputTokens budget on internal reasoning. Used by short-lived
+// structural round-trips like auto-title generation.
+// ---------------------------------------------------------------------------
+describe("Gemini thinkingConfig routing", () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  async function runWithThinking(
+    thinking: { type: "enabled"; budgetTokens: number } | { type: "disabled" } | undefined,
+  ): Promise<Record<string, unknown>> {
+    let capturedConfig: Record<string, unknown> = {};
+    const generateContentStream = vi.fn().mockImplementation((req: { config: Record<string, unknown> }) => {
+      capturedConfig = req.config;
+      return Promise.resolve(
+        (async function* () {
+          yield {
+            candidates: [{ content: { parts: [{ text: "ok" }] }, finishReason: "STOP" }],
+          };
+        })(),
+      );
+    });
+    vi.doMock("@google/genai", () => ({
+      GoogleGenAI: class {
+        models = { generateContentStream };
+      },
+    }));
+    const { GeminiProvider } = await import("../providers/gemini.js");
+    const provider = new GeminiProvider({ apiKey: "test" });
+    for await (const _ of provider.chat({
+      model: "gemini-2.5-flash",
+      messages: [{ role: "user", content: "hi" }],
+      max_tokens: 60,
+      ...(thinking ? { thinking } : {}),
+    })) {
+      // drain
+    }
+    return capturedConfig;
+  }
+
+  it("sets thinkingBudget: 0 when thinking: { type: 'disabled' }", async () => {
+    const config = await runWithThinking({ type: "disabled" });
+    expect(config.thinkingConfig).toEqual({ thinkingBudget: 0 });
+  });
+
+  it("omits thinkingConfig entirely when thinking is not passed", async () => {
+    const config = await runWithThinking(undefined);
+    expect(config.thinkingConfig).toBeUndefined();
+  });
+
+  it("forwards the budget when thinking is enabled", async () => {
+    const config = await runWithThinking({ type: "enabled", budgetTokens: 1024 });
+    expect(config.thinkingConfig).toEqual({ thinkingBudget: 1024 });
+  });
+
+  it("treats enabled with budgetTokens <= 0 as off (no thinkingConfig set)", async () => {
+    const config = await runWithThinking({ type: "enabled", budgetTokens: 0 });
+    expect(config.thinkingConfig).toBeUndefined();
+  });
 });

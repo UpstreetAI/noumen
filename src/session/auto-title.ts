@@ -162,15 +162,41 @@ export function extractTitleFromResponse(raw: string): string | null {
  * empty seed text, empty model output, or provider errors (callers decide
  * whether to retry — this helper never throws).
  */
+/**
+ * Output-token budget for a single title round-trip.
+ *
+ * 60 used to be plenty for classical chat models — the model emits the
+ * JSON in ~15 tokens and stops. But reasoning models (OpenAI GPT-5 /
+ * o-series, Gemini 2.5 with default-on thinking) count *internal
+ * reasoning tokens* against the same budget. A 60-token cap routinely
+ * gets consumed entirely on reasoning before any content delta is
+ * emitted, producing empty streams.
+ *
+ * 512 is comfortably above the thinking-minimum most reasoning models
+ * need to produce a short title while staying cheap.
+ */
+const AUTO_TITLE_MAX_OUTPUT_TOKENS = 512;
+
 export async function generateAutoTitle(
   messages: ChatMessage[],
   opts: GenerateAutoTitleOptions,
 ): Promise<string | null> {
   const seed = extractTitleSeedText(messages, opts.maxInputChars);
-  if (!seed) return null;
+  if (!seed) {
+    console.warn(
+      "[noumen/auto-title] skipped: empty seed text",
+      { messageCount: messages.length },
+    );
+    return null;
+  }
 
   const model = opts.model ?? opts.provider.defaultModel;
-  if (!model) return null;
+  if (!model) {
+    console.warn(
+      "[noumen/auto-title] skipped: no model resolved (opts.model and provider.defaultModel are both unset)",
+    );
+    return null;
+  }
 
   const system = opts.systemPrompt ?? DEFAULT_AUTO_TITLE_SYSTEM_PROMPT;
 
@@ -178,7 +204,16 @@ export async function generateAutoTitle(
     model,
     system,
     messages: [{ role: "user", content: seed }],
-    max_tokens: 60,
+    max_tokens: AUTO_TITLE_MAX_OUTPUT_TOKENS,
+    // Keep reasoning cost on this auxiliary round-trip minimal. OpenAI
+    // GPT-5 / o-series honor this via `reasoning_effort`; other
+    // providers ignore the field.
+    reasoningEffort: "minimal",
+    // Explicitly disable Gemini 2.5's default-on thinking — otherwise
+    // the flash variant burns the whole output budget on reasoning and
+    // yields an empty content stream. Providers without a thinking
+    // knob ignore this.
+    thinking: { type: "disabled" },
     outputFormat: {
       type: "json_schema",
       schema: {
@@ -201,14 +236,36 @@ export async function generateAutoTitle(
         if (typeof delta === "string") text += delta;
       }
     }
-  } catch {
+  } catch (err) {
+    // Swallowing the error entirely leaves the caller with no signal of
+    // *why* we have no title, which is the main reason auto-titling
+    // quietly breaks in production (invalid model id, missing key, org
+    // policy blocking structured outputs, etc). Log and move on so the
+    // caller can still treat this as a soft failure.
+    console.warn("[noumen/auto-title] provider call failed", {
+      model,
+      message: err instanceof Error ? err.message : String(err),
+    });
     return null;
   }
 
-  if (!text) return null;
+  if (!text) {
+    console.warn(
+      "[noumen/auto-title] provider returned no content",
+      { model },
+    );
+    return null;
+  }
 
   const extracted = extractTitleFromResponse(text) ?? text.trim();
-  return normalizeTitle(extracted);
+  const normalized = normalizeTitle(extracted);
+  if (!normalized) {
+    console.warn(
+      "[noumen/auto-title] provider response did not contain a usable title",
+      { model, rawChars: text.length, rawHead: text.slice(0, 160) },
+    );
+  }
+  return normalized;
 }
 
 /**

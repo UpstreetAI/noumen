@@ -74,6 +74,12 @@ export class GeminiProvider implements AIProvider {
 
     if (thinkingEnabled) {
       config.thinkingConfig = { thinkingBudget: thinkingBudget };
+    } else if (params.thinking?.type === "disabled") {
+      // Gemini 2.5-flash has thinking ON by default; omitting
+      // thinkingConfig would let it silently consume the
+      // maxOutputTokens budget on reasoning before emitting any
+      // content. Setting budget to 0 tells Gemini to skip thinking.
+      config.thinkingConfig = { thinkingBudget: 0 };
     }
 
     if (params.outputFormat?.type === "json_schema") {

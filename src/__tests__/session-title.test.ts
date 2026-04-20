@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { MockFs, MockAIProvider, textChunk, stopChunk } from "./helpers.js";
 import { SessionStorage } from "../session/storage.js";
 import {
@@ -370,6 +370,26 @@ describe("auto-title helpers", () => {
       expect(provider.calls[0].outputFormat?.type).toBe("json_schema");
     });
 
+    it("sends reasoning-safe defaults so reasoning/thinking models don't burn the budget on internal tokens", async () => {
+      // This is the guardrail that keeps the title round-trip cheap on
+      // OpenAI GPT-5 / o-series (reasoningEffort: "minimal") and on
+      // Gemini 2.5-flash (thinking: disabled). Providers that don't
+      // recognise the fields ignore them, so this is safe for everyone.
+      const provider = new MockAIProvider([
+        titleResponse('{"title": "Ship the fix"}'),
+      ]);
+      await generateAutoTitle(
+        [{ role: "user", content: "ship the fix" }],
+        { provider, model: "mock-model" },
+      );
+      const [call] = provider.calls;
+      expect(call.reasoningEffort).toBe("minimal");
+      expect(call.thinking).toEqual({ type: "disabled" });
+      // 60 was the old cap — must be materially higher so reasoning
+      // models have room to emit their JSON after thinking.
+      expect(call.max_tokens).toBeGreaterThanOrEqual(256);
+    });
+
     it("returns null when the provider throws", async () => {
       const provider = new MockAIProvider();
       const t = await generateAutoTitle(
@@ -377,6 +397,43 @@ describe("auto-title helpers", () => {
         { provider, model: "mock-model" },
       );
       expect(t).toBeNull();
+    });
+
+    it("surfaces provider errors via console.warn so callers aren't left in the dark", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const provider = new MockAIProvider();
+        const t = await generateAutoTitle(
+          [{ role: "user", content: "hi" }],
+          { provider, model: "mock-model" },
+        );
+        expect(t).toBeNull();
+        expect(warn).toHaveBeenCalledTimes(1);
+        const [label, payload] = warn.mock.calls[0] as [string, { model: string; message: string }];
+        expect(label).toMatch(/auto-title/);
+        expect(payload.model).toBe("mock-model");
+        expect(payload.message).toMatch(/no more responses/);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("logs when the provider streams no content so silent null-titles are debuggable", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const provider = new MockAIProvider([[textChunk(""), stopChunk()]]);
+        const t = await generateAutoTitle(
+          [{ role: "user", content: "hi" }],
+          { provider, model: "mock-model" },
+        );
+        expect(t).toBeNull();
+        expect(warn).toHaveBeenCalledTimes(1);
+        const [label, payload] = warn.mock.calls[0] as [string, { model: string }];
+        expect(label).toMatch(/no content/);
+        expect(payload.model).toBe("mock-model");
+      } finally {
+        warn.mockRestore();
+      }
     });
 
     it("uses provider.defaultModel when no model is given", async () => {

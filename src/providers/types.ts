@@ -103,6 +103,15 @@ export interface ChatParams {
   system?: string;
   temperature?: number;
   thinking?: ThinkingConfig;
+  /**
+   * Fine-grained reasoning effort hint. Honored by providers whose
+   * reasoning-capable models expose an explicit effort knob (OpenAI
+   * GPT-5 / o-series today). Providers that don't recognise the knob
+   * ignore it. Use `"minimal"` for cheap structural calls (e.g.
+   * auto-title, classification) so the model doesn't burn the whole
+   * `max_tokens` budget on internal reasoning before emitting output.
+   */
+  reasoningEffort?: "minimal" | "low" | "medium" | "high";
   /** Constrain the model to produce structured output matching this schema. */
   outputFormat?: OutputFormat;
   /**

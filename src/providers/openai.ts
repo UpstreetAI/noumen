@@ -16,7 +16,22 @@ export interface OpenAIProviderOptions {
   compatMode?: boolean;
 }
 
-const O_SERIES_PATTERN = /^o[1-9]/;
+/**
+ * OpenAI's chat.completions API uses two different contracts depending on
+ * the model family:
+ *
+ *  - Classical models (gpt-3.5 / gpt-4 / gpt-4.1): `max_tokens`, any
+ *    `temperature`, no reasoning controls.
+ *  - Reasoning models (o-series, GPT-5 family, and any future
+ *    GPT-6/7/8/9): `max_completion_tokens` instead of `max_tokens`,
+ *    `reasoning_effort`, and `temperature` is pinned to the default (1.0)
+ *    so supplying any other value returns a 400.
+ *
+ * This regex is the single switch. Keep it conservative: only match
+ * prefixes known to belong to the reasoning-model contract so a misnamed
+ * model doesn't silently get routed down the wrong path.
+ */
+const REASONING_MODEL_PATTERN = /^(o\d|gpt-[5-9])/i;
 
 export class OpenAIProvider implements AIProvider {
   private client: OpenAI;
@@ -37,7 +52,7 @@ export class OpenAIProvider implements AIProvider {
   async *chat(params: ChatParams): AsyncIterable<ChatStreamChunk> {
     const messages = this.buildMessages(params.system, params.messages);
     const model = params.model ?? this.defaultModel;
-    const isOSeries = O_SERIES_PATTERN.test(model);
+    const isReasoning = REASONING_MODEL_PATTERN.test(model);
 
     const createParams: OpenAI.ChatCompletionCreateParamsStreaming = {
       model,
@@ -50,9 +65,17 @@ export class OpenAIProvider implements AIProvider {
       ...(this.compatMode ? {} : { stream_options: { include_usage: true } }),
     };
 
-    if (isOSeries) {
+    if (isReasoning) {
       (createParams as unknown as Record<string, unknown>).max_completion_tokens = params.max_tokens ?? 16384;
-      if (params.thinking?.type === "enabled") {
+      // `reasoningEffort` (explicit caller hint) takes precedence over the
+      // coarse `thinking.type === "enabled"` trigger. Callers that want a
+      // cheap round-trip (auto-title, classification) pass "minimal" so
+      // the model doesn't eat the whole max_completion_tokens budget on
+      // internal reasoning before emitting any content.
+      const explicitEffort = params.reasoningEffort;
+      if (explicitEffort) {
+        (createParams as unknown as Record<string, unknown>).reasoning_effort = explicitEffort;
+      } else if (params.thinking?.type === "enabled") {
         (createParams as unknown as Record<string, unknown>).reasoning_effort = "high";
       }
     } else {

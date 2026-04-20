@@ -679,6 +679,9 @@ export class Agent {
           maxInputChars: cfg.maxInputChars ?? DEFAULT_AUTO_TITLE_MAX_INPUT_CHARS,
           signal: opts?.signal,
         });
+        // generateAutoTitle already emits a warn on each failure mode
+        // (provider error, empty stream, unparseable content). Returning
+        // null here is the contract callers expect; we don't re-warn.
         if (!title) return null;
 
         await this.storage.appendAiTitle(sessionId, title);
