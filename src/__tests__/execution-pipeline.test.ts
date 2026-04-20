@@ -552,6 +552,7 @@ describe("executeToolCall", () => {
   // --- Hook throw in catch path is swallowed ---
 
   it("swallows PostToolUseFailure hook errors in catch path", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     const tool = makeTool({
       call: async () => { throw new Error("original error"); },
     });

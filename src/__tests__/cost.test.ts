@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { StreamEvent } from "../session/types.js";
 import { Thread, type ThreadConfig } from "../thread.js";
 import { createAutoCompactConfig } from "../compact/auto-compact.js";
@@ -92,6 +92,7 @@ describe("Cost pricing", () => {
   });
 
   it("returns 0 for unknown model", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     const usage: UsageRecord = {
       prompt_tokens: 1000,
       completion_tokens: 500,
@@ -255,6 +256,7 @@ describe("Cost tracking in Thread", () => {
   });
 
   it("yields cost_update events when costTracker is configured", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     const tracker = new CostTracker();
     provider.addResponse([
       textChunk("hi"),

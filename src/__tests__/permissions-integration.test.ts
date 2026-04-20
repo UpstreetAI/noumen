@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   MockFs,
   MockComputer,
@@ -364,6 +364,7 @@ describe("auto mode classifier denial returns deny", () => {
 // ---------------------------------------------------------------------------
 describe("checkPermissions error does not crash pipeline", () => {
   it("falls through when checkPermissions throws a non-abort error", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     const tool: Tool = {
       name: "BrokenTool",
       description: "test",

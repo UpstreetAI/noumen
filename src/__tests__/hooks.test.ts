@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   MockFs,
   MockComputer,
@@ -163,6 +163,7 @@ describe("blocking hook errors", () => {
 
 describe("runNotificationHooks", () => {
   it("runs hooks without errors even if one throws", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     const called: string[] = [];
     const hooks: HookDefinition[] = [
       {
@@ -354,6 +355,7 @@ describe("runPostToolUseFailureHooks blocking error handling", () => {
   });
 
   it("swallows non-blocking hook errors", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     const hooks: HookDefinition[] = [
       {
         event: "PostToolUseFailure",
@@ -418,6 +420,7 @@ describe("Anthropic thinking budget constraint", () => {
 // ---------------------------------------------------------------------------
 describe("hook error reporting", () => {
   it("non-blocking hook errors appear in hookErrors array", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     const failingHook: HookDefinition = {
       event: "PreToolUse",
       blocking: false,

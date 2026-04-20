@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { estimateTokens, estimateMessagesTokens } from "../utils/tokens.js";
 import { jsonStringify, parseJSONL } from "../utils/json.js";
 import { generateUUID } from "../utils/uuid.js";
@@ -58,6 +58,7 @@ describe("parseJSONL", () => {
   });
 
   it("skips malformed lines", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     const input = '{"a":1}\nnot json\n{"b":2}\n';
     expect(parseJSONL(input)).toEqual([{ a: 1 }, { b: 2 }]);
   });

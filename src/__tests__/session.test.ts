@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { MockFs } from "./helpers.js";
 import { SessionStorage } from "../session/storage.js";
 
@@ -98,6 +98,7 @@ describe("SessionStorage", () => {
   });
 
   it("listSessions skips corrupt files", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     await storage.appendMessage("s1", { role: "user", content: "ok" });
     await fs.writeFile("/sessions/bad.jsonl", "not valid json at all\n");
 

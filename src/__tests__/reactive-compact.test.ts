@@ -50,6 +50,7 @@ describe("tryReactiveCompact", () => {
   });
 
   it("falls back to truncation when compaction fails", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     // Provider throws on every call
     provider.addResponse([]);
     const errorProvider = new MockAIProvider();
@@ -80,6 +81,7 @@ describe("tryReactiveCompact", () => {
   });
 
   it("persists truncated messages when compaction fails (truncation fallback)", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     const errorProvider = new MockAIProvider();
     // No responses queued → provider will throw on chat()
 
@@ -186,6 +188,7 @@ describe("tryReactiveCompact", () => {
   });
 
   it("returns truncated result even when persistence fails", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     const errorProvider = new MockAIProvider();
 
     const msgs: ChatMessage[] = [];
@@ -222,6 +225,7 @@ describe("tryReactiveCompact", () => {
   });
 
   it("non-abort errors still trigger truncation fallback", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     const errorProvider = new MockAIProvider();
     // No responses queued — will throw generic error
 
