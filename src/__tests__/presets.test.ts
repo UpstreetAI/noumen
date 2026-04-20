@@ -7,9 +7,17 @@ function mockProvider() {
   return new MockAIProvider([textResponse("ok")]);
 }
 
+function mockSandbox() {
+  return { fs: new MockFs(), computer: new MockComputer() };
+}
+
 describe("codingAgent preset", () => {
   it("returns an Agent instance", () => {
-    const code = codingAgent({ provider: mockProvider(), cwd: "/tmp" });
+    const code = codingAgent({
+      provider: mockProvider(),
+      cwd: "/tmp",
+      sandbox: mockSandbox(),
+    });
     expect(code).toBeInstanceOf(Agent);
   });
 
@@ -17,6 +25,7 @@ describe("codingAgent preset", () => {
     const code = codingAgent({
       provider: mockProvider(),
       cwd: "/tmp",
+      sandbox: mockSandbox(),
       hooks: [{ event: "TurnStart", handler: async () => {} }],
       systemPrompt: "You are a coder.",
     });
@@ -26,14 +35,22 @@ describe("codingAgent preset", () => {
 
 describe("planningAgent preset", () => {
   it("returns an Agent instance", () => {
-    const code = planningAgent({ provider: mockProvider(), cwd: "/tmp" });
+    const code = planningAgent({
+      provider: mockProvider(),
+      cwd: "/tmp",
+      sandbox: mockSandbox(),
+    });
     expect(code).toBeInstanceOf(Agent);
   });
 });
 
 describe("reviewAgent preset", () => {
   it("returns an Agent instance", () => {
-    const code = reviewAgent({ provider: mockProvider(), cwd: "/tmp" });
+    const code = reviewAgent({
+      provider: mockProvider(),
+      cwd: "/tmp",
+      sandbox: mockSandbox(),
+    });
     expect(code).toBeInstanceOf(Agent);
   });
 });

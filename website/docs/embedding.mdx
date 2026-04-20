@@ -55,9 +55,9 @@ await code.close();
 For simple tasks you can skip `createThread()` entirely. `run()` streams events, `execute()` runs to completion and returns a result.
 
 ```typescript
-import { Agent } from "noumen";
+import { LocalAgent } from "noumen/local";
 
-const agent = new Agent({ provider: "anthropic", cwd: "." });
+const agent = LocalAgent({ provider: "anthropic", cwd: "." });
 
 // Streaming — same events as thread.run()
 for await (const event of agent.run("Add a health-check endpoint")) {
@@ -72,17 +72,21 @@ const result = await agent.execute("Fix the auth bug", {
 console.log(`Done — ${result.toolCalls} tool calls, ${result.usage.total_tokens} tokens`);
 ```
 
+`LocalAgent` (on `noumen/local`) is a thin factory over `new Agent({ ..., sandbox: LocalSandbox({ cwd }) })`. For raw host access use `UnsandboxedAgent` from `noumen/unsandboxed`. For remote sandboxes construct `Agent` directly with the sandbox of your choice — see [Virtual Infrastructure](/docs/virtual).
+
 ### Using presets
 
 For quicker setup, use a preset that configures sensible defaults:
 
 ```typescript
 import { codingAgent } from "noumen";
+import { LocalSandbox } from "noumen/local";
 import { OpenAIProvider } from "noumen/openai";
 
 const code = codingAgent({
   provider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY! }),
   cwd: "/my/project",
+  sandbox: LocalSandbox({ cwd: "/my/project" }),
 });
 
 await code.init();
@@ -94,6 +98,8 @@ for await (const event of thread.run("Refactor the auth module")) {
 
 await code.close();
 ```
+
+Presets require an explicit `sandbox` — import one from its subpath (`noumen/local`, `noumen/unsandboxed`, `noumen/docker`, …) and pass it in. This keeps the root barrel free of host-fs imports for apps that only use a remote sandbox.
 
 Three presets are available:
 
@@ -296,11 +302,14 @@ Run the agent in Electron's main process and communicate with the renderer via I
 // main.ts
 import { app, ipcMain } from "electron";
 import { codingAgent } from "noumen";
+import { LocalSandbox } from "noumen/local";
 import { AnthropicProvider } from "noumen/anthropic";
 
+const cwd = app.getPath("documents");
 const code = codingAgent({
   provider: new AnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY! }),
-  cwd: app.getPath("documents"),
+  cwd,
+  sandbox: LocalSandbox({ cwd }),
 });
 
 app.whenReady().then(async () => {
@@ -326,14 +335,17 @@ Integrate the agent into a VS Code extension:
 // extension.ts
 import * as vscode from "vscode";
 import { codingAgent } from "noumen";
+import { LocalSandbox } from "noumen/local";
 import { OpenAIProvider } from "noumen/openai";
 
 export function activate(context: vscode.ExtensionContext) {
+  const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   const code = codingAgent({
     provider: new OpenAIProvider({
       apiKey: vscode.workspace.getConfiguration("noumen").get("apiKey")!,
     }),
-    cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+    cwd,
+    sandbox: LocalSandbox({ cwd }),
   });
 
   const disposable = vscode.commands.registerCommand(

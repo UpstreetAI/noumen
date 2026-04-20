@@ -26,16 +26,20 @@ pnpm add @google/genai      # for Gemini
 ## Quick Start
 
 ```typescript
-import { Agent } from "noumen";
+import { LocalAgent } from "noumen/local";
 
-const agent = new Agent({ provider: "anthropic", cwd: "." });
+const agent = LocalAgent({ provider: "anthropic", cwd: "." });
 
 for await (const event of agent.run("Add a health-check endpoint to server.ts")) {
   if (event.type === "text_delta") process.stdout.write(event.text);
 }
 ```
 
-Three lines to a working agent. The string provider auto-detects your `ANTHROPIC_API_KEY` from the environment, and `cwd` defaults to a local sandbox.
+A working agent in three lines. `LocalAgent` is a convenience factory that constructs an [`Agent`](#embedding) wired to a `LocalSandbox` (OS-level sandboxing via `@anthropic-ai/sandbox-runtime`) — use it whenever you want the host's filesystem and shell, isolated. The string provider auto-detects your `ANTHROPIC_API_KEY` from the environment.
+
+Want raw host access with no isolation? Swap `noumen/local` → `noumen/unsandboxed` and `LocalAgent` → `UnsandboxedAgent`. Want a remote sandbox? Use `new Agent({ provider, sandbox })` directly — see [Sandboxes](#sandboxes) for every backend.
+
+> **Why the subpath import?** The root barrel (`import { Agent } from "noumen"`) deliberately never pulls a default sandbox into the module graph — that keeps `noumen` lightweight for apps that bundle with Next.js NFT or serverless-webpack and only use a remote sandbox. Opting into a local sandbox is an explicit import line. See [Sandboxes](#sandboxes).
 
 ### Execute (run to completion)
 
@@ -84,11 +88,13 @@ For zero-config setup, use a preset that configures everything for you:
 
 ```typescript
 import { codingAgent } from "noumen";
+import { LocalSandbox } from "noumen/local";
 import { OpenAIProvider } from "noumen/openai";
 
 const agent = codingAgent({
   provider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY! }),
   cwd: "/my/project",
+  sandbox: LocalSandbox({ cwd: "/my/project" }),
 });
 
 await agent.init();
@@ -100,6 +106,8 @@ for await (const event of thread.run("Refactor the auth module")) {
 
 await agent.close();
 ```
+
+Presets require an explicit `sandbox` for the same bundler-hygiene reason — pick a backend from its subpath (`noumen/local`, `noumen/unsandboxed`, `noumen/docker`, …).
 
 Three presets are available:
 
@@ -376,9 +384,7 @@ The CLI auto-detects a running Ollama server when no cloud API keys are set, so 
 
 A `Sandbox` bundles a `VirtualFs` (filesystem) and `VirtualComputer` (shell execution) into one object. Every file read/write and shell command the agent executes goes through these interfaces — swap the sandbox to control what the agent can access.
 
-Local factories live on the root barrel; each remote backend ships on its own subpath so its optional peer dep only enters the module graph when you opt in:
-
-Every sandbox factory lives on its own subpath, so importing `noumen` never drags a backend's peer deps into the module graph.
+`sandbox` is **required** on `Agent` and every preset. The root barrel (`import { Agent } from "noumen"`) never imports a sandbox factory, so callers pick a backend explicitly from its subpath. That keeps `node:child_process` and `node:fs/promises` out of the static module graph for consumers that only use a remote sandbox — critical for bundlers like Next.js NFT and serverless-webpack that trace dependencies.
 
 | Factory | Import | Peer dep |
 | --- | --- | --- |
@@ -390,6 +396,15 @@ Every sandbox factory lives on its own subpath, so importing `noumen` never drag
 | `FreestyleSandbox` | `noumen/freestyle` | `freestyle-sandboxes` |
 | `SshSandbox` | `noumen/ssh` | `ssh2` |
 
+For the two local backends, shortcut factories bundle `Agent` + sandbox together:
+
+| Shortcut | Import | Equivalent to |
+| --- | --- | --- |
+| `LocalAgent` | `noumen/local` | `new Agent({ ..., sandbox: LocalSandbox({ cwd }) })` |
+| `UnsandboxedAgent` | `noumen/unsandboxed` | `new Agent({ ..., sandbox: UnsandboxedLocal({ cwd }) })` |
+
+Remote sandboxes stay on the `new Agent({ provider, sandbox })` path — there's no `DockerAgent` shortcut because remote backends carry config (tokens, templates, connection state) that's clearer at the call site.
+
 ### Local — OS-level sandboxing
 
 Backed by `@anthropic-ai/sandbox-runtime`. Uses macOS Seatbelt or Linux bubblewrap to restrict filesystem and network access at the OS level — no containers needed:
@@ -399,18 +414,32 @@ pnpm add @anthropic-ai/sandbox-runtime
 ```
 
 ```typescript
+import { LocalAgent } from "noumen/local";
+
+// Shortcut — Agent + LocalSandbox in one call:
+const agent = LocalAgent({ provider: "anthropic", cwd: "/my/project" });
+
+// Customize sandbox restrictions via `localSandbox`:
+const restricted = LocalAgent({
+  provider: "anthropic",
+  cwd: "/my/project",
+  localSandbox: {
+    sandbox: {
+      filesystem: { denyRead: ["/etc/shadow"] },
+      network: { allowedDomains: ["api.openai.com"] },
+    },
+  },
+});
+```
+
+Or drop down to the sandbox factory directly when you need to share the sandbox across multiple agents / presets:
+
+```typescript
+import { Agent } from "noumen";
 import { LocalSandbox } from "noumen/local";
 
 const sandbox = LocalSandbox({ cwd: "/my/project" });
-
-// Customize restrictions:
-const restricted = LocalSandbox({
-  cwd: "/my/project",
-  sandbox: {
-    filesystem: { denyRead: ["/etc/shadow"] },
-    network: { allowedDomains: ["api.openai.com"] },
-  },
-});
+const agent = new Agent({ provider: "anthropic", sandbox });
 ```
 
 Defaults: writes allowed only in `cwd`, reads allowed everywhere, network unrestricted.
@@ -420,9 +449,17 @@ Defaults: writes allowed only in `cwd`, reads allowed everywhere, network unrest
 Backed by `fs/promises` and `child_process` with no OS-level restrictions. Use for development or trusted environments:
 
 ```typescript
+import { UnsandboxedAgent } from "noumen/unsandboxed";
+
+// Shortcut — Agent + UnsandboxedLocal in one call:
+const agent = UnsandboxedAgent({ provider: "anthropic", cwd: "/my/project" });
+
+// Or compose manually:
+import { Agent } from "noumen";
 import { UnsandboxedLocal } from "noumen/unsandboxed";
 
 const sandbox = UnsandboxedLocal({ cwd: "/my/project" });
+const plain = new Agent({ provider: "anthropic", sandbox });
 ```
 
 ### sprites.dev — full sandbox
@@ -640,8 +677,10 @@ The interfaces are intentionally minimal (one method for shell, eight for filesy
 
 ## Options
 
+Snippets below use `LocalAgent` (`import { LocalAgent } from "noumen/local"`) for brevity. Every option is also valid on `new Agent({ ..., sandbox })` and on the presets (`codingAgent`, `planningAgent`, `reviewAgent`) — the shape is identical, only the sandbox plumbing differs.
+
 ```typescript
-const agent = new Agent({
+const agent = LocalAgent({
   provider: "anthropic",
   cwd: "/my/project",
   options: {
@@ -780,7 +819,7 @@ Enable model reasoning/thinking for supported providers. Each provider maps the 
 - **Gemini**: Sets `thinkingConfig.thinkingBudget`
 
 ```typescript
-const agent = new Agent({
+const agent = LocalAgent({
   provider: "anthropic",
   cwd: ".",
   options: {
@@ -805,7 +844,7 @@ Disable explicitly with `{ type: "disabled" }`, or omit the option entirely for 
 Automatic retries with exponential backoff, Retry-After header support, context overflow recovery, and model fallback. Handles 429 (rate limit), 529 (overloaded), 500/502/503 (server errors), and connection failures.
 
 ```typescript
-const agent = new Agent({
+const agent = LocalAgent({
   provider: "anthropic",
   cwd: ".",
   options: {
@@ -814,7 +853,7 @@ const agent = new Agent({
 });
 
 // Or customize:
-const agent2 = new Agent({
+const agent2 = LocalAgent({
   provider: "anthropic",
   cwd: ".",
   options: {
@@ -840,7 +879,7 @@ On context overflow (input + max_tokens > context limit), the engine automatical
 Track token usage and estimate USD costs across all model calls. Includes built-in pricing for Claude, GPT-4o, Gemini, and o-series models.
 
 ```typescript
-const agent = new Agent({
+const agent = LocalAgent({
   provider: "anthropic",
   cwd: ".",
   options: {
@@ -866,7 +905,7 @@ console.log(`Output tokens: ${summary.totalOutputTokens}`);
 Supply custom pricing for unlisted models:
 
 ```typescript
-const agent = new Agent({
+const agent = LocalAgent({
   provider: "anthropic",
   cwd: ".",
   options: {
@@ -888,7 +927,7 @@ const agent = new Agent({
 Skills are markdown instructions injected into the system prompt. They are auto-discovered from `<cwd>/.noumen/skills/` and `<cwd>/.claude/skills/` (and the same paths under `$HOME`), and can also be provided inline or loaded from explicit paths:
 
 ```typescript
-const agent = new Agent({
+const agent = LocalAgent({
   provider: "anthropic",
   cwd: ".",
   options: {
@@ -938,7 +977,7 @@ const sessions = await agent.listSessions();
 18 hook events across six categories — intercept tool calls, session lifecycle, permissions, file writes, model switches, compaction, retry, memory, and errors:
 
 ```typescript
-const agent = new Agent({
+const agent = LocalAgent({
   provider: "anthropic", cwd: ".",
   options: {
     hooks: [

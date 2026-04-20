@@ -220,11 +220,13 @@ For the fastest setup, use a preset instead of configuring `Agent` manually:
 
 ```typescript
 import { codingAgent } from "noumen";
+import { LocalSandbox } from "noumen/local";
 import { OpenAIProvider } from "noumen/openai";
 
 const code = codingAgent({
   provider: new OpenAIProvider({ apiKey: process.env.OPENAI_API_KEY! }),
   cwd: process.cwd(),
+  sandbox: LocalSandbox({ cwd: process.cwd() }),
 });
 
 await code.init();
@@ -237,7 +239,23 @@ for await (const event of thread.run("Add input validation to the signup handler
 await code.close();
 ```
 
-Presets configure sensible defaults: `codingAgent` enables subagents, tasks, plan mode, auto-compact, retry, cost tracking, and project context. See also `planningAgent` (read-only) and `reviewAgent` (read-only + web search).
+Presets configure sensible defaults: `codingAgent` enables subagents, tasks, plan mode, auto-compact, retry, cost tracking, and project context. See also `planningAgent` (read-only) and `reviewAgent` (read-only + web search). Every preset requires an explicit `sandbox` — pick a backend from its subpath.
+
+## Shortcut: `LocalAgent` / `UnsandboxedAgent`
+
+When you're wiring an `Agent` to a local sandbox anyway, the `noumen/local` and `noumen/unsandboxed` subpaths each ship a thin factory that bundles the two steps:
+
+```typescript
+import { LocalAgent } from "noumen/local";
+
+const code = LocalAgent({
+  provider: "anthropic",
+  cwd: process.cwd(),
+  options: { autoCompact: true, projectContext: true },
+});
+```
+
+Equivalent to `new Agent({ ..., sandbox: LocalSandbox({ cwd }) })`. Use `UnsandboxedAgent` from `noumen/unsandboxed` for raw host access, or stick with the explicit `new Agent({ provider, sandbox })` form when you need to share a sandbox across multiple agents or use a remote backend.
 
 ## What's next
 

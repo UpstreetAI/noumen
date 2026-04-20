@@ -132,4 +132,40 @@ describe("root barrel is structurally lightweight", () => {
     expect(mod.resolveProvider).toBeTypeOf("function");
     expect(mod.detectProvider).toBeTypeOf("function");
   });
+
+  it("does not statically pull host-fs modules", async () => {
+    // Prior regressions this guards against:
+    //
+    // 1. `agent.ts` and `presets.ts` each statically imported
+    //    `UnsandboxedLocal` for a default-sandbox fallback, transitively
+    //    pulling `LocalComputer` → `node:child_process` into every
+    //    consumer of the root barrel.
+    // 2. `agent.ts` statically imported `node:fs/promises` + `node:path`
+    //    at the top level for its sandbox-id index file, so
+    //    `path.resolve(this.cwd, ...)` showed up in the `agent.ts` chunk
+    //    and triggered "whole project was traced unintentionally"
+    //    warnings in Next.js NFT / serverless-webpack.
+    //
+    // Both regressions would cause bundler dependency tracers to walk
+    // from any root-barrel consumer (`codingAgent`, `SessionStorage`,
+    // `Agent`, …) out into host-fs territory. Mock those built-ins so
+    // that merely *importing* the barrel throws if anything statically
+    // reaches them.
+    vi.doMock("node:child_process", () => {
+      throw new Error(
+        "node:child_process was loaded by the root barrel — some module is statically importing UnsandboxedLocal / LocalComputer again",
+      );
+    });
+    vi.doMock("node:fs/promises", () => {
+      throw new Error(
+        "node:fs/promises was loaded by the root barrel — host-fs access must stay behind a dynamic import (see session/sandbox-index.ts)",
+      );
+    });
+
+    const mod = await import("../index.js");
+    expect(mod.codingAgent).toBeTypeOf("function");
+    expect(mod.planningAgent).toBeTypeOf("function");
+    expect(mod.reviewAgent).toBeTypeOf("function");
+    expect(mod.Agent).toBeTypeOf("function");
+  });
 });

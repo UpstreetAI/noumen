@@ -1,11 +1,8 @@
-import * as nodeFs from "node:fs/promises";
-import * as nodePath from "node:path";
 import type { AIProvider, OutputFormat, ChatCompletionUsage } from "./providers/types.js";
 import type { ProviderName } from "./providers/resolve.js";
 import type { VirtualFs } from "./virtual/fs.js";
 import type { VirtualComputer } from "./virtual/computer.js";
 import type { Sandbox } from "./virtual/sandbox.js";
-import { UnsandboxedLocal } from "./virtual/unsandboxed.js";
 import type {
   StreamEvent,
   RunOptions,
@@ -98,21 +95,16 @@ export interface AgentOptions {
    */
   provider: AIProvider | ProviderName;
 
-  /**
-   * Working directory. When set without an explicit `sandbox`, an
-   * `UnsandboxedLocal({ cwd })` is created automatically.
-   */
+  /** Working directory. Used for path resolution inside the agent. */
   cwd?: string;
 
   /**
    * Bundled sandbox providing both filesystem and shell execution.
+   * Required — the root barrel deliberately doesn't pull in a default
+   * implementation, so callers must pick a backend explicitly:
    *
-   * Local backends live on the root barrel:
-   * - `LocalSandbox()` — OS-level sandboxing (requires `@anthropic-ai/sandbox-runtime`).
-   * - `UnsandboxedLocal()` — raw host access.
-   *
-   * Remote backends are subpath imports so their optional peer deps do
-   * not enter the module graph unless opted into:
+   * - `import { UnsandboxedLocal } from "noumen/unsandboxed"` — raw host access.
+   * - `import { LocalSandbox }     from "noumen/local"`       — OS-level sandboxing.
    * - `import { DockerSandbox }    from "noumen/docker"`
    * - `import { E2BSandbox }       from "noumen/e2b"`
    * - `import { FreestyleSandbox } from "noumen/freestyle"`
@@ -120,13 +112,13 @@ export interface AgentOptions {
    * - `import { SpritesSandbox }   from "noumen/sprites"`
    *
    * You can also pass any `{ fs: VirtualFs; computer: VirtualComputer }`
-   * for custom sandboxes.
-   *
-   * Defaults to `UnsandboxedLocal({ cwd })` when omitted — the library
-   * default is non-sandboxed for backward compatibility. The CLI defaults
-   * to `LocalSandbox()` when sandbox-runtime is available.
+   * for custom sandboxes. Keeping this required ensures that importing
+   * the root barrel (`codingAgent`, `Agent`, …) never transitively pulls
+   * in `node:fs/promises` or `node:child_process` from the unsandboxed
+   * local adapter — which would bloat bundlers' dependency traces (NFT
+   * etc.) in apps that only use a remote sandbox.
    */
-  sandbox?: Sandbox;
+  sandbox: Sandbox;
 
   options?: {
     sessionDir?: string;
@@ -307,7 +299,7 @@ export class Agent {
       dotDirs: opts.options?.dotDirs,
     });
 
-    const resolvedSandbox = opts.sandbox ?? UnsandboxedLocal({ cwd: resolved.effectiveCwd });
+    const resolvedSandbox = opts.sandbox;
 
     this.sandbox = resolvedSandbox;
     this.fs = resolvedSandbox.fs;
@@ -896,32 +888,22 @@ export class Agent {
   // ---------------------------------------------------------------------------
   // Sandbox index — local host file mapping sessionId → sandboxId so we can
   // reconnect to auto-created containers on resume without accessing the
-  // (potentially unreachable) sandbox filesystem.
+  // (potentially unreachable) sandbox filesystem. The implementation is
+  // quarantined in `session/sandbox-index.ts` and lazy-loaded so that
+  // `node:fs/promises` + `node:path.resolve(cwd, ...)` don't appear in the
+  // Agent's static import graph — bundler dependency tracers (Next.js NFT,
+  // serverless-webpack, …) flag top-level dynamic path resolution as
+  // "whole project was traced unintentionally".
   // ---------------------------------------------------------------------------
 
-  private get sandboxIndexPath(): string {
-    return nodePath.resolve(this.cwd, this.sessionDir, ".sandbox-index.json");
-  }
-
   private async loadSandboxId(sessionId: string): Promise<string | undefined> {
-    try {
-      const content = await nodeFs.readFile(this.sandboxIndexPath, "utf-8");
-      const index = JSON.parse(content) as Record<string, string>;
-      return index[sessionId];
-    } catch {
-      return undefined;
-    }
+    const { loadSandboxId } = await import("./session/sandbox-index.js");
+    return loadSandboxId(this.cwd, this.sessionDir, sessionId);
   }
 
   private async storeSandboxId(sessionId: string, sandboxId: string): Promise<void> {
-    let index: Record<string, string> = {};
-    try {
-      const content = await nodeFs.readFile(this.sandboxIndexPath, "utf-8");
-      index = JSON.parse(content) as Record<string, string>;
-    } catch { /* file doesn't exist yet */ }
-    index[sessionId] = sandboxId;
-    await nodeFs.mkdir(nodePath.dirname(this.sandboxIndexPath), { recursive: true });
-    await nodeFs.writeFile(this.sandboxIndexPath, JSON.stringify(index, null, 2));
+    const { storeSandboxId } = await import("./session/sandbox-index.js");
+    return storeSandboxId(this.cwd, this.sessionDir, sessionId, sandboxId);
   }
 
   /**

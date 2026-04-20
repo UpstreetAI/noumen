@@ -26,16 +26,6 @@ describe("Agent", () => {
     expect(thread.sessionId).toBeTruthy();
   });
 
-  it("defaults sandbox to LocalSandbox when only cwd is provided", async () => {
-    const code = new Agent({
-      provider: provider,
-      cwd: "/tmp/test",
-    });
-
-    const thread = await code.createThread();
-    expect(thread).toBeInstanceOf(Thread);
-  });
-
   it("createThread uses provided sessionId", async () => {
     const code = new Agent({
       provider: provider,

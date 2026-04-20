@@ -1,7 +1,6 @@
 import { Agent } from "./agent.js";
 import type { AIProvider } from "./providers/types.js";
 import type { Sandbox } from "./virtual/sandbox.js";
-import { UnsandboxedLocal } from "./virtual/unsandboxed.js";
 import type { HookDefinition } from "./hooks/types.js";
 import type { McpServerConfig } from "./mcp/types.js";
 import type { AutoTitleConfig } from "./session/auto-title.js";
@@ -9,12 +8,26 @@ import type { AutoTitleConfig } from "./session/auto-title.js";
 export interface PresetOptions {
   /** The AI provider instance (e.g. `new OpenAIProvider({ apiKey })`) */
   provider: AIProvider;
-  /** Working directory for the sandbox. Defaults to `process.cwd()`. */
+  /** Working directory for path resolution. Defaults to `process.cwd()`. */
   cwd?: string;
   /** Model name override. Each preset has a sensible default. */
   model?: string;
-  /** Custom sandbox. Defaults to `UnsandboxedLocal({ cwd })`. */
-  sandbox?: Sandbox;
+  /**
+   * Sandbox providing filesystem + shell execution. Required — the root
+   * barrel deliberately doesn't pull in a default implementation, so
+   * callers must pick a backend explicitly:
+   *
+   * - `import { UnsandboxedLocal } from "noumen/unsandboxed"` — raw host access.
+   * - `import { LocalSandbox }     from "noumen/local"`       — OS-level sandboxing.
+   * - `import { DockerSandbox }    from "noumen/docker"`
+   * - `import { E2BSandbox }       from "noumen/e2b"`
+   * - `import { FreestyleSandbox } from "noumen/freestyle"`
+   * - `import { SshSandbox }       from "noumen/ssh"`
+   * - `import { SpritesSandbox }   from "noumen/sprites"`
+   *
+   * You can also pass any `{ fs, computer }` pair for custom sandboxes.
+   */
+  sandbox: Sandbox;
   /** Extra hooks to attach. */
   hooks?: HookDefinition[];
   /** MCP servers to connect to during `init()`. */
@@ -38,7 +51,7 @@ export function codingAgent(opts: PresetOptions): Agent {
   const cwd = opts.cwd ?? process.cwd();
   return new Agent({
     provider: opts.provider,
-    sandbox: opts.sandbox ?? UnsandboxedLocal({ cwd }),
+    sandbox: opts.sandbox,
     options: {
       cwd,
       model: opts.model,
@@ -66,7 +79,7 @@ export function planningAgent(opts: PresetOptions): Agent {
   const cwd = opts.cwd ?? process.cwd();
   return new Agent({
     provider: opts.provider,
-    sandbox: opts.sandbox ?? UnsandboxedLocal({ cwd }),
+    sandbox: opts.sandbox,
     options: {
       cwd,
       model: opts.model,
@@ -94,7 +107,7 @@ export function reviewAgent(opts: PresetOptions): Agent {
   const cwd = opts.cwd ?? process.cwd();
   return new Agent({
     provider: opts.provider,
-    sandbox: opts.sandbox ?? UnsandboxedLocal({ cwd }),
+    sandbox: opts.sandbox,
     options: {
       cwd,
       model: opts.model,

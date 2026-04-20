@@ -19,7 +19,7 @@ noumen ships seven sandbox factories. The five remote backends (Sprites, Docker,
 
 ### Import paths
 
-Every sandbox factory lives on its own subpath so its optional peer dependency (e.g. `dockerode`, `e2b`, `ssh2`) only enters the module graph when you opt in. `import { Agent } from "noumen"` stays lean regardless of which backends are installed, and every sandbox — including the local ones — shows up as its own explicit import line.
+`sandbox` is **required** on `Agent` and every preset. Every sandbox factory lives on its own subpath so its optional peer dependency (e.g. `dockerode`, `e2b`, `ssh2`) only enters the module graph when you opt in. `import { Agent } from "noumen"` stays lean regardless of which backends are installed — even the local adapters are opt-in, so `node:child_process` and `node:fs/promises` don't show up in the static import graph of apps that only use a remote sandbox (critical for Next.js NFT and serverless-webpack dependency tracing).
 
 | Factory | Import | Peer dep |
 | --- | --- | --- |
@@ -30,6 +30,38 @@ Every sandbox factory lives on its own subpath so its optional peer dependency (
 | `E2BSandbox` | `noumen/e2b` | `e2b` |
 | `FreestyleSandbox` | `noumen/freestyle` | `freestyle-sandboxes` |
 | `SshSandbox` | `noumen/ssh` | `ssh2` |
+
+### `LocalAgent` and `UnsandboxedAgent` shortcuts
+
+For the two local backends, the same subpath also exports a one-step factory that bundles `Agent` construction with the sandbox. These accept the full `AgentOptions` shape minus `sandbox`:
+
+```typescript
+import { LocalAgent } from "noumen/local";
+import { UnsandboxedAgent } from "noumen/unsandboxed";
+
+// Equivalent to new Agent({ ..., sandbox: LocalSandbox({ cwd }) })
+const sandboxed = LocalAgent({ provider: "anthropic", cwd: "/my/project" });
+
+// Equivalent to new Agent({ ..., sandbox: UnsandboxedLocal({ cwd }) })
+const raw = UnsandboxedAgent({ provider: "anthropic", cwd: "/my/project" });
+```
+
+Tune the sandbox via an optional nested block (`localSandbox` / `unsandboxed`):
+
+```typescript
+const agent = LocalAgent({
+  provider: "anthropic",
+  cwd: "/my/project",
+  localSandbox: {
+    sandbox: {
+      filesystem: { denyRead: ["/etc/shadow"] },
+      network: { allowedDomains: ["api.openai.com"] },
+    },
+  },
+});
+```
+
+Remote backends stay on the explicit `new Agent({ provider, sandbox })` form — there's no `DockerAgent` shortcut because remote sandboxes carry config (tokens, templates, connection state) that's clearer at the call site.
 
 ## LocalSandbox — OS-level sandboxing
 

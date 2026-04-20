@@ -39,8 +39,9 @@ Run this checklist **every time** you modify any of the files listed below:
 
 ### If you add/remove/rename a sandbox factory (`src/virtual/local-sandbox.ts`, `src/virtual/unsandboxed.ts`, or a remote backend in `src/virtual/*-sandbox.ts`)
 - Add a subpath entry in `src/` (e.g. `src/<backend>.ts`) and register it in `tsup.config.ts` + `package.json` `exports`
-- Update `README.md` Sandboxes section (import table + per-backend example)
-- Update `website/docs/virtual.mdx` (import table + per-backend example)
+- If adding a *local* backend, also consider adding a thin `{X}Agent` factory alongside `LocalAgent` / `UnsandboxedAgent` on that subpath (see `src/local.ts` / `src/unsandboxed.ts` for the pattern)
+- Update `README.md` Sandboxes section (import table + per-backend example + shortcut table if applicable)
+- Update `website/docs/virtual.mdx` (import table + per-backend example + shortcut section if applicable)
 - Update `website/src/app/page.tsx` FEATURES array (sandbox count in "Seven sandbox backends")
 - Update `website/src/components/AdapterStack.tsx` (`LOCAL_SANDBOXES` or `REMOTE_SANDBOXES`) so the picker emits the right import line
 
@@ -93,6 +94,7 @@ Run this checklist **every time** you modify any of the files listed below:
   ```typescript
   const agent = new Agent({ provider: "anthropic", cwd: "." });
   ```
+- **`sandbox` is required** on `Agent` and every preset (`codingAgent`, `planningAgent`, `reviewAgent`). The root barrel deliberately does not ship a default, so every example must either pass an explicit `sandbox` or use one of the local-backend shortcuts below.
 - **Use the `sandbox` pattern** when showing explicit sandbox configuration:
   ```typescript
   import { Agent } from "noumen";
@@ -104,6 +106,14 @@ Run this checklist **every time** you modify any of the files listed below:
     options: { ... },
   });
   ```
+- **For local sandboxes, prefer the shortcut factories** in short snippets — they package `new Agent(...)` + sandbox construction into one call and keep the import line count down:
+  ```typescript
+  import { LocalAgent } from "noumen/local";          // OS-level sandboxing
+  import { UnsandboxedAgent } from "noumen/unsandboxed"; // raw host access
+
+  const agent = LocalAgent({ provider: "anthropic", cwd: "." });
+  ```
+  These accept the full `AgentOptions` shape minus `sandbox`, plus an optional `localSandbox` / `unsandboxed` block for forwarding extra options to the underlying sandbox factory. Remote sandboxes have no shortcut — keep them on `new Agent({ provider, sandbox })` because their config (tokens, templates, connection state) is clearer at the call site.
 - **Import providers from subpaths**, not from the main barrel:
   ```typescript
   import { OpenAIProvider } from "noumen/openai";     // correct

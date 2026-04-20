@@ -18,14 +18,16 @@ pnpm add noumen
 ## Quick start
 
 ```typescript
-import { Agent } from "noumen";
+import { LocalAgent } from "noumen/local";
 
-const agent = new Agent({ provider: "anthropic", cwd: "." });
+const agent = LocalAgent({ provider: "anthropic", cwd: "." });
 
 for await (const event of agent.run("Add a health-check endpoint to server.ts")) {
   if (event.type === "text_delta") process.stdout.write(event.text);
 }
 ```
+
+`LocalAgent` is a convenience factory on the `noumen/local` subpath that constructs an `Agent` wired to a `LocalSandbox` (OS-level sandboxing). For raw host access with no isolation, use `UnsandboxedAgent` from `noumen/unsandboxed`. For remote sandboxes or full control, construct an `Agent` directly — see [Virtual Infrastructure](/docs/virtual) for every backend.
 
 ## Key features
 

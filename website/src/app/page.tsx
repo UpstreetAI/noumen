@@ -13,7 +13,7 @@ const FEATURE_BLOCKS = [
       "Switch models by changing one string. Same streaming, same tool dispatch.",
     filename: "index.ts",
     code: `// swap the string — nothing else changes
-const agent = new Agent({ provider: "anthropic", cwd: "." });
+const agent = LocalAgent({ provider: "anthropic", cwd: "." });
 
 // or use any of the 7 providers:
 // "openai" | "anthropic" | "gemini" | "openrouter"
@@ -77,13 +77,15 @@ for await (const ev of thread.run("Refactor auth and add tests")) {
     description:
       "Connect external tools, query language servers, intercept everything.",
     filename: "config.ts",
-    code: `const agent = new Agent({
+    code: `const agent = LocalAgent({
   provider: "anthropic",
-  mcpServers: {
-    filesystem: { command: "npx", args: ["-y", "@mcp/server-fs", "/tmp"] },
-  },
-  lsp: {
-    typescript: { command: "typescript-language-server", args: ["--stdio"] },
+  options: {
+    mcpServers: {
+      filesystem: { command: "npx", args: ["-y", "@mcp/server-fs", "/tmp"] },
+    },
+    lsp: {
+      typescript: { command: "typescript-language-server", args: ["--stdio"] },
+    },
   },
 });`,
   },
