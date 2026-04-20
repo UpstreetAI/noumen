@@ -379,43 +379,6 @@ describe("runPostToolUseFailureHooks blocking error handling", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Anthropic thinking budget constraint
-// ---------------------------------------------------------------------------
-describe("Anthropic thinking budget constraint", () => {
-  it("ensures effectiveMaxTokens > clampedBudget when maxOutputTokens is low", async () => {
-    const { streamAnthropicChat } = await import("../providers/anthropic-shared.js");
-
-    let capturedParams: Record<string, unknown> | undefined;
-    const mockClient = {
-      messages: {
-        async *stream(params: Record<string, unknown>) {
-          capturedParams = params;
-          yield { type: "message_start", message: { usage: { input_tokens: 0, output_tokens: 0 } } };
-          yield { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 0 } };
-          yield { type: "message_stop" };
-        },
-      },
-    };
-
-    const gen = streamAnthropicChat(mockClient as any, {
-      model: "claude-sonnet-4",
-      messages: [{ role: "user", content: "hi" }],
-      max_tokens: 1024,
-      thinking: { type: "enabled", budgetTokens: 2048 },
-    }, "claude-sonnet-4");
-
-    for await (const _chunk of gen) { /* drain */ }
-
-    expect(capturedParams).toBeDefined();
-    const maxTokens = capturedParams!.max_tokens as number;
-    const thinking = capturedParams!.thinking as { budget_tokens: number };
-    expect(maxTokens).toBeGreaterThan(thinking.budget_tokens);
-    // Budget is clamped to maxOutputTokens - 1 (no artificial floor)
-    expect(thinking.budget_tokens).toBe(1023);
-  });
-});
-
-// ---------------------------------------------------------------------------
 // Non-blocking hook errors reported in output
 // ---------------------------------------------------------------------------
 describe("hook error reporting", () => {

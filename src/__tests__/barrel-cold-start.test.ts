@@ -115,11 +115,10 @@ describe("root barrel is structurally lightweight", () => {
     expect(unsandboxedMod.LocalSandbox).toBeUndefined();
   });
 
-  it("provider subpaths remain pure types at the barrel level", async () => {
+  it("AI SDK provider adapter is exposed from the barrel without pulling SDKs", async () => {
     const mod = (await import("../index.js")) as unknown as Record<string, unknown>;
 
-    // Concrete provider classes must NOT come from the barrel — they live
-    // on subpaths so their SDKs don't load unless opted into.
+    // The legacy vendor-specific provider classes are gone.
     expect(mod.OpenAIProvider).toBeUndefined();
     expect(mod.AnthropicProvider).toBeUndefined();
     expect(mod.GeminiProvider).toBeUndefined();
@@ -128,7 +127,11 @@ describe("root barrel is structurally lightweight", () => {
     expect(mod.VertexAnthropicProvider).toBeUndefined();
     expect(mod.OllamaProvider).toBeUndefined();
 
-    // But the resolver (which does a dynamic import internally) is fine.
+    // The AI SDK adapter is a thin wrapper — it takes a LanguageModel
+    // instance and has no static vendor imports.
+    expect(mod.AiSdkProvider).toBeTypeOf("function");
+
+    // The resolver (which does a dynamic import internally) is fine.
     expect(mod.resolveProvider).toBeTypeOf("function");
     expect(mod.detectProvider).toBeTypeOf("function");
   });

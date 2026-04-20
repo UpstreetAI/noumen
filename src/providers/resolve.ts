@@ -1,4 +1,19 @@
+/**
+ * CLI-facing provider resolver.
+ *
+ * Builds an `AiSdkProvider` wrapping any Vercel AI SDK `LanguageModelV3`.
+ * Each vendor SDK is dynamically imported so CLI users only need to install
+ * the packages for the providers they actually use.
+ *
+ * Programmatic callers should prefer constructing `AiSdkProvider` directly
+ * with their own language model — that path supports metering proxies,
+ * bespoke auth, and any other knob the AI SDK exposes. This resolver exists
+ * so `noumen <provider>` still works out of the box.
+ */
+
 import type { AIProvider } from "./types.js";
+import type { AiSdkLanguageModel } from "./ai-sdk/provider.js";
+import { AiSdkProvider } from "./ai-sdk/provider.js";
 
 export type ProviderName =
   | "openai"
@@ -39,12 +54,35 @@ export interface ResolveProviderOptions {
   baseURL?: string;
 }
 
+function cannotFindVendor(provider: string, pkg: string, err: unknown): never {
+  const hint =
+    err instanceof Error && err.message.includes("Cannot find")
+      ? ` Install it with \`pnpm add ${pkg}\`.`
+      : "";
+  throw new Error(
+    `noumen provider "${provider}" requires the "${pkg}" package.${hint}`,
+    { cause: err },
+  );
+}
+
+async function loadModule<T = unknown>(
+  provider: string,
+  pkg: string,
+): Promise<T> {
+  try {
+    return (await import(pkg)) as T;
+  } catch (err) {
+    cannotFindVendor(provider, pkg, err);
+  }
+}
+
 /**
  * Resolve a provider from a name string or pass through an AIProvider instance.
+ *
  * API key resolution order:
- * 1. Explicit apiKey option
- * 2. Provider-specific env var (OPENAI_API_KEY, etc.)
- * 3. NOUMEN_API_KEY generic env var
+ * 1. Explicit `apiKey` option
+ * 2. Provider-specific env var (`OPENAI_API_KEY`, etc.)
+ * 3. `NOUMEN_API_KEY` generic env var
  */
 export async function resolveProvider(
   input: AIProvider | ProviderName,
@@ -59,49 +97,116 @@ export async function resolveProvider(
     );
   }
 
-  const key =
+  const apiKey =
     opts?.apiKey ??
     getProviderEnvKey(name) ??
     process.env.NOUMEN_API_KEY;
 
+  const modelId = opts?.model ?? DEFAULT_MODELS[name];
+
   switch (name) {
     case "openai": {
-      if (!key) throw new Error("OpenAI requires an API key. Set OPENAI_API_KEY or pass apiKey.");
-      const { OpenAIProvider } = await import("./openai.js");
-      return new OpenAIProvider({ apiKey: key, model: opts?.model, baseURL: opts?.baseURL });
+      if (!apiKey) {
+        throw new Error("OpenAI requires an API key. Set OPENAI_API_KEY or pass apiKey.");
+      }
+      const mod = await loadModule<{
+        createOpenAI: (o: Record<string, unknown>) => ((id: string) => AiSdkLanguageModel) & {
+          chat(id: string): AiSdkLanguageModel;
+        };
+      }>(name, "@ai-sdk/openai");
+      const openai = mod.createOpenAI({ apiKey, baseURL: opts?.baseURL });
+      // Pin to chat/completions — it's the lowest-common-denominator endpoint
+      // and matches what the legacy OpenAIProvider used.
+      return new AiSdkProvider({ model: openai.chat(modelId) });
     }
+
     case "anthropic": {
-      if (!key) throw new Error("Anthropic requires an API key. Set ANTHROPIC_API_KEY or pass apiKey.");
-      const { AnthropicProvider } = await import("./anthropic.js");
-      return new AnthropicProvider({ apiKey: key, model: opts?.model, baseURL: opts?.baseURL, cacheControl: { enabled: true } });
+      if (!apiKey) {
+        throw new Error("Anthropic requires an API key. Set ANTHROPIC_API_KEY or pass apiKey.");
+      }
+      const mod = await loadModule<{
+        createAnthropic: (o: Record<string, unknown>) => (id: string) => AiSdkLanguageModel;
+      }>(name, "@ai-sdk/anthropic");
+      const anthropic = mod.createAnthropic({ apiKey, baseURL: opts?.baseURL });
+      return new AiSdkProvider({
+        model: anthropic(modelId),
+        providerFamily: "anthropic",
+        cacheConfig: { enabled: true },
+      });
     }
+
     case "gemini": {
-      if (!key) throw new Error("Gemini requires an API key. Set GEMINI_API_KEY or pass apiKey.");
-      const { GeminiProvider } = await import("./gemini.js");
-      return new GeminiProvider({ apiKey: key, model: opts?.model, baseURL: opts?.baseURL });
+      if (!apiKey) {
+        throw new Error("Gemini requires an API key. Set GEMINI_API_KEY or pass apiKey.");
+      }
+      const mod = await loadModule<{
+        createGoogleGenerativeAI: (o: Record<string, unknown>) => (id: string) => AiSdkLanguageModel;
+      }>(name, "@ai-sdk/google");
+      const google = mod.createGoogleGenerativeAI({ apiKey, baseURL: opts?.baseURL });
+      return new AiSdkProvider({ model: google(modelId), providerFamily: "google" });
     }
+
     case "openrouter": {
-      if (!key) throw new Error("OpenRouter requires an API key. Set OPENROUTER_API_KEY or pass apiKey.");
-      const { OpenRouterProvider } = await import("./openrouter.js");
-      return new OpenRouterProvider({ apiKey: key, model: opts?.model, appName: "noumen" });
+      if (!apiKey) {
+        throw new Error("OpenRouter requires an API key. Set OPENROUTER_API_KEY or pass apiKey.");
+      }
+      const mod = await loadModule<{
+        createOpenRouter: (o: Record<string, unknown>) => {
+          chat(id: string): AiSdkLanguageModel;
+        };
+      }>(name, "@openrouter/ai-sdk-provider");
+      const openrouter = mod.createOpenRouter({ apiKey });
+      return new AiSdkProvider({ model: openrouter.chat(modelId) });
     }
+
     case "bedrock": {
-      const { BedrockAnthropicProvider } = await import("./bedrock.js");
-      return new BedrockAnthropicProvider({ model: opts?.model, baseURL: opts?.baseURL });
+      const mod = await loadModule<{
+        createAmazonBedrock: (o: Record<string, unknown>) => (id: string) => AiSdkLanguageModel;
+      }>(name, "@ai-sdk/amazon-bedrock");
+      const bedrock = mod.createAmazonBedrock({
+        region: process.env.AWS_REGION,
+        baseURL: opts?.baseURL,
+      });
+      return new AiSdkProvider({ model: bedrock(modelId), providerFamily: "anthropic" });
     }
+
     case "vertex": {
-      const { VertexAnthropicProvider } = await import("./vertex.js");
-      return new VertexAnthropicProvider({ model: opts?.model, baseURL: opts?.baseURL });
+      const mod = await loadModule<{
+        createVertex: (o: Record<string, unknown>) => {
+          anthropic(id: string): AiSdkLanguageModel;
+        } & ((id: string) => AiSdkLanguageModel);
+      }>(name, "@ai-sdk/google-vertex");
+      const vertex = mod.createVertex({
+        project: process.env.GCLOUD_PROJECT ?? process.env.GOOGLE_CLOUD_PROJECT,
+        location: process.env.GOOGLE_CLOUD_LOCATION ?? "us-central1",
+        baseURL: opts?.baseURL,
+      });
+      // Default vertex usage is Claude via Anthropic-on-Vertex; the
+      // DEFAULT_MODELS[vertex] id is a Claude id. If the caller passed a
+      // Gemini model we route through the native Vertex Gemini entry.
+      const isClaude = modelId.toLowerCase().includes("claude");
+      const model = isClaude ? vertex.anthropic(modelId) : vertex(modelId);
+      return new AiSdkProvider({
+        model,
+        providerFamily: isClaude ? "anthropic" : "google",
+      });
     }
+
     case "ollama": {
-      const { OllamaProvider } = await import("./ollama.js");
-      const base = opts?.baseURL ?? (process.env.OLLAMA_HOST
-        ? `${process.env.OLLAMA_HOST.replace(/\/+$/, "")}/v1`
-        : undefined);
-      return new OllamaProvider({ model: opts?.model, baseURL: base });
+      const mod = await loadModule<{
+        createOllama: (o: Record<string, unknown>) => (id: string) => AiSdkLanguageModel;
+      }>(name, "ollama-ai-provider-v2");
+      const base =
+        opts?.baseURL ??
+        (process.env.OLLAMA_HOST
+          ? `${process.env.OLLAMA_HOST.replace(/\/+$/, "")}/api`
+          : undefined);
+      const ollama = mod.createOllama(base ? { baseURL: base } : {});
+      return new AiSdkProvider({ model: ollama(modelId) });
     }
+
     default:
-      throw new Error(`Unhandled provider: ${name}`);
+      throw new Error(`Unhandled provider: ${name satisfies never}`);
   }
 }
 

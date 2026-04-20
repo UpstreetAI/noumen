@@ -324,61 +324,6 @@ describe("Integration: Thread.run scenarios", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Scenario 8: Error tool result with non-text content (sanitization)
-  // ---------------------------------------------------------------------------
-
-  it("Anthropic conversion strips non-text parts from error tool results", async () => {
-    const { convertAnthropicMessages } = await import("../providers/anthropic-shared.js");
-    const { normalizeMessagesForAPI } = await import("../messages/normalize.js");
-
-    const messages = normalizeMessagesForAPI([
-      { role: "user" as const, content: "test" },
-      {
-        role: "assistant" as const,
-        content: null,
-        tool_calls: [{ id: "tc1", type: "function" as const, function: { name: "T", arguments: "{}" } }],
-      },
-      {
-        role: "tool" as const,
-        tool_call_id: "tc1",
-        content: [
-          { type: "text" as const, text: "Error description" },
-          { type: "image" as const, data: "base64data", media_type: "image/png" },
-        ],
-        isError: true,
-      },
-    ]);
-    assertValidMessageSequence(messages);
-
-    const { messages: anthropicMsgs } = convertAnthropicMessages(
-      "system prompt",
-      messages,
-    );
-
-    // Find the tool_result block in the user message
-    const userWithToolResult = anthropicMsgs.find(
-      (m) =>
-        m.role === "user" &&
-        Array.isArray(m.content) &&
-        (m.content as Record<string, unknown>[]).some((b) => b.type === "tool_result"),
-    );
-    expect(userWithToolResult).toBeDefined();
-
-    const toolResultBlock = (
-      userWithToolResult!.content as Record<string, unknown>[]
-    ).find((b) => b.type === "tool_result") as Record<string, unknown>;
-    expect(toolResultBlock.is_error).toBe(true);
-
-    // Content should be text-only (no image blocks)
-    const content = toolResultBlock.content as Record<string, unknown>[];
-    if (Array.isArray(content)) {
-      for (const block of content) {
-        expect(block.type).toBe("text");
-      }
-    }
-  });
-
-  // ---------------------------------------------------------------------------
   // Scenario 9: maxTurns enforcement across tool loop
   // ---------------------------------------------------------------------------
 

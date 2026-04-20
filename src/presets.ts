@@ -6,7 +6,7 @@ import type { McpServerConfig } from "./mcp/types.js";
 import type { AutoTitleConfig } from "./session/auto-title.js";
 
 export interface PresetOptions {
-  /** The AI provider instance (e.g. `new OpenAIProvider({ apiKey })`) */
+  /** The AI provider instance (e.g. `new AiSdkProvider({ model })`) */
   provider: AIProvider;
   /** Working directory for path resolution. Defaults to `process.cwd()`. */
   cwd?: string;

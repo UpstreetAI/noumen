@@ -15,14 +15,19 @@ export { resolveProvider, detectProvider, type ProviderName, type ResolveProvide
 export { codingAgent, planningAgent, reviewAgent, type PresetOptions } from "./presets.js";
 export { Thread, type ThreadOptions, type ThreadConfig } from "./thread.js";
 
-// AI Provider types (shared interface — concrete providers are subpath exports)
-//   import { OpenAIProvider } from "noumen/openai"
-//   import { AnthropicProvider } from "noumen/anthropic"
-//   import { GeminiProvider } from "noumen/gemini"
-//   import { OpenRouterProvider } from "noumen/openrouter"
-//   import { BedrockAnthropicProvider } from "noumen/bedrock"
-//   import { VertexAnthropicProvider } from "noumen/vertex"
-//   import { OllamaProvider } from "noumen/ollama"
+// AI Provider types (shared interface).
+//
+// Concrete providers are wrapped via the single `AiSdkProvider` adapter,
+// which accepts any Vercel AI SDK v2/v3 `LanguageModel` instance:
+//
+//   import { AiSdkProvider } from "noumen";
+//   import { createOpenAI } from "@ai-sdk/openai";
+//
+//   const provider = new AiSdkProvider({
+//     model: createOpenAI({ apiKey })("gpt-5"),
+//   });
+//
+// The CLI also exposes string-shorthand construction via `resolveProvider`.
 export type {
   AIProvider,
   ChatParams,
@@ -37,13 +42,11 @@ export type {
   JsonObjectOutputFormat,
 } from "./providers/types.js";
 export { ChatStreamError } from "./providers/types.js";
-export type { OpenAIProviderOptions } from "./providers/openai.js";
-export type { AnthropicProviderOptions } from "./providers/anthropic.js";
-export type { GeminiProviderOptions } from "./providers/gemini.js";
-export type { OpenRouterProviderOptions } from "./providers/openrouter.js";
-export type { BedrockAnthropicProviderOptions } from "./providers/bedrock.js";
-export type { VertexAnthropicProviderOptions } from "./providers/vertex.js";
-export type { OllamaProviderOptions } from "./providers/ollama.js";
+export { AiSdkProvider } from "./providers/ai-sdk/provider.js";
+export type {
+  AiSdkLanguageModel,
+  AiSdkProviderOptions,
+} from "./providers/ai-sdk/provider.js";
 
 // Sandbox (bundled VirtualFs + VirtualComputer)
 //
