@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { MockFs, MockAIProvider, textChunk, stopChunk } from "./helpers.js";
 import { SessionStorage } from "../session/storage.js";
 import {
@@ -326,6 +326,16 @@ describe("auto-title helpers", () => {
   });
 
   describe("generateAutoTitle", () => {
+    // generateAutoTitle intentionally warns on every soft failure so callers
+    // aren't left in the dark. Silence the warnings inside this block — the
+    // two tests that assert on them create their own explicit spies below.
+    beforeEach(() => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+    });
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
     function titleResponse(json: string): ChatStreamChunk[] {
       return [textChunk(json), stopChunk()];
     }

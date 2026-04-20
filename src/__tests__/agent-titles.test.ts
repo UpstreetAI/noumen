@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { MockFs, MockComputer, MockAIProvider, textChunk, stopChunk } from "./helpers.js";
 import { Agent } from "../agent.js";
 import { SessionStorage } from "../session/storage.js";
@@ -308,6 +308,10 @@ describe("Agent.autoTitleIfMissing", () => {
   });
 
   it("releases the in-flight slot on error so retries can run", async () => {
+    // The second autoTitleIfMissing call below intentionally drains the
+    // MockAIProvider queue, which makes generateAutoTitle log a soft
+    // failure. Silence that warning so the test output stays clean.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const provider = new MockAIProvider([titleResponse('{"title": "Retry"}')]);
     const agent = new Agent({
       provider,
@@ -332,6 +336,7 @@ describe("Agent.autoTitleIfMissing", () => {
     // No more queued responses — provider throws; generateAutoTitle swallows.
     expect(second).toBeNull();
     expect(provider.calls.length).toBeGreaterThan(provider2Calls);
+    warn.mockRestore();
   });
 
   it("autoTitle: false is equivalent to omitting the option", async () => {
