@@ -9,21 +9,21 @@ export class TaskStore {
   private dir: string;
   private fs: VirtualFs;
   private nextId = 1;
-  private initialized = false;
+  private nextIdLoaded = false;
 
   constructor(fs: VirtualFs, dir: string) {
     this.fs = fs;
     this.dir = dir;
   }
 
-  private async ensureDir(): Promise<void> {
-    if (this.initialized) return;
-    try {
-      await this.fs.mkdir(this.dir, { recursive: true });
-    } catch {
-      // may already exist
-    }
-    // Read existing tasks to determine next ID
+  /**
+   * Best-effort read of the task dir to seed `nextId`. Read-only: if the
+   * dir doesn't exist yet, we leave `nextId` at 1. Does NOT create the dir.
+   * Only called from write paths (`create`) since pure reads don't need it.
+   */
+  private async loadNextId(): Promise<void> {
+    if (this.nextIdLoaded) return;
+    this.nextIdLoaded = true;
     try {
       const files = await this.fs.readdir(this.dir);
       let maxId = 0;
@@ -35,9 +35,22 @@ export class TaskStore {
       }
       this.nextId = maxId + 1;
     } catch {
-      // empty dir
+      // Dir doesn't exist yet — `nextId` stays at 1 which is correct for
+      // a brand-new store.
     }
-    this.initialized = true;
+  }
+
+  /**
+   * Create the tasks dir if missing. Only called on write paths so that
+   * `get`/`list` remain side-effect-free on filesystems that haven't had
+   * any tasks written yet.
+   */
+  private async ensureWriteDir(): Promise<void> {
+    try {
+      await this.fs.mkdir(this.dir, { recursive: true });
+    } catch {
+      // may already exist
+    }
   }
 
   private taskPath(id: string): string {
@@ -45,7 +58,8 @@ export class TaskStore {
   }
 
   async create(input: TaskCreateInput): Promise<Task> {
-    await this.ensureDir();
+    await this.loadNextId();
+    await this.ensureWriteDir();
 
     const id = String(this.nextId++);
     const now = new Date().toISOString();
@@ -65,7 +79,6 @@ export class TaskStore {
   }
 
   async get(id: string): Promise<Task | null> {
-    await this.ensureDir();
     try {
       const content = await this.fs.readFile(this.taskPath(id));
       return JSON.parse(content) as Task;
@@ -75,21 +88,21 @@ export class TaskStore {
   }
 
   async list(): Promise<Task[]> {
-    await this.ensureDir();
     const tasks: Task[] = [];
+    let files;
     try {
-      const files = await this.fs.readdir(this.dir);
-      for (const f of files) {
-        if (!f.name.endsWith(".json")) continue;
-        try {
-          const content = await this.fs.readFile(`${this.dir}/${f.name}`);
-          tasks.push(JSON.parse(content) as Task);
-        } catch {
-          // skip corrupt files
-        }
-      }
+      files = await this.fs.readdir(this.dir);
     } catch {
-      // empty
+      return tasks;
+    }
+    for (const f of files) {
+      if (!f.name.endsWith(".json")) continue;
+      try {
+        const content = await this.fs.readFile(`${this.dir}/${f.name}`);
+        tasks.push(JSON.parse(content) as Task);
+      } catch {
+        // skip corrupt files
+      }
     }
     tasks.sort((a, b) => parseInt(a.id, 10) - parseInt(b.id, 10));
     return tasks;
@@ -106,6 +119,7 @@ export class TaskStore {
       task.blockedBy = input.blockedBy;
       // Update reverse references
       const allTasks = await this.list();
+      await this.ensureWriteDir();
       for (const t of allTasks) {
         const blocksIdx = t.blocks.indexOf(id);
         if (input.blockedBy.includes(t.id)) {
@@ -121,6 +135,7 @@ export class TaskStore {
     }
 
     task.updatedAt = new Date().toISOString();
+    await this.ensureWriteDir();
     await this.fs.writeFile(this.taskPath(id), JSON.stringify(task, null, 2));
     return task;
   }

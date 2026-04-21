@@ -375,8 +375,11 @@ export class SessionStorage {
   }
 
   async listSessions(): Promise<SessionInfo[]> {
-    await this.ensureDir();
-
+    // Intentionally does NOT call `ensureDir()`. Listing is a read-only
+    // operation; a missing session dir means zero sessions, not "create one
+    // for me". The `readdir` try/catch below handles non-existence, and
+    // writers (`appendEntry`, `appendEntriesBatch`) still create the dir
+    // on demand before their first write.
     let dirEntries;
     try {
       dirEntries = await this.fs.readdir(this.sessionDir);
